@@ -16,7 +16,7 @@ DefaultDirName={localappdata}\Programs\AngatuVoice
 DefaultGroupName=Angatu Voice
 PrivilegesRequired=lowest
 OutputDir=..\dist
-OutputBaseFilename=AngatuVoice-Setup-{#AppVersion}
+OutputBaseFilename=AngatuVoice-Setup
 SetupIconFile=app.ico
 UninstallDisplayIcon={app}\AngatuVoice.exe
 Compression=lzma2/fast
@@ -32,8 +32,8 @@ DisableProgramGroupPage=yes
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
 [Tasks]
-Name: "autostart"; Description: "Iniciar o Angatu Voice com o Windows"; GroupDescription: "Opções:"
-Name: "desktopicon"; Description: "Criar um atalho na área de trabalho"; GroupDescription: "Opções:"; Flags: unchecked
+Name: "autostart"; Description: "Iniciar o Angatu Voice com o Windows"; GroupDescription: "OpÃ§Ãµes:"
+Name: "desktopicon"; Description: "Criar um atalho na Ã¡rea de trabalho"; GroupDescription: "OpÃ§Ãµes:"; Flags: unchecked
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -58,7 +58,7 @@ begin
   if CurUninstallStep = usPostUninstall then
   begin
     RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'AngatuVoice');
-    if MsgBox('Apagar também as mensagens, configurações e a identidade deste computador?', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+    if MsgBox('Apagar tambÃ©m as mensagens, configuraÃ§Ãµes e a identidade deste computador?', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
     begin
       DelTree(ExpandConstant('{userappdata}\AngatuVoice'), True, True, True);
       DelTree(ExpandConstant('{localappdata}\AngatuVoice'), True, True, True);
