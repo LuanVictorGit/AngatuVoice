@@ -1,53 +1,72 @@
 package br.com.angatusistemas.voice.desktop;
 
 import br.com.angatusistemas.voice.utils.AppDirs;
+import br.com.angatusistemas.voice.utils.Crypto;
+import com.sun.jna.platform.win32.Kernel32;
+import com.sun.jna.platform.win32.User32;
+import com.sun.jna.platform.win32.WinDef.HWND;
+import com.sun.jna.platform.win32.WinError;
+import com.sun.jna.platform.win32.WinNT.HANDLE;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.channels.FileChannel;
-import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
+import java.util.HexFormat;
 
 /**
- * Keeps one instance per user: a second launch asks the first one to show its window and exits.
+ * Keeps one instance per user and data folder. A named Windows mutex decides who is first; a second launch asks the
+ * first one to show its window, or raises it by title when it cannot be reached, and then exits.
  *
  * @author Angatu Sistemas
  */
 final class SingleInstance {
 
     private static final String SHOW = "SHOW";
-    private static FileChannel channel;
-    private static FileLock lock;
+    private static final String TITLE = "Angatu Voice";
+    private static final int SW_RESTORE = 9;
+    private static HANDLE mutex;
 
     private SingleInstance() {
     }
 
     static boolean acquire(Runnable onShow) throws IOException {
-        Path lockFile = AppDirs.data().resolve("instance.lock");
         Path portFile = AppDirs.data().resolve("instance.port");
-        channel = FileChannel.open(lockFile, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
-        lock = channel.tryLock();
-        if (lock == null) {
-            ping(portFile);
+        String name = "Local\\AngatuVoice." + HexFormat.of().formatHex(Crypto.sha256(
+                AppDirs.data().toAbsolutePath().toString().getBytes(StandardCharsets.UTF_8)), 0, 8);
+        HANDLE created = Kernel32.INSTANCE.CreateMutex(null, true, name);
+        boolean taken = created == null || Kernel32.INSTANCE.GetLastError() == WinError.ERROR_ALREADY_EXISTS;
+        if (taken) {
+            if (!ping(portFile)) {
+                raiseByTitle();
+            }
             return false;
         }
+        mutex = created;
         ServerSocket server = new ServerSocket(0, 4, InetAddress.getLoopbackAddress());
         Files.writeString(portFile, String.valueOf(server.getLocalPort()));
         Thread.ofVirtual().start(() -> listen(server, onShow));
         return true;
     }
 
-    private static void ping(Path portFile) {
+    private static boolean ping(Path portFile) {
         try (Socket socket = new Socket(InetAddress.getLoopbackAddress(), Integer.parseInt(Files.readString(portFile).strip()))) {
             socket.getOutputStream().write((SHOW + "\n").getBytes(StandardCharsets.UTF_8));
+            return true;
         } catch (IOException | NumberFormatException e) {
-            // the first instance is still starting; the user simply sees nothing happen once
+            return false;
+        }
+    }
+
+    private static void raiseByTitle() {
+        HWND window = User32.INSTANCE.FindWindow(null, TITLE);
+        if (window != null) {
+            User32.INSTANCE.ShowWindow(window, SW_RESTORE);
+            User32.INSTANCE.SetForegroundWindow(window);
         }
     }
 

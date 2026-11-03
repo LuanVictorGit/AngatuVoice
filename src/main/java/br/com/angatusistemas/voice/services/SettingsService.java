@@ -133,6 +133,8 @@ public final class SettingsService {
         m.put("hotkeys.deafen", new Rule("Ctrl+Shift+D", HOTKEY.asMatchPredicate()));
         m.put("hotkeys.call", new Rule("", HOTKEY.asMatchPredicate()));
         m.put("hotkeys.muteAll", new Rule("", HOTKEY.asMatchPredicate()));
+        m.put("hotkeys.share", new Rule("", HOTKEY.asMatchPredicate()));
+        m.put("hotkeys.show", new Rule("", HOTKEY.asMatchPredicate()));
         m.put("overlay.enabled", new Rule("true", BOOL));
         m.put("overlay.corner", new Rule("tr", oneOf("tl", "tr", "bl", "br")));
         m.put("sounds.enabled", new Rule("true", BOOL));

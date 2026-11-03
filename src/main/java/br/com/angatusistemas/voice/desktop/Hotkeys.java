@@ -24,7 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 final class Hotkeys {
 
-    private static final List<String> ACTIONS = List.of("ptt", "mic", "deafen", "call", "muteAll");
+    private static final List<String> ACTIONS = List.of("ptt", "mic", "deafen", "call", "muteAll", "share", "show");
     private static final Map<String, Integer> KEYS = keys();
     private static final Map<String, Combo> BINDINGS = new ConcurrentHashMap<>();
     private static final Set<String> HELD = ConcurrentHashMap.newKeySet();
@@ -108,6 +108,12 @@ final class Hotkeys {
     }
 
     private static void fire(String action, String state) {
+        if ("show".equals(action)) {
+            if ("down".equals(state)) {
+                AppShell.show();
+            }
+            return;
+        }
         Thread.startVirtualThread(() -> LiveHub.emit("hotkey", Map.of("action", action, "state", state)));
     }
 

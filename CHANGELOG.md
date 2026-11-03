@@ -7,6 +7,16 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.2.0] - 2026-11-03
+
+### Adicionado
+- Nova aba **Atalhos** nas configurações, com todas as teclas num só lugar: silenciar microfone, silenciar áudio, apertar para falar, silenciar todos, entrar ou sair da chamada, compartilhar a tela e abrir o Angatu Voice.
+- Aviso quando você escolhe teclas que já são usadas por outro atalho, e botão para restaurar os atalhos padrão.
+
+### Alterado
+- Os atalhos que ficavam nas abas Aplicativo e Áudio foram para a aba Atalhos.
+- Só é possível ter um Angatu Voice aberto por vez. Abrir de novo traz a janela que já estava aberta para a frente, mesmo que as duas aberturas aconteçam juntas.
+
 ## [1.1.2] - 2026-11-03
 
 ### Corrigido

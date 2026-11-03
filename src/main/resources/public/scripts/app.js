@@ -441,6 +441,10 @@
     if (action === "deafen") { rtc.toggleDeafen(); AV.toast(rtc.deafened ? "Áudio silenciado." : "Áudio ativado."); }
     if (action === "muteAll") { rtc.toggleMuteAll(); AV.toast(rtc.muteAll ? "Todos silenciados." : "Todos reativados."); }
     if (action === "call") { if (rtc.room) rtc.leave(); else startCall(AV.chat); }
+    if (action === "share") {
+      if (!rtc.room) { AV.toast("Entre em uma chamada para compartilhar a tela."); return; }
+      shareToggle();
+    }
   }
 
   function onUpdate(update) {

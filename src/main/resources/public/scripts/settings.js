@@ -83,6 +83,9 @@
         const token = tokenOf(e.code);
         if (!token) { AV.toast("Essa tecla não pode ser usada como atalho.", "error"); show(); return; }
         const mods = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Meta"].filter(Boolean);
+        const combo = [...mods, token].join("+");
+        const clash = HOTKEYS.find((a) => "hotkeys." + a !== key && value("hotkeys." + a) === combo);
+        if (clash) { AV.toast("Essas teclas já são usadas por outro atalho.", "error"); show(); return; }
         save(key, [...mods, token].join("+")).then(show);
       };
       document.addEventListener("keydown", onKey, true);
@@ -117,7 +120,7 @@
       range("audio.outputVolume", "Volume de saída", "Volume geral da chamada.", 0, 200, "%"),
       range("audio.sensitivity", "Sensibilidade do microfone", "Quanto mais alta, mais fácil é abrir o microfone. Em 100%, ele fica sempre aberto.", 0, 100, "%"),
       toggle("audio.ptt", "Apertar para falar", "Só transmite enquanto o atalho estiver pressionado."),
-      hotkey("hotkeys.ptt", "Atalho de apertar para falar", "Funciona mesmo com o aplicativo minimizado."),
+      E("p", { class: "py-3 text-sm text-muted" }, "As teclas de apertar para falar ficam na aba Atalhos."),
       toggle("audio.echo", "Cancelamento de eco", "Evita que sua voz volte pelas caixas de som."),
       toggle("audio.noise", "Supressão de ruído", "Reduz ruídos constantes, como ventilador e teclado."),
       toggle("sounds.enabled", "Sons do aplicativo", "Sons curtos ao silenciar, entrar e sair de chamadas e receber mensagens."),
@@ -257,11 +260,26 @@
       toggle("privacy.preview", "Mostrar o texto nas notificações", "Desligado, a notificação só diz que chegou uma mensagem."),
       toggle("privacy.shareAlias", "Compartilhar meu apelido do Radmin", "Outros participantes veem o seu apelido do Radmin VPN ao lado do nome."),
       toggle("overlay.enabled", "Mostrar quem está falando no canto da tela", "Durante uma chamada, com o Angatu Voice em segundo plano, um aviso discreto mostra quem fala."),
-      select("overlay.corner", "Posição do aviso", "", [["tr", "Canto superior direito"], ["tl", "Canto superior esquerdo"], ["br", "Canto inferior direito"], ["bl", "Canto inferior esquerdo"]]),
-      hotkey("hotkeys.mic", "Atalho para silenciar o microfone", "Funciona em qualquer janela."),
-      hotkey("hotkeys.deafen", "Atalho para silenciar o áudio", ""),
-      hotkey("hotkeys.call", "Atalho para entrar ou sair da chamada", "Usa a última conversa aberta."),
-      hotkey("hotkeys.muteAll", "Atalho para silenciar todos", "Corta o som de todos os participantes sem desligar o seu."));
+      select("overlay.corner", "Posição do aviso", "", [["tr", "Canto superior direito"], ["tl", "Canto superior esquerdo"], ["br", "Canto inferior direito"], ["bl", "Canto inferior esquerdo"]]));
+  }
+
+  const HOTKEYS = ["ptt", "mic", "deafen", "muteAll", "call", "share", "show"];
+
+  function hotkeysTab(body) {
+    body.append(
+      E("p", { class: "mb-2 text-sm text-muted" }, "Funcionam em qualquer janela, até com o Angatu Voice minimizado. Clique em um atalho e pressione as teclas; Backspace remove e Esc cancela."),
+      hotkey("hotkeys.mic", "Silenciar ou ativar o microfone", "Liga e desliga o seu microfone."),
+      hotkey("hotkeys.deafen", "Silenciar ou ativar o áudio", "Corta o som da chamada para você. Ao ativar de novo, o som volta."),
+      hotkey("hotkeys.ptt", "Apertar para falar", "Só transmite enquanto as teclas estiverem pressionadas. Ative em Áudio."),
+      hotkey("hotkeys.muteAll", "Silenciar todos", "Corta o som de todas as pessoas sem desligar o seu microfone."),
+      hotkey("hotkeys.call", "Entrar ou sair da chamada", "Usa a última conversa aberta."),
+      hotkey("hotkeys.share", "Compartilhar ou parar de compartilhar a tela", "Funciona durante uma chamada."),
+      hotkey("hotkeys.show", "Abrir o Angatu Voice", "Traz a janela para a frente."),
+      E("div", { class: "row" }, E("div", { class: "row-text" }, E("div", { class: "font-semibold" }, "Restaurar atalhos padrão"), E("small", {}, "Volta ao conjunto original de teclas.")),
+        E("button", { class: "btn", onclick: async () => {
+          const defaults = { "hotkeys.mic": "Ctrl+Shift+M", "hotkeys.deafen": "Ctrl+Shift+D", "hotkeys.ptt": "", "hotkeys.muteAll": "", "hotkeys.call": "", "hotkeys.share": "", "hotkeys.show": "" };
+          try { await AV.api("PUT", "/api/settings", defaults); Object.assign(AV.state.settings, defaults); render(); } catch (e) { AV.fail(e); }
+        } }, "Restaurar")));
   }
 
   function networkTab(body) {
@@ -335,7 +353,7 @@
       E("button", { class: "btn btn-danger mt-4", onclick: async () => { if (await AV.confirm("Sair do Angatu Voice?", "Você deixará de receber mensagens e chamadas até abrir o aplicativo de novo.", "Sair", true)) AV.api("POST", "/api/app/quit").catch(() => {}); } }, AV.icon("power", "ic-sm"), "Sair do aplicativo")));
   }
 
-  const TABS = [["app", "Aplicativo", appTab], ["audio", "Áudio", audioTab], ["video", "Vídeo", videoTab],
+  const TABS = [["app", "Aplicativo", appTab], ["audio", "Áudio", audioTab], ["hotkeys", "Atalhos", hotkeysTab], ["video", "Vídeo", videoTab],
     ["network", "Rede", networkTab], ["update", "Atualizações", updateTab], ["about", "Sobre", aboutTab]];
 
   async function render() {
