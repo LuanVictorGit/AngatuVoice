@@ -1,0 +1,11 @@
+target/
+dist/
+tools/bin/
+graphify-out/
+database.db*
+*.db-shm
+*.db-wal
+.env
+*.key
+.idea/
+.vscode/

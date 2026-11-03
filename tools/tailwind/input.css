@@ -1,0 +1,20 @@
+@import "tailwindcss";
+@source "../../src/main/resources/public";
+
+@theme inline {
+  --color-bg0: var(--av-bg0);
+  --color-bg1: var(--av-bg1);
+  --color-bg2: var(--av-bg2);
+  --color-bg3: var(--av-bg3);
+  --color-line: var(--av-line);
+  --color-ink: var(--av-ink);
+  --color-muted: var(--av-muted);
+  --color-faint: var(--av-faint);
+  --color-accent: var(--av-accent);
+  --color-ok: var(--av-ok);
+  --color-warn: var(--av-warn);
+  --color-danger: var(--av-danger);
+  --color-info: var(--av-info);
+  --font-sans: var(--av-font);
+  --font-mono: var(--av-mono);
+}

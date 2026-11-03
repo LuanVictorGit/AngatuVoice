@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Angatu Voice">
+  <rect width="256" height="256" rx="56" fill="#f2a33a"/>
+  <path d="M70 192 L128 62 L186 192" fill="none" stroke="#1a1206" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="104" y="152" width="12" height="24" rx="6" fill="#1a1206"/>
+  <rect x="122" y="141" width="12" height="46" rx="6" fill="#1a1206"/>
+  <rect x="140" y="152" width="12" height="24" rx="6" fill="#1a1206"/>
+</svg>

@@ -1,0 +1,150 @@
+package br.com.angatusistemas.voice.updater;
+
+import br.com.angatusistemas.lib.gson.GsonAPI;
+import br.com.angatusistemas.voice.utils.AppDirs;
+import com.google.gson.JsonObject;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileTime;
+import java.util.Comparator;
+import java.util.Optional;
+import java.util.stream.Stream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+
+/**
+ * Turns a verified package into a staged tree and hands the file swap to the helper script, which outlives the app.
+ *
+ * @author Angatu Sistemas
+ */
+final class PackageInstaller {
+
+    private static final long MAX_UNPACKED_BYTES = 1_500L * 1024 * 1024;
+    private static final long STALE_JOURNAL_MS = 3 * 60_000L;
+    private static final String SCRIPT = "apply-update.ps1";
+    private static final byte[] UTF8_BOM = {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
+
+    private PackageInstaller() {
+    }
+
+    static Path stage(Path zip, Manifest manifest) throws IOException {
+        Path staging = zip.resolveSibling("staging");
+        deleteTree(staging);
+        Files.createDirectories(staging);
+        long total = 0;
+        try (ZipInputStream in = new ZipInputStream(Files.newInputStream(zip))) {
+            for (ZipEntry entry = in.getNextEntry(); entry != null; entry = in.getNextEntry()) {
+                Path target = staging.resolve(entry.getName()).normalize();
+                if (!target.startsWith(staging)) {
+                    throw new IOException("package entry escapes the staging folder: " + entry.getName());
+                }
+                if (entry.isDirectory()) {
+                    Files.createDirectories(target);
+                    continue;
+                }
+                Files.createDirectories(target.getParent());
+                try (OutputStream out = Files.newOutputStream(target)) {
+                    total += copyBounded(in, out, MAX_UNPACKED_BYTES - total);
+                }
+            }
+        }
+        verifyLayout(staging, manifest);
+        return staging;
+    }
+
+    static void launch(Path staging, Manifest manifest, String oldVersion, long pid) throws IOException {
+        Path install = AppDirs.install().orElseThrow(() -> new IOException("not an installed copy"));
+        Path script = writeScript();
+        new ProcessBuilder("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+                "-File", script.toString(), "-InstallDir", install.toString(), "-DataDir", AppDirs.data().toString(),
+                "-StagingDir", staging.toString(), "-ProcessId", String.valueOf(pid), "-Version", manifest.version(),
+                "-OldVersion", oldVersion).start();
+    }
+
+    static void recoverInterrupted() {
+        Path journal = AppDirs.data().resolve("update-journal.json");
+        Optional<Path> install = AppDirs.install();
+        try {
+            if (install.isEmpty() || !Files.exists(journal)
+                    || System.currentTimeMillis() - Files.getLastModifiedTime(journal).toMillis() < STALE_JOURNAL_MS) {
+                return;
+            }
+            new ProcessBuilder("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+                    "-File", writeScript().toString(), "-InstallDir", install.get().toString(), "-DataDir",
+                    AppDirs.data().toString(), "-Recover").start();
+        } catch (IOException e) {
+            throw new IllegalStateException("cannot start update recovery", e);
+        }
+    }
+
+    static Optional<JsonObject> takeResult() {
+        Path file = AppDirs.data().resolve("update-result.json");
+        try {
+            if (!Files.exists(file)) {
+                return Optional.empty();
+            }
+            JsonObject result = GsonAPI.get().fromJson(Files.readString(file).strip(), JsonObject.class);
+            Files.deleteIfExists(file);
+            return Optional.ofNullable(result);
+        } catch (IOException | RuntimeException e) {
+            return Optional.empty();
+        }
+    }
+
+    static void deleteTree(Path root) throws IOException {
+        if (!Files.exists(root)) {
+            return;
+        }
+        try (Stream<Path> walk = Files.walk(root)) {
+            for (Path p : walk.sorted(Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(p);
+            }
+        }
+    }
+
+    private static void verifyLayout(Path staging, Manifest manifest) throws IOException {
+        Path jar = staging.resolve("app").resolve("angatu-voice-" + manifest.version() + ".jar");
+        boolean complete = Files.isRegularFile(staging.resolve("AngatuVoice.exe")) && Files.isRegularFile(jar)
+                && Files.isRegularFile(staging.resolve("runtime").resolve("bin").resolve("java.dll"));
+        if (!complete) {
+            throw new IOException("package layout does not match version " + manifest.version());
+        }
+    }
+
+    private static Path writeScript() throws IOException {
+        Path script = AppDirs.ensure(AppDirs.updates()).resolve(SCRIPT);
+        try (InputStream in = PackageInstaller.class.getResourceAsStream("/updater/" + SCRIPT)) {
+            if (in == null) {
+                throw new IOException("update script missing from the package");
+            }
+            byte[] body = in.readAllBytes();
+            byte[] withBom = new byte[UTF8_BOM.length + body.length];
+            System.arraycopy(UTF8_BOM, 0, withBom, 0, UTF8_BOM.length);
+            System.arraycopy(body, 0, withBom, UTF8_BOM.length, body.length);
+            Files.write(script, withBom);
+            Files.setLastModifiedTime(script, FileTime.fromMillis(System.currentTimeMillis()));
+        }
+        return script;
+    }
+
+    private static long copyBounded(InputStream in, OutputStream out, long remaining) throws IOException {
+        byte[] buffer = new byte[64 * 1024];
+        long copied = 0;
+        for (int n = in.read(buffer); n >= 0; n = in.read(buffer)) {
+            copied += n;
+            if (copied > remaining) {
+                throw new IOException("package is larger than allowed once unpacked");
+            }
+            out.write(buffer, 0, n);
+        }
+        return copied;
+    }
+
+    static void moveReplacing(Path from, Path to) throws IOException {
+        Files.move(from, to, StandardCopyOption.REPLACE_EXISTING);
+    }
+}

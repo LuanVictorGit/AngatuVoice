@@ -1,0 +1,426 @@
+package br.com.angatusistemas.voice.updater;
+
+import br.com.angatusistemas.lib.console.Console;
+import br.com.angatusistemas.lib.database.Saveable;
+import br.com.angatusistemas.lib.gson.GsonAPI;
+import br.com.angatusistemas.lib.task.Task;
+import br.com.angatusistemas.voice.entities.Setting;
+import br.com.angatusistemas.voice.entities.UpdateRecord;
+import br.com.angatusistemas.voice.services.CallService;
+import br.com.angatusistemas.voice.services.LiveHub;
+import br.com.angatusistemas.voice.services.PeerNetwork;
+import br.com.angatusistemas.voice.services.SettingsService;
+import br.com.angatusistemas.voice.utils.AppDirs;
+import br.com.angatusistemas.voice.utils.Version;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.security.MessageDigest;
+import java.time.Instant;
+import java.util.Base64;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
+
+/**
+ * The update cycle: find a signed release, download and verify it, stage it, and hand the swap to the helper.
+ *
+ * @author Angatu Sistemas
+ */
+public final class UpdateService {
+
+    private static final int MAX_JSON_BYTES = 2 * 1024 * 1024;
+    private static final long PROGRESS_EVERY_MS = 250;
+    private static final String ETAG_KEY = "_updater.etag";
+    private static final String BODY_KEY = "_updater.body";
+    private static final String CHECKED_KEY = "_updater.lastCheck";
+
+    private static final AtomicBoolean BUSY = new AtomicBoolean();
+    private static final AtomicBoolean CANCEL = new AtomicBoolean();
+    private static volatile Status status = Status.idle();
+    private static volatile Manifest pending;
+    private static volatile Path stagedZip;
+    private static volatile String pendingAssetUrl = "";
+
+    private UpdateService() {
+    }
+
+    public static Status status() {
+        return status;
+    }
+
+    public static void start(boolean launchedByUpdate) {
+        if (!launchedByUpdate) {
+            PackageInstaller.recoverInterrupted();
+        }
+        PackageInstaller.takeResult().ifPresent(UpdateService::recordResult);
+        Task.runTimerWithFixedDelay(UpdateService::tick, 15_000, 60_000);
+    }
+
+    public static void confirmStartup() {
+        try {
+            Files.writeString(AppDirs.data().resolve("startup-ok-" + Version.current()), Instant.now().toString());
+            try (Stream<Path> files = Files.list(AppDirs.data())) {
+                files.filter(f -> f.getFileName().toString().startsWith("startup-ok-")
+                        && !f.getFileName().toString().endsWith(Version.current().toString())).forEach(f -> f.toFile().delete());
+            }
+        } catch (IOException e) {
+            Console.warn("Could not write the startup marker: %s", e.getMessage());
+        }
+    }
+
+    public static void check() {
+        if (BUSY.compareAndSet(false, true)) {
+            Task.runAsync(UpdateService::runCheck);
+        }
+    }
+
+    public static void cancel() {
+        CANCEL.set(true);
+    }
+
+    public static void install() {
+        Manifest manifest = pending;
+        Path zip = stagedZip;
+        if (!"ready".equals(status.state()) || manifest == null || zip == null || AppDirs.install().isEmpty()) {
+            throw new IllegalStateException("no update is ready to install");
+        }
+        if (inCall()) {
+            throw new IllegalStateException("a call is in progress");
+        }
+        if (BUSY.compareAndSet(false, true)) {
+            Task.runAsync(() -> runInstall(manifest, zip));
+        }
+    }
+
+    private static void tick() {
+        try {
+            if (BUSY.get()) {
+                return;
+            }
+            boolean automatic = SettingsService.flag("update.auto") || (pending != null && pending.mandatory());
+            if ("ready".equals(status.state()) && automatic && !inCall() && AppDirs.install().isPresent()) {
+                install();
+                return;
+            }
+            long intervalMs = SettingsService.number("update.intervalHours") * 3_600_000L;
+            if (!"available".equals(status.state()) && !"ready".equals(status.state())
+                    && System.currentTimeMillis() - lastCheck() >= intervalMs) {
+                check();
+            }
+        } catch (RuntimeException e) {
+            Console.error("update tick failed", e);
+        }
+    }
+
+    private static void runCheck() {
+        publish(status.with("checking", null));
+        try {
+            String channel = SettingsService.get("update.channel");
+            Optional<Release> latest = latestRelease(channel);
+            saveRaw(CHECKED_KEY, String.valueOf(System.currentTimeMillis()));
+            Version current = Version.current();
+            if (latest.isEmpty() || latest.get().version.compareTo(current) <= 0) {
+                pending = null;
+                publish(status.with("current", null));
+                return;
+            }
+            Manifest manifest = loadManifest(latest.get(), channel);
+            if (manifest.needsFullInstaller(current)) {
+                publish(status.about(manifest).with("installer-required",
+                        "Esta versão exige um instalador completo. Baixe-o na página do Angatu Voice."));
+                return;
+            }
+            pending = manifest;
+            pendingAssetUrl = latest.get().assets.getOrDefault(manifest.pkg().name(), "");
+            publish(status.about(manifest).with("available", null));
+            if (SettingsService.flag("update.auto") || manifest.mandatory()) {
+                download(manifest);
+            }
+        } catch (SecurityException e) {
+            Console.warn("Update refused: %s", e.getMessage());
+            publish(status.with("failed", "A atualização foi recusada porque não pôde ser autenticada."));
+        } catch (IOException | IllegalArgumentException | IllegalStateException e) {
+            Console.warn("Update check failed: %s", e.getMessage());
+            publish(status.with("failed", "Não foi possível verificar atualizações agora."));
+        } finally {
+            BUSY.set(false);
+        }
+    }
+
+    private static Optional<Release> latestRelease(String channel) throws IOException {
+        String cached = rawValue(BODY_KEY);
+        String etag = rawValue(ETAG_KEY);
+        Map<String, String> headers = Map.of("Accept", "application/vnd.github+json");
+        HttpResponse<InputStream> response = UpdateHttp.get(UpdateConfig.releasesUrl(), token(),
+                etag.isEmpty() || cached.isEmpty() ? headers : Map.of("Accept", "application/vnd.github+json",
+                        "If-None-Match", etag));
+        String body;
+        try (InputStream in = response.body()) {
+            if (response.statusCode() == 304) {
+                body = cached;
+            } else if (response.statusCode() == 200) {
+                byte[] data = in.readNBytes(MAX_JSON_BYTES + 1);
+                if (data.length > MAX_JSON_BYTES) {
+                    throw new IOException("release list too large");
+                }
+                body = new String(data, StandardCharsets.UTF_8);
+                saveRaw(BODY_KEY, body);
+                saveRaw(ETAG_KEY, response.headers().firstValue("ETag").orElse(""));
+            } else {
+                throw new IOException("release list status " + response.statusCode());
+            }
+        }
+        return pickRelease(body, channel);
+    }
+
+    static Optional<Release> pickRelease(String json, String channel) {
+        JsonArray releases = GsonAPI.get().fromJson(json, JsonArray.class);
+        Release best = null;
+        for (JsonElement el : releases) {
+            JsonObject r = el.getAsJsonObject();
+            try {
+                Version v = Version.parse(r.get("tag_name").getAsString());
+                boolean draft = r.get("draft").getAsBoolean();
+                boolean beta = r.get("prerelease").getAsBoolean() || v.isPreRelease();
+                if (draft || (beta && !"beta".equals(channel)) || (best != null && v.compareTo(best.version) <= 0)) {
+                    continue;
+                }
+                best = new Release(v, r.get("tag_name").getAsString(), assets(r.getAsJsonArray("assets")));
+            } catch (IllegalArgumentException | NullPointerException | ClassCastException e) {
+                Console.debug("release skipped: " + e.getMessage());
+            }
+        }
+        return Optional.ofNullable(best);
+    }
+
+    private static Map<String, String> assets(JsonArray array) {
+        boolean withToken = !token().isBlank();
+        Map<String, String> out = new java.util.HashMap<>();
+        for (JsonElement el : array) {
+            JsonObject a = el.getAsJsonObject();
+            out.put(a.get("name").getAsString(), a.get(withToken ? "url" : "browser_download_url").getAsString());
+        }
+        return out;
+    }
+
+    private static Manifest loadManifest(Release release, String channel) throws IOException {
+        String manifestUrl = release.assets.get("manifest.json");
+        String signatureUrl = release.assets.get("manifest.json.sig");
+        if (manifestUrl == null || signatureUrl == null) {
+            throw new IOException("release has no signed manifest");
+        }
+        Map<String, String> headers = Map.of("Accept", "application/octet-stream");
+        byte[] raw = UpdateHttp.getBytes(manifestUrl, token(), headers, MAX_JSON_BYTES);
+        byte[] signature = Base64.getDecoder().decode(new String(UpdateHttp.getBytes(signatureUrl, token(), headers, 1024),
+                StandardCharsets.UTF_8).strip());
+        Manifest manifest = Manifest.verified(raw, signature, UpdateConfig.publicKey(), UpdateConfig.allowedHosts());
+        boolean channelOk = "beta".equals(channel) || "stable".equals(manifest.channel());
+        if (!channelOk || !manifest.version().equals(release.version.toString())) {
+            throw new IllegalArgumentException("manifest does not match its release");
+        }
+        return manifest;
+    }
+
+    private static void download(Manifest manifest) throws IOException {
+        Path dir = AppDirs.ensure(AppDirs.updates().resolve(manifest.version()));
+        Path part = dir.resolve("package.zip.part");
+        Path zip = dir.resolve("package.zip");
+        CANCEL.set(false);
+        if (!Files.exists(zip)) {
+            streamPackage(manifest, part);
+            if (CANCEL.get()) {
+                publish(status.with("available", null));
+                return;
+            }
+            Files.move(part, zip);
+        }
+        publish(status.with("validating", null));
+        if (Files.size(zip) != manifest.pkg().size() || !manifest.pkg().sha256().equals(sha256(zip))) {
+            Files.deleteIfExists(zip);
+            throw new SecurityException("package hash or size mismatch");
+        }
+        stagedZip = zip;
+        publish(status.with("ready", null));
+    }
+
+    private static void streamPackage(Manifest manifest, Path part) throws IOException {
+        long total = manifest.pkg().size();
+        long have = Files.exists(part) ? Files.size(part) : 0;
+        if (have > total) {
+            Files.delete(part);
+            have = 0;
+        }
+        String url = pendingAssetUrl.isEmpty() ? manifest.pkg().url() : pendingAssetUrl;
+        Map<String, String> headers = have > 0 ? Map.of("Range", "bytes=" + have + "-") : Map.of();
+        HttpResponse<InputStream> response = UpdateHttp.get(url, token(), withAccept(headers));
+        int code = response.statusCode();
+        if (code != 200 && code != 206) {
+            response.body().close();
+            throw new IOException("package status " + code);
+        }
+        if (code == 200) {
+            have = 0;
+        }
+        long received = have;
+        long lastPublish = 0;
+        try (InputStream in = response.body(); OutputStream out = Files.newOutputStream(part,
+                StandardOpenOption.CREATE, have > 0 ? StandardOpenOption.APPEND : StandardOpenOption.TRUNCATE_EXISTING,
+                StandardOpenOption.WRITE)) {
+            byte[] buffer = new byte[64 * 1024];
+            for (int n = in.read(buffer); n >= 0 && !CANCEL.get(); n = in.read(buffer)) {
+                received += n;
+                if (received > total) {
+                    throw new SecurityException("package is larger than announced");
+                }
+                out.write(buffer, 0, n);
+                long now = System.currentTimeMillis();
+                if (now - lastPublish >= PROGRESS_EVERY_MS) {
+                    lastPublish = now;
+                    publish(status.downloading(received, total));
+                }
+            }
+        }
+        if (!CANCEL.get() && received != total) {
+            throw new IOException("download ended early: " + received + " of " + total);
+        }
+    }
+
+    private static Map<String, String> withAccept(Map<String, String> headers) {
+        Map<String, String> all = new java.util.HashMap<>(headers);
+        all.put("Accept", "application/octet-stream");
+        return all;
+    }
+
+    private static void runInstall(Manifest manifest, Path zip) {
+        try {
+            publish(status.with("installing", null));
+            Path staging = PackageInstaller.stage(zip, manifest);
+            publish(status.with("restarting", null));
+            PackageInstaller.launch(staging, manifest, Version.current().toString(), ProcessHandle.current().pid());
+            Thread.sleep(800);
+            PeerNetwork.stop();
+            System.exit(0);
+        } catch (IOException | RuntimeException e) {
+            Console.error("update install failed", e);
+            record(manifest.version(), "failed", e.getMessage());
+            publish(status.with("failed", "A instalação da atualização falhou. A versão atual continua funcionando."));
+            BUSY.set(false);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void recordResult(JsonObject result) {
+        String outcome = result.get("status").getAsString();
+        String version = result.get("version").getAsString();
+        String detail = result.has("detail") ? result.get("detail").getAsString() : "";
+        record(version, outcome, detail);
+        if ("ok".equals(outcome)) {
+            publish(status.with("updated", null));
+        } else {
+            publish(status.with("rolledback", "A atualização para a versão " + version
+                    + " não pôde ser concluída e a versão anterior foi restaurada."));
+        }
+    }
+
+    private static void record(String version, String outcome, String detail) {
+        UpdateRecord entry = new UpdateRecord();
+        entry.setId(UUID.randomUUID().toString());
+        entry.setVersion(version);
+        entry.setOutcome(outcome);
+        entry.setDetail(detail == null ? "" : detail);
+        entry.setAt(System.currentTimeMillis());
+        entry.save();
+    }
+
+    public static List<UpdateRecord> history() {
+        return Saveable.query(UpdateRecord.class, "SELECT data FROM " + Saveable.tableName(UpdateRecord.class)
+                + " ORDER BY json_extract(data,'$.at') DESC LIMIT 20");
+    }
+
+    private static boolean inCall() {
+        String me = PeerNetwork.me() == null ? "" : PeerNetwork.me().id();
+        return CallService.snapshot().values().stream().anyMatch(members -> members.contains(me));
+    }
+
+    private static String sha256(Path file) throws IOException {
+        try (InputStream in = Files.newInputStream(file)) {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[64 * 1024];
+            for (int n = in.read(buffer); n >= 0; n = in.read(buffer)) {
+                md.update(buffer, 0, n);
+            }
+            return HexFormat.of().formatHex(md.digest());
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static String token() {
+        String env = System.getenv("ANGATU_UPDATE_TOKEN");
+        return env != null && !env.isBlank() ? env : SettingsService.get("update.token");
+    }
+
+    private static long lastCheck() {
+        String raw = rawValue(CHECKED_KEY);
+        return raw.isEmpty() ? 0 : Long.parseLong(raw);
+    }
+
+    private static String rawValue(String key) {
+        Setting stored = Saveable.findById(Setting.class, key);
+        return stored == null || stored.getValue() == null ? "" : stored.getValue();
+    }
+
+    private static void saveRaw(String key, String value) {
+        Setting s = new Setting();
+        s.setId(key);
+        s.setValue(value);
+        s.save();
+    }
+
+    private static void publish(Status next) {
+        status = next;
+        LiveHub.emit("update", next);
+    }
+
+    record Release(Version version, String tag, Map<String, String> assets) {
+    }
+
+    public record Status(String state, String current, String available, String channel, double progress, long received,
+                         long size, String notes, boolean mandatory, long lastCheck, String message, boolean canInstall) {
+
+        static Status idle() {
+            return new Status("idle", Version.current().toString(), "", "stable", 0, 0, 0, "", false, 0, "", false);
+        }
+
+        Status with(String state, String message) {
+            return new Status(state, Version.current().toString(), available, SettingsService.get("update.channel"),
+                    "ready".equals(state) ? 1 : progress, received, size, notes, mandatory,
+                    UpdateService.lastCheck(), message == null ? "" : message,
+                    "ready".equals(state) && AppDirs.install().isPresent());
+        }
+
+        Status about(Manifest m) {
+            return new Status(state, current, m.version(), channel, 0, 0, m.pkg().size(), m.notes() == null ? "" : m.notes(),
+                    m.mandatory(), lastCheck, message, false);
+        }
+
+        Status downloading(long received, long total) {
+            return new Status("downloading", current, available, channel, total == 0 ? 0 : (double) received / total,
+                    received, total, notes, mandatory, lastCheck, "", false);
+        }
+    }
+}

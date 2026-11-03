@@ -1,0 +1,41 @@
+<div id="shell" class="grid h-screen grid-cols-[72px_1fr] grid-rows-[1fr_64px] bg-bg0 text-ink md:grid-cols-[256px_1fr] xl:grid-cols-[256px_1fr_248px]">
+  <aside class="row-span-1 flex min-h-0 flex-col border-r border-line bg-bg1">
+    <div class="flex h-14 items-center gap-3 px-4">
+      <img src="/assets/icon-64.png" width="28" height="28" alt="" draggable="false">
+      <span class="hidden text-base font-bold tracking-tight md:inline">Angatu Voice</span>
+    </div>
+    <nav id="nav" class="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-2" aria-label="Conversas"></nav>
+    <div class="border-t border-line p-2">
+      <button id="btn-open-settings" class="nav-item"><svg class="ic"><use href="#i-settings"/></svg><span class="hidden md:inline">Configurações</span></button>
+      <div class="mt-1 flex items-center gap-2 px-2 py-1.5 text-xs text-faint">
+        <img src="/assets/icon-32.png" width="16" height="16" alt="" draggable="false">
+        <span class="hidden md:inline">Angatu Sistemas</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="flex min-h-0 min-w-0 flex-col bg-bg0">
+    <div id="banners"></div>
+    <header class="flex h-14 flex-none items-center gap-3 border-b border-line px-5">
+      <div id="chat-title" class="min-w-0 flex-1 truncate text-base font-bold"></div>
+      <div id="chat-tools" class="flex items-center gap-2"></div>
+    </header>
+    <section id="call-panel" class="hidden max-h-[55vh] flex-none overflow-y-auto border-b border-line bg-bg1 p-4"></section>
+    <section id="messages" class="min-h-0 flex-1 overflow-y-auto py-3" aria-live="polite"></section>
+    <footer class="flex-none px-5 pb-4 pt-2">
+      <div class="card flex items-end gap-2 p-2">
+        <button id="btn-emoji" class="btn btn-ghost btn-icon" title="Emojis" aria-label="Emojis"><svg class="ic"><use href="#i-smile"/></svg></button>
+        <textarea id="composer" class="input flex-1 border-0 bg-transparent" rows="1" maxlength="4000" placeholder="Escreva uma mensagem" aria-label="Mensagem"></textarea>
+        <button id="btn-send" class="btn btn-primary btn-icon" title="Enviar" aria-label="Enviar"><svg class="ic"><use href="#i-send"/></svg></button>
+      </div>
+      <div id="composer-hint" class="mt-1 px-1 text-xs text-faint">Enter envia, Shift + Enter cria uma nova linha.</div>
+    </footer>
+  </main>
+
+  <aside id="members" class="hidden min-h-0 flex-col overflow-y-auto border-l border-line bg-bg1 p-3 xl:flex" aria-label="Participantes"></aside>
+
+  <div id="bottombar" class="col-span-full flex items-center gap-3 border-t border-line bg-bg1 px-3"></div>
+</div>
+<div id="toasts" class="toast-host" aria-live="polite"></div>
+<div id="overlay-root"></div>
+<div id="audio-root" hidden></div>
