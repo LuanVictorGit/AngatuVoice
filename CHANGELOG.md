@@ -7,6 +7,11 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.1.1] - 2026-11-03
+
+### Corrigido
+- Acentos quebrados nas telas do instalador (por exemplo, "Opções" e "área de trabalho"). Os textos agora vêm das traduções oficiais do instalador e não dependem mais da codificação do arquivo.
+
 ## [1.1.0] - 2026-11-03
 
 ### Adicionado

@@ -1,6 +1,6 @@
-﻿; Per-user installer: no administrator rights, shortcuts, optional autostart, clean uninstall.
+; Per-user installer: no administrator rights, shortcuts, optional autostart, clean uninstall.
 #ifndef AppVersion
-  #define AppVersion "1.1.0"
+  #define AppVersion "1.1.1"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\dist\image\AngatuVoice"
@@ -32,8 +32,8 @@ DisableProgramGroupPage=yes
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
 [Tasks]
-Name: "autostart"; Description: "Iniciar o Angatu Voice com o Windows"; GroupDescription: "OpÃ§Ãµes:"
-Name: "desktopicon"; Description: "Criar um atalho na Ã¡rea de trabalho"; GroupDescription: "OpÃ§Ãµes:"; Flags: unchecked
+Name: "autostart"; Description: "{cm:AutoStartProgram,Angatu Voice}"; GroupDescription: "{cm:AutoStartProgramGroupDescription}"
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -46,7 +46,7 @@ Name: "{autodesktop}\Angatu Voice"; Filename: "{app}\AngatuVoice.exe"; Tasks: de
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "AngatuVoice"; ValueData: """{app}\AngatuVoice.exe"" --autostart"; Tasks: autostart; Flags: uninsdeletevalue
 
 [Run]
-Filename: "{app}\AngatuVoice.exe"; Description: "Abrir o Angatu Voice"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\AngatuVoice.exe"; Description: "{cm:LaunchProgram,Angatu Voice}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\.rollback"
@@ -58,7 +58,7 @@ begin
   if CurUninstallStep = usPostUninstall then
   begin
     RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'AngatuVoice');
-    if MsgBox('Apagar tambÃ©m as mensagens, configuraÃ§Ãµes e a identidade deste computador?', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+    if MsgBox('Apagar tamb'#$E9'm as mensagens, configura'#$E7#$F5'es e a identidade deste computador?', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
     begin
       DelTree(ExpandConstant('{userappdata}\AngatuVoice'), True, True, True);
       DelTree(ExpandConstant('{localappdata}\AngatuVoice'), True, True, True);

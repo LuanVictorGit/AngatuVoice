@@ -137,7 +137,7 @@ Java 25, AngatuLibraries `62d2678fcb52c2f3c3da46c9221eadbf8d683ec2` (https://git
 ```
 mvn -B test
 mvn -q -B -DskipTests package
-java --enable-native-access=ALL-UNNAMED -jar target/angatu-voice-1.1.0.jar
+java --enable-native-access=ALL-UNNAMED -jar target/angatu-voice-1.1.1.jar
 ```
 Dados em `%APPDATA%\AngatuVoice` (`-Dangatu.data=` muda); caches e JCEF em `%LOCALAPPDATA%\AngatuVoice`. Tailwind: `tools\bin\tailwindcss.exe -i tools\tailwind\input.css -o src\main\resources\public\styles\tailwind.css --minify` (arquivo gerado é versionado). Distribuição: `tools\package.ps1`, depois `ISCC installer\angatu-voice.iss /DAppVersion=X.Y.Z`.
 Propriedades de desenvolvimento: `angatu.radmin.ip`/`angatu.radmin.alias` (simula o adaptador), `angatu.peer.port`, `angatu.debug.port` (depuração do Chromium em loopback, só para teste).
@@ -157,7 +157,7 @@ Nenhuma obrigatória. `ANGATU_UPDATE_TOKEN` (repositório privado). Segredo de C
 Padrão Java da skill (`java-standard.md`); sem Javadoc em método; JSON só por `GsonAPI`; configurações só pelas chaves de `SettingsService` (strings validadas); `ds.css` única fonte visual, componentes em `@layer components`; texto visível em PT-BR; interface é SPA (nenhuma navegação além de `/boot` → `/app`).
 
 ## Versões
-Regra completa em `docs/VERSIONAMENTO.md`: toda release tem número novo e maior; `pom.xml`, `installer/angatu-voice.iss` e `CHANGELOG.md` mudam juntos; o workflow recusa a tag que não bater com o `pom.xml` e o `CHANGELOG.md`. Versão atual: 1.1.0.
+Regra completa em `docs/VERSIONAMENTO.md`: toda release tem número novo e maior; `pom.xml`, `installer/angatu-voice.iss` e `CHANGELOG.md` mudam juntos; o workflow recusa a tag que não bater com o `pom.xml` e o `CHANGELOG.md`. Versão atual: 1.1.1. O `installer/angatu-voice.iss` fica só em ASCII: textos pelas mensagens `{cm:...}` do próprio Inno e acentos no `[Code]` como `#$E7`.
 
 ## Pendências conhecidas
 - Ofuscação/minificação do JS no build (R18/R19) ainda não implementada.
