@@ -7,6 +7,12 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.1.2] - 2026-11-03
+
+### Corrigido
+- Não era possível clicar nem digitar no aplicativo: a tela aparecia, mas ignorava o mouse e o teclado. A janela do navegador interno nunca recebia os eventos do Windows, e agora recebe.
+- A janela não vinha para a frente ao abrir o aplicativo; agora o Windows a traz para o primeiro plano e o foco já cai no navegador interno.
+
 ## [1.1.1] - 2026-11-03
 
 ### Corrigido

@@ -5,6 +5,8 @@ import br.com.angatusistemas.voice.services.SessionService;
 import br.com.angatusistemas.voice.services.SettingsService;
 import br.com.angatusistemas.voice.updater.UpdateService;
 import br.com.angatusistemas.voice.utils.AppDirs;
+import com.sun.jna.platform.win32.User32;
+import com.sun.jna.platform.win32.WinUser;
 import java.awt.Dimension;
 import java.awt.Image;
 import java.awt.event.WindowAdapter;
@@ -40,6 +42,8 @@ final class BrowserWindow {
 
     private static final String JCEF_VERSION = "152.0.6";
     private static final int RELOAD_LIMIT = 3;
+    private static final int PUMP_MS = 8;
+    private static final int PM_REMOVE = 1;
 
     private final JFrame frame = new JFrame("Angatu Voice");
     private final String origin;
@@ -80,6 +84,12 @@ final class BrowserWindow {
                 }
             }
         });
+        frame.addWindowFocusListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowGainedFocus(WindowEvent e) {
+                focusBrowser();
+            }
+        });
         if (!startMinimized || !Tray.available()) {
             show();
         }
@@ -92,12 +102,17 @@ final class BrowserWindow {
         SwingUtilities.invokeLater(() -> {
             frame.setVisible(true);
             frame.setExtendedState(JFrame.MAXIMIZED_BOTH);
-            // Windows refuses to raise a window started from another process; a brief always-on-top pulse wins focus.
-            frame.setAlwaysOnTop(true);
             frame.toFront();
-            frame.requestFocus();
-            frame.setAlwaysOnTop(false);
+            Foreground.raise(frame);
+            focusBrowser();
         });
+    }
+
+    private void focusBrowser() {
+        if (browser != null) {
+            browser.getUIComponent().requestFocusInWindow();
+            browser.setFocus(true);
+        }
     }
 
     private void startBrowser() {
@@ -119,6 +134,7 @@ final class BrowserWindow {
                 builder.addJcefArgs("--remote-debugging-port=" + debugPort, "--remote-allow-origins=*");
             }
             cefApp = builder.build();
+            SwingUtilities.invokeLater(this::startMessagePump);
             client = cefApp.createClient();
             installHandlers();
             browser = client.createBrowser(bootUrl(), false, false);
@@ -129,6 +145,20 @@ final class BrowserWindow {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    // Chromium's windows belong to the Swing event thread, which never reads Windows messages by itself: without this
+    // loop the page renders but ignores every click and key.
+    private void startMessagePump() {
+        WinUser.MSG msg = new WinUser.MSG();
+        new javax.swing.Timer(PUMP_MS, e -> {
+            cefApp.doMessageLoopWork(0);
+            User32 user32 = User32.INSTANCE;
+            while (user32.PeekMessage(msg, null, 0, 0, PM_REMOVE)) {
+                user32.TranslateMessage(msg);
+                user32.DispatchMessage(msg);
+            }
+        }).start();
     }
 
     private void attachBrowser() {
@@ -145,7 +175,12 @@ final class BrowserWindow {
             frame.setExtendedState(JFrame.NORMAL);
             frame.setExtendedState(JFrame.MAXIMIZED_BOTH);
         }
+        if (frame.isVisible()) {
+            Foreground.raise(frame);
+        }
+        focusBrowser();
     }
+
     void dispose() {
         SwingUtilities.invokeLater(() -> {
             frame.dispose();

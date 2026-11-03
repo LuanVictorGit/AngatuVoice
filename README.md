@@ -64,7 +64,7 @@ Tudo trafega direto entre os computadores, dentro do Radmin VPN, com identidade 
 ```powershell
 mvn -B test
 mvn -q -B -DskipTests package
-java --enable-native-access=ALL-UNNAMED -jar target\angatu-voice-1.1.1.jar
+java --enable-native-access=ALL-UNNAMED -jar target\angatu-voice-1.1.2.jar
 ```
 
 Requisitos: JDK 25 (com `jpackage`), Maven 3.9+ e o binário do [Tailwind](https://github.com/tailwindlabs/tailwindcss/releases) em `tools\bin\`. O pacote e o instalador saem de `tools\package.ps1` e `installer\angatu-voice.iss`; o GitHub Actions faz tudo isso ao publicar uma tag `vX.Y.Z`.
