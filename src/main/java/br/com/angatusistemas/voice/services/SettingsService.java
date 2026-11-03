@@ -133,6 +133,10 @@ public final class SettingsService {
         m.put("hotkeys.deafen", new Rule("Ctrl+Shift+D", HOTKEY.asMatchPredicate()));
         m.put("hotkeys.call", new Rule("", HOTKEY.asMatchPredicate()));
         m.put("hotkeys.muteAll", new Rule("", HOTKEY.asMatchPredicate()));
+        m.put("overlay.enabled", new Rule("true", BOOL));
+        m.put("overlay.corner", new Rule("tr", oneOf("tl", "tr", "bl", "br")));
+        m.put("sounds.enabled", new Rule("true", BOOL));
+        m.put("sounds.volume", new Rule("60", range(0, 100)));
         m.put("ui.lastChat", new Rule("radmin", v -> v.length() <= 80));
         return Collections.unmodifiableMap(m);
     }

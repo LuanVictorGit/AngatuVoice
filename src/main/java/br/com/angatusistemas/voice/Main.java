@@ -5,6 +5,7 @@ import br.com.angatusistemas.lib.console.Console;
 import br.com.angatusistemas.lib.javalin.JavalinAPI;
 import br.com.angatusistemas.lib.javalin.classes.RequestLogMode;
 import br.com.angatusistemas.voice.desktop.AppShell;
+import br.com.angatusistemas.voice.desktop.Overlay;
 import br.com.angatusistemas.voice.services.AutostartService;
 import br.com.angatusistemas.voice.services.Migrations;
 import br.com.angatusistemas.voice.services.PeerNetwork;
@@ -83,6 +84,9 @@ public final class Main {
             AutostartService.apply(SettingsService.flag("autostart"));
         }
         SettingsService.listen(changes -> {
+            if (changes.keySet().stream().anyMatch(k -> k.startsWith("overlay."))) {
+                Overlay.refresh();
+            }
             if (changes.containsKey("autostart")) {
                 AutostartService.apply(Boolean.parseBoolean(changes.get("autostart")));
             }

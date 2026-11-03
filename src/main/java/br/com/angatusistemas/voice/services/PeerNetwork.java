@@ -179,7 +179,7 @@ public final class PeerNetwork {
             PeerLink link = LINKS.get(p.getId());
             views.add(new PeerView(p.getId(), p.getName(), p.getRadminAlias(), link != null, p.getLastIp(),
                     link != null ? List.copyOf(link.groups) : List.of(), names.get(p.getName().toLowerCase()) > 1,
-                    p.getLastSeen()));
+                    p.getLastSeen(), AvatarService.version(p.getAvatar())));
         }
         return views;
     }
@@ -540,6 +540,7 @@ public final class PeerNetwork {
                 trySend(link, call);
             }
         }
+        trySend(link, profileFrame());
         for (Message pending : MessageService.pendingFor("dm:" + link.peerId)) {
             trySend(link, messageFrame(pending));
         }
@@ -562,6 +563,7 @@ public final class PeerNetwork {
             case "sync" -> onSync(link, frame);
             case "call" -> onCall(link, frame);
             case "sig" -> onSignal(link, frame);
+            case "profile" -> onProfile(link, frame);
             default -> { }
         }
     }
@@ -659,6 +661,28 @@ public final class PeerNetwork {
             return;
         }
         LiveHub.emit("call.signal", Map.of("from", link.peerId, "room", room, "kind", kind, "data", f.get("data")));
+    }
+
+    public static void publishProfile() {
+        JsonObject frame = profileFrame();
+        LINKS.values().forEach(link -> trySend(link, frame));
+    }
+
+    private static JsonObject profileFrame() {
+        JsonObject frame = new JsonObject();
+        frame.addProperty("t", "profile");
+        frame.addProperty("avatar", AvatarService.own().orElse(""));
+        return frame;
+    }
+
+    private static void onProfile(PeerLink link, JsonObject f) {
+        try {
+            String avatar = text(f, "avatar", AvatarService.MAX_BYTES * 4 / 3 + 8);
+            AvatarService.setPeer(link.peerId, avatar);
+            LiveHub.emit("peer.profile", Map.of("id", link.peerId));
+        } catch (IllegalArgumentException e) {
+            Console.debug("profile refused: " + e.getMessage());
+        }
     }
 
     private static boolean validRoom(String room, String me) {
@@ -766,7 +790,7 @@ public final class PeerNetwork {
     }
 
     public record PeerView(String id, String name, String alias, boolean online, String ip, List<String> groups,
-                           boolean duplicateName, long lastSeen) {
+                           boolean duplicateName, long lastSeen, String avatar) {
     }
 
     private record Endpoint(RadminService.Status net, int port, ServerSocket server, DatagramSocket udp) {

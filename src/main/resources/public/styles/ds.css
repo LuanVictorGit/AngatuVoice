@@ -159,6 +159,22 @@ kbd { font-family: var(--av-mono); font-size: 12px; padding: 2px 6px; border-rad
 .banner.error { background: color-mix(in srgb, var(--av-danger) 16%, var(--av-bg1)); }
 .banner.info { background: color-mix(in srgb, var(--av-accent) 14%, var(--av-bg1)); }
 
+.avatar { overflow: hidden; }
+.avatar .avatar-img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+.avatar .presence { z-index: 1; }
+
+.boot { position: fixed; inset: 0; z-index: 70; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: var(--av-bg0); transition: opacity var(--av-normal) var(--av-ease), visibility var(--av-normal); }
+.boot.done { opacity: 0; visibility: hidden; }
+.boot-title { margin-top: 8px; font-size: 20px; font-weight: 700; color: var(--av-ink); }
+.boot-text { font-size: 13px; color: var(--av-muted); }
+.boot-bar { position: relative; width: 180px; height: 4px; margin-top: 6px; border-radius: 4px; background: var(--av-bg3); overflow: hidden; }
+.boot-bar > i { position: absolute; top: 0; left: 0; width: 60px; height: 100%; border-radius: 4px; background: var(--av-accent); animation: boot-slide 1.4s var(--av-ease) infinite alternate; }
+@keyframes boot-slide { from { transform: translateX(0); } to { transform: translateX(120px); } }
+
+.brand-mark { opacity: 0.82; transition: opacity var(--av-fast) var(--av-ease); text-decoration: none; }
+.brand-mark:hover { opacity: 1; }
+[data-theme="light"] .brand-on-dark { display: none !important; }
+[data-theme="dark"] .brand-on-light { display: none !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {

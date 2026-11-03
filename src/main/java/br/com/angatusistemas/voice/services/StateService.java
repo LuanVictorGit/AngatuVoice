@@ -26,13 +26,13 @@ public final class StateService {
         List<PeerNetwork.PeerView> peers = PeerNetwork.peers();
         Map<String, Integer> directUnread = unread.entrySet().stream().filter(e -> e.getKey().startsWith("dm:"))
                 .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-        return new State(new Me(me.id(), me.name(), radmin.alias()), radmin, radmin.issues(), Version.current().toString(),
+        return new State(new Me(me.id(), me.name(), radmin.alias(), AvatarService.version(AvatarService.own().orElse(null))), radmin, radmin.issues(), Version.current().toString(),
                 groups, peers, directUnread, CallService.snapshot(), SettingsService.all(), UpdateService.status(),
                 AutostartService.available(),
                 GraphicsEnvironment.isHeadless() ? 1 : GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices().length);
     }
 
-    public record Me(String id, String name, String alias) {
+    public record Me(String id, String name, String alias, String avatar) {
     }
 
     public record GroupView(String id, String name, String kind, int unread, boolean hasInvite) {

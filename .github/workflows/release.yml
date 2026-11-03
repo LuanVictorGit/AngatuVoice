@@ -29,7 +29,12 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           $channel = if ($version -match '-') { 'beta' } else { 'stable' }
           "channel=$channel" >> $env:GITHUB_OUTPUT
-          mvn -B -q versions:set "-DnewVersion=$version" -DgenerateBackupPoms=false
+          $pom = ([xml](Get-Content pom.xml)).project.version
+          if ($pom -ne $version) { throw "A tag v$version não bate com a versão $pom do pom.xml. Atualize o pom.xml e o CHANGELOG.md antes de criar a tag." }
+          if (-not (Select-String -Path CHANGELOG.md -Pattern "^## \[$([regex]::Escape($version))\]" -Quiet)) { throw "O CHANGELOG.md não tem a seção [$version]." }
+          $notes = (Get-Content CHANGELOG.md -Raw) -split "(?m)^## \[" | Where-Object { $_ -like "$version]*" } | Select-Object -First 1
+          New-Item -ItemType Directory -Force dist | Out-Null
+          ("## [" + $notes).Trim() | Set-Content dist\notes.md -Encoding utf8
 
       - name: Tests
         run: mvn -B test
@@ -53,7 +58,6 @@ jobs:
           UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
         run: |
           $notes = "dist\notes.md"
-          git log -20 --pretty=format:'- %s' > $notes
           java tools/Release.java '${{ steps.v.outputs.version }}' '${{ steps.v.outputs.channel }}' "dist\AngatuVoice-${{ steps.v.outputs.version }}-win-x64.zip" '${{ github.repository }}' '1.0.0' dist $notes
 
       - name: Publish

@@ -252,6 +252,9 @@
     AV.state.calls[room] = members;
     if (room !== rtc.room) return;
     const others = members.filter((id) => id !== myId());
+    const before = [...peers.keys()];
+    if (others.some((id) => !before.includes(id))) AV.sound("peerJoin");
+    if (before.some((id) => !others.includes(id))) AV.sound("peerLeave");
     others.forEach((id) => { if (!peers.has(id) && myId() < id) ensurePeer(id); });
     [...peers.keys()].filter((id) => !others.includes(id)).forEach(closePeer);
     rtc.onchange();
@@ -270,6 +273,7 @@
     await AV.api("POST", "/api/call/state", { room, joined: true });
     (AV.state.calls[room] || []).filter((id) => id !== myId()).forEach(ensurePeer);
     vadTimer = setInterval(vadLoop, 80);
+    AV.sound("join");
     rtc.onchange();
   };
 
@@ -283,13 +287,19 @@
     closeMic();
     rtc.room = null;
     rtc.pttDown = false;
+    AV.sound("leave");
     setSpeaking(myId(), false);
     try { await AV.api("POST", "/api/call/state", { room, joined: false }); } catch (e) { AV.fail(e); }
     rtc.onchange();
   };
 
-  rtc.toggleMute = function () { rtc.muted = !rtc.muted; updateGate(); rtc.onchange(); };
-  rtc.toggleDeafen = function () { rtc.deafened = !rtc.deafened; applyOutput(); rtc.onchange(); };
+  rtc.toggleMute = function () { rtc.muted = !rtc.muted; AV.sound(rtc.muted ? "mute" : "unmute"); updateGate(); rtc.onchange(); };
+  rtc.toggleDeafen = function () {
+    rtc.deafened = !rtc.deafened;
+    applyOutput();
+    AV.sound(rtc.deafened ? "deafen" : "undeafen");
+    rtc.onchange();
+  };
   rtc.toggleMuteAll = function () { rtc.muteAll = !rtc.muteAll; applyOutput(); rtc.onchange(); };
   rtc.setPtt = function (down) { rtc.pttDown = down; updateGate(); };
   rtc.hasMic = () => !!mic;

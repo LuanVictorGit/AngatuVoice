@@ -18,4 +18,5 @@ public final class Identity extends Saveable {
     private String privateKey;
     private String displayName;
     private long createdAt;
+    private String avatar;
 }

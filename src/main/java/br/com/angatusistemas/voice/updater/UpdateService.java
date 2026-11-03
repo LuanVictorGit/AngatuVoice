@@ -66,7 +66,9 @@ public final class UpdateService {
             PackageInstaller.recoverInterrupted();
         }
         PackageInstaller.takeResult().ifPresent(UpdateService::recordResult);
-        Task.runTimerWithFixedDelay(UpdateService::tick, 15_000, 60_000);
+        // Every launch checks at once, whatever the interval says; the timer covers the hours the app stays open.
+        check();
+        Task.runTimerWithFixedDelay(UpdateService::tick, 60_000, 60_000);
     }
 
     public static void confirmStartup() {
@@ -148,6 +150,10 @@ public final class UpdateService {
             publish(status.about(manifest).with("available", null));
             if (SettingsService.flag("update.auto") || manifest.mandatory()) {
                 download(manifest);
+                Path zip = stagedZip;
+                if ("ready".equals(status.state()) && zip != null && !inCall() && AppDirs.install().isPresent()) {
+                    runInstall(manifest, zip);
+                }
             }
         } catch (SecurityException e) {
             Console.warn("Update refused: %s", e.getMessage());

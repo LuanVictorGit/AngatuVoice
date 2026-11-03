@@ -69,7 +69,7 @@ atribuição**, inclusive a que o próprio ambiente injeta sozinho. Conferir ant
 `git log origin/<branch>..HEAD --format='%B' | sed -e 's/CLAUDE\.md//g' -e 's#\.claude\(/[^[:space:]]*\)\{0,1\}##g' | grep -niE 'co-authored|claude|generated with| ia |\bAI\b'`.
 
 ### Decisões registradas deste projeto
-- Compressão de imagem (G2): não se aplica — o app não salva imagens enviadas por usuários (avatares são gerados por cor e inicial)
+- Compressão de imagem (G2): foto de perfil recortada no centro em 128×128, WebP qualidade 0,8 (~5–15 KB), feita no próprio app; aceita PNG, JPG, WebP e GIF (vira imagem parada) até 5 MB de origem; sem miniatura; o servidor recusa o que não for WebP de até 48 KB e 256 px
 - Turnstile (G4): não usar (app desktop, sem formulário público nem login web; identidade = chave Ed25519 local + Radmin)
 - Proteção de conteúdo (R30): não se aplica — não há mídia de apresentação a proteger; mensagens e campos continuam copiáveis
 - Limpeza inicial (R32): projeto novo, sem código herdado para varrer
@@ -124,7 +124,7 @@ Optimize all terminal commands for execution speed and minimal waiting.
 # Angatu Voice — comunicação privada por voz, texto e tela sobre o Radmin VPN
 
 ## Stack
-Java 25, AngatuLibraries `62d2678fcb52c2f3c3da46c9221eadbf8d683ec2` (https://github.com/LuanVictorGit/AngatuLibraries, commit mais novo de `main` em 03/11/2026), Javalin 7.2.3, SQLite/HikariCP/Gson, JCEF 152 (`jcefmaven`), JNA 5.19.1 (atalhos globais e registro do Windows), HTML/CSS/JS vanilla com Tailwind 4 local, jpackage + Inno Setup.
+Java 25, AngatuLibraries `62d2678fcb52c2f3c3da46c9221eadbf8d683ec2` (https://github.com/LuanVictorGit/AngatuLibraries, commit mais novo de `main` em 03/11/2026), Javalin 7.2.3, SQLite/HikariCP/Gson, JCEF 152 (`jcefmaven`), JNA 5.19.1 (atalhos globais, foco da janela e registro do Windows), TwelveMonkeys imageio-webp 3.12.0 (validar e desenhar fotos de perfil), HTML/CSS/JS vanilla com Tailwind 4 local, jpackage + Inno Setup.
 
 ## Estrutura
 - `src/main/java/br/com/angatusistemas/voice/` — `Main`, `entities/` (Saveable), `services/` (regras, rede entre pares, sessão, migrações), `routes/` (HTTP/WS da interface), `desktop/` (JFrame, JCEF, bandeja, atalhos, instância única), `updater/` (atualização), `utils/`
@@ -137,7 +137,7 @@ Java 25, AngatuLibraries `62d2678fcb52c2f3c3da46c9221eadbf8d683ec2` (https://git
 ```
 mvn -B test
 mvn -q -B -DskipTests package
-java --enable-native-access=ALL-UNNAMED -jar target/angatu-voice-1.0.0.jar
+java --enable-native-access=ALL-UNNAMED -jar target/angatu-voice-1.1.0.jar
 ```
 Dados em `%APPDATA%\AngatuVoice` (`-Dangatu.data=` muda); caches e JCEF em `%LOCALAPPDATA%\AngatuVoice`. Tailwind: `tools\bin\tailwindcss.exe -i tools\tailwind\input.css -o src\main\resources\public\styles\tailwind.css --minify` (arquivo gerado é versionado). Distribuição: `tools\package.ps1`, depois `ISCC installer\angatu-voice.iss /DAppVersion=X.Y.Z`.
 Propriedades de desenvolvimento: `angatu.radmin.ip`/`angatu.radmin.alias` (simula o adaptador), `angatu.peer.port`, `angatu.debug.port` (depuração do Chromium em loopback, só para teste).
@@ -146,15 +146,18 @@ Propriedades de desenvolvimento: `angatu.radmin.ip`/`angatu.radmin.alias` (simul
 `Main`: logs em arquivo → `angatu.db` → instância única → migrações → porta livre em loopback → `new AngatuLib("localhost", porta, false)` (host Jetty fixado em `127.0.0.1` no construtor de `BootRoute`) → `PeerNetwork.start()` → `UpdateService.start()` → autostart → JFrame/JCEF abre `/boot?t=<token de uso único>` → cookie `av_session` → `/app`.
 
 ## Rotas / Entidades
-- Página: `/app` (HtmlRouteAPI). Rotas: `/health`, `/boot`, `GET /api/state`, `PUT /api/settings`, `PUT /api/me`, grupos (`/api/groups`, `/join`, `/{id}/invite`, `DELETE /{id}`), mensagens (`/api/messages`, `/read`), `/api/peers`, chamadas (`/api/call/state`, `/signal`), atualizador (`/api/update`, `/check`, `/install`, `/cancel`), `/api/system/{diagnostics,open}`, `/api/app/quit`, WS `/ws` (porta única, sessão checada em `LiveHub`)
+- Página: `/app` (HtmlRouteAPI). Rotas: `/health`, `/boot`, `GET /api/state`, `PUT /api/settings`, `PUT /api/me`, grupos (`/api/groups`, `/join`, `/{id}/invite`, `DELETE /{id}`), mensagens (`/api/messages`, `/read`), `/api/peers`, chamadas (`/api/call/state`, `/signal`), atualizador (`/api/update`, `/check`, `/install`, `/cancel`), `/api/system/{diagnostics,open}`, `/api/app/quit`, `PUT /api/me/avatar`, `GET /api/avatar/{id}`, `POST /api/overlay`, WS `/ws` (porta única, sessão checada em `LiveHub`)
 - Saveable: `Setting`, `Identity`, `Group`, `Peer`, `Message`, `UpdateRecord`, `SchemaState`
-- Eventos WS: `open`, `message`, `message.delivered`, `peer.online/offline`, `net`, `group.changed`, `call.state`, `call.signal`, `update`, `hotkey`
+- Eventos WS: `open`, `message`, `message.delivered`, `peer.online/offline`, `net`, `group.changed`, `call.state`, `call.signal`, `update`, `hotkey`, `peer.profile`
 
 ## Env
 Nenhuma obrigatória. `ANGATU_UPDATE_TOKEN` (repositório privado). Segredo de CI: `UPDATE_SIGNING_KEY` (Ed25519 PKCS#8 Base64); a chave pública está em `updater.properties`.
 
 ## Convenções
 Padrão Java da skill (`java-standard.md`); sem Javadoc em método; JSON só por `GsonAPI`; configurações só pelas chaves de `SettingsService` (strings validadas); `ds.css` única fonte visual, componentes em `@layer components`; texto visível em PT-BR; interface é SPA (nenhuma navegação além de `/boot` → `/app`).
+
+## Versões
+Regra completa em `docs/VERSIONAMENTO.md`: toda release tem número novo e maior; `pom.xml`, `installer/angatu-voice.iss` e `CHANGELOG.md` mudam juntos; o workflow recusa a tag que não bater com o `pom.xml` e o `CHANGELOG.md`. Versão atual: 1.1.0.
 
 ## Pendências conhecidas
 - Ofuscação/minificação do JS no build (R18/R19) ainda não implementada.

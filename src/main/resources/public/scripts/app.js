@@ -239,7 +239,19 @@
   }
 
   AV.rtc.onchange = () => { renderCall(); renderBottom(); renderHeader(); renderNav(); renderMembers(); };
-  AV.rtc.onspeaking = (id, value) => document.querySelectorAll('[data-peer="' + id + '"]').forEach((n) => n.classList.toggle("speaking", value));
+  AV.rtc.onspeaking = (id, value) => {
+    document.querySelectorAll('[data-peer="' + id + '"]').forEach((n) => n.classList.toggle("speaking", value));
+    pushOverlay();
+  };
+
+  let lastOverlay = "";
+  const pushOverlay = AV.debounce(() => {
+    const speaking = AV.rtc.room ? Object.entries(AV.rtc.speaking).filter(([, on]) => on).map(([id]) => ({ id, name: nameOf(id) })) : [];
+    const key = JSON.stringify(speaking);
+    if (key === lastOverlay) return;
+    lastOverlay = key;
+    AV.api("POST", "/api/overlay", { speaking }).catch(() => {});
+  }, 60);
 
   function createGroupDialog() {
     const input = E("input", { class: "input", maxlength: 40, placeholder: "Nome do grupo", "aria-label": "Nome do grupo" });
@@ -382,7 +394,7 @@
       if (!messages.some((x) => x.id === m.id)) { messages.push(m); renderMessages(false); }
       if (!m.mine) markRead();
     }
-    if (!m.mine && (m.chat !== AV.chat || !document.hasFocus())) refreshSoon();
+    if (!m.mine && (m.chat !== AV.chat || !document.hasFocus())) { refreshSoon(); AV.sound("message"); }
   }
 
   async function send() {
@@ -454,6 +466,7 @@
     AV.on("peer.offline", ({ name }) => { AV.toast(name + " saiu da rede."); refreshSoon(); });
     AV.on("net", () => refreshSoon());
     AV.on("group.changed", () => refreshSoon());
+    AV.on("peer.profile", () => refreshSoon());
     AV.on("call.state", (d) => { AV.rtc.handleRoom(d); renderCall(); renderNav(); renderMembers(); renderHeader(); });
     AV.on("call.signal", (d) => AV.rtc.handleSignal(d));
     AV.on("update", onUpdate);
@@ -477,8 +490,10 @@
       const valid = last === "radmin" || groupOf(last) || (isDm(last) && peerOf(last.slice(3)));
       await selectChat(valid ? last : "radmin");
       AV.live.start();
+      document.getElementById("boot").classList.add("done");
     } catch (e) {
-      AV.fill(document.getElementById("shell"), E("div", { class: "empty col-span-full" }, AV.icon("alert", "!h-8 !w-8"), "Não foi possível carregar o aplicativo. Feche e abra o Angatu Voice de novo."));
+      document.getElementById("boot-text").textContent = "Não foi possível carregar o aplicativo. Feche e abra o Angatu Voice de novo.";
+      document.querySelector(".boot-bar").remove();
     }
   }
 

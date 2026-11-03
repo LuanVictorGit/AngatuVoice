@@ -120,6 +120,8 @@
       hotkey("hotkeys.ptt", "Atalho de apertar para falar", "Funciona mesmo com o aplicativo minimizado."),
       toggle("audio.echo", "Cancelamento de eco", "Evita que sua voz volte pelas caixas de som."),
       toggle("audio.noise", "Supressão de ruído", "Reduz ruídos constantes, como ventilador e teclado."),
+      toggle("sounds.enabled", "Sons do aplicativo", "Sons curtos ao silenciar, entrar e sair de chamadas e receber mensagens."),
+      range("sounds.volume", "Volume dos sons", "", 0, 100, "%"),
       micTest());
   }
 
@@ -197,12 +199,54 @@
       toggle("video.systemAudio", "Compartilhar áudio do sistema", "Disponível ao compartilhar a tela inteira."));
   }
 
+  function photoRow() {
+    const preview = E("div", { class: "flex items-center gap-4" });
+    const input = E("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", class: "hidden", "aria-label": "Escolher foto" });
+    const draw = () => AV.fill(preview, AV.avatar(AV.state.me.id, AV.state.me.name, "avatar-lg"),
+      E("div", { class: "flex flex-wrap gap-2" },
+        E("button", { class: "btn", onclick: () => input.click() }, "Escolher foto"),
+        AV.state.me.avatar && E("button", { class: "btn btn-ghost", onclick: () => upload("") }, "Remover")));
+    const upload = async (data) => {
+      try {
+        await AV.api("PUT", "/api/me/avatar", { data });
+        await AV.refresh();
+        draw();
+        AV.toast(data ? "Foto atualizada." : "Foto removida.", "ok");
+      } catch (e) { AV.fail(e); }
+    };
+    input.addEventListener("change", async () => {
+      const file = input.files[0];
+      input.value = "";
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024) { AV.toast("Escolha uma imagem de até 5 MB.", "error"); return; }
+      try { upload(await cropToWebp(file)); } catch (e) { AV.toast("Não foi possível ler essa imagem.", "error"); }
+    });
+    draw();
+    return row("Foto de perfil", "Recortada em quadrado e reduzida antes de ser enviada aos outros participantes.", E("div", {}, preview, input));
+  }
+
+  async function cropToWebp(file) {
+    const bitmap = await createImageBitmap(file);
+    const side = Math.min(bitmap.width, bitmap.height);
+    const canvas = document.createElement("canvas");
+    canvas.width = 128;
+    canvas.height = 128;
+    const g = canvas.getContext("2d");
+    g.imageSmoothingQuality = "high";
+    g.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, 128, 128);
+    bitmap.close();
+    const url = canvas.toDataURL("image/webp", 0.8);
+    if (!url.startsWith("data:image/webp;base64,")) throw new Error("webp unsupported");
+    return url.slice("data:image/webp;base64,".length);
+  }
+
   function appTab(body) {
     const name = E("input", { class: "input w-56", maxlength: 32, value: AV.state.me.name, "aria-label": "Seu nome" });
     name.addEventListener("change", async () => {
       try { await AV.api("PUT", "/api/me", { name: name.value }); AV.toast("Nome atualizado. Ele aparece para os outros na próxima conexão.", "ok"); AV.refresh(); } catch (e) { AV.fail(e); }
     });
     body.append(
+      photoRow(),
       row("Seu nome", "É como os outros participantes veem você.", name),
       toggle("autostart", "Iniciar com o Windows", AV.state.autostartAvailable ? "O aplicativo abre quando você entra no Windows." : "Disponível apenas na versão instalada.", !AV.state.autostartAvailable),
       toggle("startMinimized", "Iniciar minimizado", "Abre direto na bandeja."),
@@ -212,6 +256,8 @@
       toggle("notifications", "Notificações", "Avisa sobre mensagens e entradas quando a janela está em segundo plano."),
       toggle("privacy.preview", "Mostrar o texto nas notificações", "Desligado, a notificação só diz que chegou uma mensagem."),
       toggle("privacy.shareAlias", "Compartilhar meu apelido do Radmin", "Outros participantes veem o seu apelido do Radmin VPN ao lado do nome."),
+      toggle("overlay.enabled", "Mostrar quem está falando no canto da tela", "Durante uma chamada, com o Angatu Voice em segundo plano, um aviso discreto mostra quem fala."),
+      select("overlay.corner", "Posição do aviso", "", [["tr", "Canto superior direito"], ["tl", "Canto superior esquerdo"], ["br", "Canto inferior direito"], ["bl", "Canto inferior esquerdo"]]),
       hotkey("hotkeys.mic", "Atalho para silenciar o microfone", "Funciona em qualquer janela."),
       hotkey("hotkeys.deafen", "Atalho para silenciar o áudio", ""),
       hotkey("hotkeys.call", "Atalho para entrar ou sair da chamada", "Usa a última conversa aberta."),

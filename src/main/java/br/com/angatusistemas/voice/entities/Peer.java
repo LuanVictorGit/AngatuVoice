@@ -23,5 +23,6 @@ public final class Peer extends Saveable {
     private int lastPort;
     private long firstSeen;
     private long lastSeen;
+    private String avatar;
     private List<String> groups = new ArrayList<>();
 }

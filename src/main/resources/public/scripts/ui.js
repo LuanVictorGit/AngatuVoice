@@ -67,9 +67,19 @@ AV.colorFor = function (id) {
   return "hsl(" + (hash % 360) + " 52% 62%)";
 };
 
+AV.avatarVersion = function (id) {
+  const s = AV.state;
+  if (!s) return "";
+  if (s.me && s.me.id === id) return s.me.avatar || "";
+  const peer = (s.peers || []).find((p) => p.id === id);
+  return peer ? peer.avatar || "" : "";
+};
+
 AV.avatar = function (id, name, size, online) {
+  const version = AV.avatarVersion(id);
   const node = AV.el("div", { class: "avatar " + (size || ""), style: "background:" + AV.colorFor(id), "aria-hidden": "true" },
-    (name || "?").trim().charAt(0).toUpperCase());
+    version ? AV.el("img", { src: "/api/avatar/" + id + "?v=" + version, alt: "", draggable: "false", class: "avatar-img" })
+      : (name || "?").trim().charAt(0).toUpperCase());
   if (online !== undefined) node.append(AV.el("span", { class: "presence" + (online ? " on" : "") }));
   return node;
 };
@@ -148,3 +158,41 @@ AV.debounce = function (fn, ms) {
     timer = setTimeout(() => fn(...args), ms);
   };
 };
+
+/* Short interface cues, synthesised so nothing is downloaded or cached. */
+AV.sound = (function () {
+  let ctx = null;
+  const CUES = {
+    mute: [[740, 0, 0.07], [494, 0.08, 0.1]],
+    unmute: [[494, 0, 0.07], [740, 0.08, 0.1]],
+    deafen: [[587, 0, 0.08], [440, 0.09, 0.08], [330, 0.18, 0.12]],
+    undeafen: [[330, 0, 0.08], [440, 0.09, 0.08], [587, 0.18, 0.12]],
+    join: [[523, 0, 0.09], [784, 0.1, 0.16]],
+    leave: [[784, 0, 0.09], [523, 0.1, 0.16]],
+    peerJoin: [[660, 0, 0.12]],
+    peerLeave: [[440, 0, 0.12]],
+    message: [[880, 0, 0.05], [1175, 0.06, 0.08]],
+  };
+  return function (name) {
+    const s = AV.state && AV.state.settings;
+    if (!s || s["sounds.enabled"] !== "true" || !CUES[name]) return;
+    if (!ctx) ctx = new AudioContext();
+    if (ctx.state === "suspended") ctx.resume();
+    if (ctx.setSinkId) ctx.setSinkId(s["audio.output"] || "").catch(() => {});
+    const volume = 0.22 * Number(s["sounds.volume"]) / 100;
+    const now = ctx.currentTime + 0.01;
+    for (const [freq, at, length] of CUES[name]) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, now + at);
+      gain.gain.linearRampToValueAtTime(volume, now + at + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + at + length);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + at);
+      osc.stop(now + at + length + 0.02);
+    }
+  };
+})();

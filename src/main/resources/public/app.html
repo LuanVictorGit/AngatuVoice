@@ -1,4 +1,9 @@
-<div id="shell" class="grid h-screen grid-cols-[72px_1fr] grid-rows-[1fr_64px] bg-bg0 text-ink md:grid-cols-[256px_1fr] xl:grid-cols-[256px_1fr_248px]">
+<div id="boot" class="boot" role="status" aria-live="polite">
+  <img src="/assets/icon-256.png" width="72" height="72" alt="" draggable="false">
+  <div class="boot-title">Angatu Voice</div>
+  <div id="boot-text" class="boot-text">Carregando suas conversas…</div>
+  <div class="boot-bar" aria-hidden="true"><i></i></div>
+</div><div id="shell" class="grid h-screen grid-cols-[72px_1fr] grid-rows-[1fr_64px] bg-bg0 text-ink md:grid-cols-[256px_1fr] xl:grid-cols-[256px_1fr_248px]">
   <aside class="row-span-1 flex min-h-0 flex-col border-r border-line bg-bg1">
     <div class="flex h-14 items-center gap-3 px-4">
       <img src="/assets/icon-64.png" width="28" height="28" alt="" draggable="false">
@@ -7,9 +12,13 @@
     <nav id="nav" class="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-2" aria-label="Conversas"></nav>
     <div class="border-t border-line p-2">
       <button id="btn-open-settings" class="nav-item"><svg class="ic"><use href="#i-settings"/></svg><span class="hidden md:inline">Configurações</span></button>
-      <div class="mt-1 flex items-center gap-2 px-2 py-1.5 text-xs text-faint">
-        <img src="/assets/icon-32.png" width="16" height="16" alt="" draggable="false">
-        <span class="hidden md:inline">Angatu Sistemas</span>
+      <div class="brand-mark mt-2 flex flex-col items-center gap-1.5 rounded-md px-2 pb-1 pt-3 md:items-start md:px-3" title="Desenvolvido por Angatu Sistemas">
+        <span class="hidden text-[10px] font-semibold uppercase tracking-[0.12em] text-faint md:block">Desenvolvido por</span>
+        <span class="flex items-center gap-2">
+          <img class="brand-on-dark h-7 w-auto" src="/assets/angatu-sistemas-branco.webp" width="22" height="28" alt="" draggable="false">
+          <img class="brand-on-light h-7 w-auto" src="/assets/angatu-sistemas-marinho.webp" width="22" height="28" alt="" draggable="false">
+          <span class="hidden text-sm font-bold tracking-tight text-ink md:inline">Angatu Sistemas</span>
+        </span>
       </div>
     </div>
   </aside>
