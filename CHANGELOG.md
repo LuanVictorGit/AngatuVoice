@@ -7,6 +7,15 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.3.0] - 2026-11-03
+
+### Adicionado
+- Opção para limpar o histórico de mensagens ou excluir conversas privadas diretamente no cabeçalho da conversa.
+- Opção para excluir grupos e remover todas as mensagens salvas associadas a eles.
+- Transmissão de tela em tela cheia com atalho Esc e duplo clique para entrar ou sair, e botão para silenciar ou reativar o áudio da transmissão.
+- Opção nas configurações de áudio para escutar a própria voz nos fones de ouvido durante o teste de microfone.
+- Opção nas configurações para ativar ou desativar o fundo transparente nos avisos de quem está falando no canto da tela.
+
 ## [1.2.0] - 2026-11-03
 
 ### Adicionado

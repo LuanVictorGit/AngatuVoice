@@ -136,6 +136,7 @@ public final class SettingsService {
         m.put("hotkeys.share", new Rule("", HOTKEY.asMatchPredicate()));
         m.put("hotkeys.show", new Rule("", HOTKEY.asMatchPredicate()));
         m.put("overlay.enabled", new Rule("true", BOOL));
+        m.put("overlay.transparent", new Rule("false", BOOL));
         m.put("overlay.corner", new Rule("tr", oneOf("tl", "tr", "bl", "br")));
         m.put("sounds.enabled", new Rule("true", BOOL));
         m.put("sounds.volume", new Rule("60", range(0, 100)));

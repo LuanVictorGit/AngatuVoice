@@ -9,6 +9,7 @@
   let hasMore = false;
   let linkDown = false;
   let lastUpdateState = "";
+  let activeFullscreenTile = null;
 
   AV.state = null;
   AV.chat = "radmin";
@@ -104,7 +105,8 @@
       dm && peer && E("span", { class: "chip ml-3 align-middle" }, peer.online ? "Online" : "Offline"));
     AV.fill($("chat-tools"), 
       group && group.hasInvite && E("button", { class: "btn", onclick: () => inviteDialog(group) }, AV.icon("copy", "ic-sm"), E("span", { class: "hidden lg:inline" }, "Convidar")),
-      group && group.kind !== "radmin" && E("button", { class: "btn btn-ghost btn-icon", title: "Sair do grupo", "aria-label": "Sair do grupo", onclick: () => leaveGroup(group) }, AV.icon("power")),
+      group && group.kind !== "radmin" && E("button", { class: "btn btn-ghost btn-icon text-muted hover:text-danger", title: "Excluir grupo", "aria-label": "Excluir grupo", onclick: () => deleteGroup(group) }, AV.icon("trash")),
+      dm && peer && E("button", { class: "btn btn-ghost btn-icon text-muted hover:text-danger", title: "Limpar ou excluir conversa", "aria-label": "Limpar ou excluir conversa", onclick: () => dmOptionsDialog(peer) }, AV.icon("trash")),
       E("button", { class: "btn btn-ghost btn-icon xl:hidden", title: "Participantes", "aria-label": "Participantes", onclick: membersDialog }, AV.icon("users")),
       E("button", { class: "btn " + (inThisCall ? "btn-danger" : "btn-primary"), disabled: dm && peer && !peer.online && !inThisCall,
         onclick: () => (inThisCall ? AV.rtc.leave() : startCall(AV.chat)) },
@@ -186,13 +188,31 @@
   function videoEl(tile) {
     const key = (tile.local ? "local" : tile.id) + ":" + (tile.key || "");
     let node = videoEls.get(key);
+    const shouldMute = tile.local || AV.rtc.isShareMuted(tile.id);
     if (!node || node.srcObject !== tile.stream) {
-      node = E("video", { autoplay: true, playsinline: true, muted: tile.local, "aria-label": "Tela de " + nameOf(tile.id) });
-      node.muted = tile.local;
+      node = E("video", { autoplay: true, playsinline: true, muted: shouldMute, "aria-label": "Tela de " + nameOf(tile.id) });
+      node.muted = shouldMute;
       node.srcObject = tile.stream;
       videoEls.set(key, node);
+    } else if (node.muted !== shouldMute) {
+      node.muted = shouldMute;
     }
     return node;
+  }
+
+  function toggleFullscreen(tileKey) {
+    if (activeFullscreenTile === tileKey) {
+      activeFullscreenTile = null;
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      }
+    } else {
+      activeFullscreenTile = tileKey;
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen?.().catch(() => {});
+      }
+    }
+    renderCall();
   }
 
   function renderCall() {
@@ -216,8 +236,35 @@
       E("div", { class: "tile-name" }, id === me().id ? "Você" : nameOf(id), id === me().id && rtc.muted && AV.icon("mic-off", "ic-sm ml-2 inline text-danger")),
       id !== me().id && E("input", { type: "range", min: 0, max: 200, value: rtc.peerVolume(id), class: "w-28", "aria-label": "Volume de " + nameOf(id),
         title: "Volume de " + nameOf(id), oninput: (e) => rtc.setPeerVolume(id, Number(e.target.value)) })));
-    const videos = rtc.videoTiles().map((t) => E("div", { class: "tile tile-video" }, videoEl(t),
-      E("div", { class: "tile-name" }, (t.local ? "Sua tela" : "Tela de " + nameOf(t.id)) + (t.local ? qualityLabel() : ""))));
+    const videos = rtc.videoTiles().map((t) => {
+      const tileKey = (t.local ? "local" : t.id) + ":" + (t.key || "");
+      const isFullscreen = activeFullscreenTile === tileKey;
+      const isMuted = rtc.isShareMuted(t.id);
+      return E("div", {
+        class: "tile tile-video" + (isFullscreen ? " fullscreen" : ""),
+        dataset: { tile: tileKey },
+        ondblclick: () => toggleFullscreen(tileKey)
+      },
+        E("div", { class: "tile-video-header" },
+          E("div", { class: "tile-name truncate" }, (t.local ? "Sua tela" : "Tela de " + nameOf(t.id)) + (t.local ? qualityLabel() : "")),
+          E("div", { class: "flex items-center gap-1" },
+            E("button", {
+              class: "btn btn-ghost btn-icon !h-7 !w-7 hover:bg-bg2",
+              title: isMuted ? "Reativar som da transmissão" : "Silenciar transmissão de tela",
+              "aria-label": isMuted ? "Reativar som da transmissão" : "Silenciar transmissão de tela",
+              onclick: (e) => { e.stopPropagation(); rtc.toggleShareMute(t.id); }
+            }, AV.icon(isMuted ? "volume-x" : "volume", "ic-sm")),
+            E("button", {
+              class: "btn btn-ghost btn-icon !h-7 !w-7 hover:bg-bg2",
+              title: isFullscreen ? "Sair da tela cheia (Esc)" : "Abrir transmissão em tela cheia",
+              "aria-label": isFullscreen ? "Sair da tela cheia (Esc)" : "Abrir transmissão em tela cheia",
+              onclick: (e) => { e.stopPropagation(); toggleFullscreen(tileKey); }
+            }, AV.icon(isFullscreen ? "minimize" : "maximize", "ic-sm"))
+          )
+        ),
+        videoEl(t)
+      );
+    });
     AV.fill(panel, E("div", { class: "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" }, videos, tiles));
     for (const key of [...videoEls.keys()]) {
       if (!rtc.videoTiles().some((t) => (t.local ? "local" : t.id) + ":" + (t.key || "") === key)) videoEls.delete(key);
@@ -293,13 +340,56 @@
     } catch (e) { AV.fail(e); }
   }
 
-  async function leaveGroup(group) {
-    if (!(await AV.confirm("Sair de " + group.name + "?", "Você perde o acesso a este grupo neste computador. Para voltar, precisará de um novo convite.", "Sair do grupo", true))) return;
+  function dmOptionsDialog(peer) {
+    AV.modal("Conversa com " + peer.name, (body, close) => {
+      body.append(
+        E("p", { class: "mb-4 text-sm text-muted" }, "Escolha o que deseja fazer com esta conversa privada:"),
+        E("div", { class: "flex flex-col gap-3" },
+          E("div", { class: "card flex items-center justify-between p-3" },
+            E("div", { class: "pr-3" },
+              E("div", { class: "font-semibold text-sm" }, "Limpar mensagens"),
+              E("div", { class: "text-xs text-muted" }, "Apaga todo o histórico de mensagens trocadas com este participante no seu computador.")),
+            E("button", { class: "btn btn-danger btn-sm whitespace-nowrap", onclick: async () => {
+              close();
+              if (await AV.confirm("Limpar mensagens de " + peer.name + "?", "Todas as mensagens desta conversa serão apagadas permanentemente deste computador.", "Limpar mensagens", true)) {
+                try {
+                  await AV.api("DELETE", "/api/messages?chat=" + encodeURIComponent("dm:" + peer.id));
+                  messages = [];
+                  renderMessages(true);
+                  AV.toast("Mensagens apagadas.", "ok");
+                } catch (e) { AV.fail(e); }
+              }
+            } }, "Limpar")),
+          E("div", { class: "card flex items-center justify-between p-3" },
+            E("div", { class: "pr-3" },
+              E("div", { class: "font-semibold text-sm" }, "Excluir conversa"),
+              E("div", { class: "text-xs text-muted" }, "Apaga todas as mensagens e remove o participante da sua lista lateral.")),
+            E("button", { class: "btn btn-danger btn-sm whitespace-nowrap", onclick: async () => {
+              close();
+              if (await AV.confirm("Excluir conversa com " + peer.name + "?", "A conversa e todas as mensagens serão apagadas permanentemente deste computador.", "Excluir conversa", true)) {
+                try {
+                  await AV.api("DELETE", "/api/peers/" + peer.id);
+                  messages = [];
+                  AV.chat = "radmin";
+                  await AV.refresh();
+                  selectChat("radmin");
+                  AV.toast("Conversa excluída.", "ok");
+                } catch (e) { AV.fail(e); }
+              }
+            } }, "Excluir"))
+        )
+      );
+    }, [{ label: "Fechar", run: (close) => close() }]);
+  }
+
+  async function deleteGroup(group) {
+    if (!(await AV.confirm("Excluir " + group.name + "?", "Você sairá do grupo e todas as mensagens dele serão apagadas deste computador.", "Excluir grupo", true))) return;
     try {
       await AV.api("DELETE", "/api/groups/" + group.id);
       AV.chat = "radmin";
       await AV.refresh();
       selectChat("radmin");
+      AV.toast("Grupo excluído com sucesso.", "ok");
     } catch (e) { AV.fail(e); }
   }
 
@@ -471,10 +561,25 @@
     AV.on("net", () => refreshSoon());
     AV.on("group.changed", () => refreshSoon());
     AV.on("peer.profile", () => refreshSoon());
+    AV.on("messages.cleared", ({ chat }) => { if (chat === AV.chat) { messages = []; renderMessages(true); } });
+    AV.on("peer.removed", ({ id }) => { if (AV.chat === "dm:" + id) { selectChat("radmin"); } refreshSoon(); });
     AV.on("call.state", (d) => { AV.rtc.handleRoom(d); renderCall(); renderNav(); renderMembers(); renderHeader(); });
     AV.on("call.signal", (d) => AV.rtc.handleSignal(d));
     AV.on("update", onUpdate);
     AV.on("hotkey", onHotkey);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && activeFullscreenTile) {
+        activeFullscreenTile = null;
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        renderCall();
+      }
+    });
+    document.addEventListener("fullscreenchange", () => {
+      if (!document.fullscreenElement && activeFullscreenTile) {
+        activeFullscreenTile = null;
+        renderCall();
+      }
+    });
     $("btn-open-settings").addEventListener("click", () => AV.openSettings("app"));
     $("btn-send").addEventListener("click", send);
     $("btn-emoji").addEventListener("click", emojiPicker);

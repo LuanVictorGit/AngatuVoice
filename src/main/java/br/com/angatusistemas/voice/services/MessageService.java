@@ -101,6 +101,16 @@ public final class MessageService {
         Saveable.saveAll(rows);
     }
 
+    public static void clear(String chat) {
+        List<Message> rows = Saveable.query(Message.class,
+                "SELECT data FROM " + TABLE + " WHERE json_extract(data,'$.chatId')=?", chat);
+        Saveable.transaction(() -> {
+            for (Message m : rows) {
+                m.delete();
+            }
+        });
+    }
+
     public record MessageView(String id, String chat, String from, String name, String text, long ts, boolean pending,
                               boolean mine) {
     }

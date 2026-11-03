@@ -101,8 +101,11 @@ public final class Overlay {
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
-        g.setColor(CARD);
-        g.fill(new RoundRectangle2D.Double(0, 0, width, height, 14, 14));
+        boolean transparent = SettingsService.flag("overlay.transparent");
+        if (!transparent) {
+            g.setColor(CARD);
+            g.fill(new RoundRectangle2D.Double(0, 0, width, height, 14, 14));
+        }
         g.setFont(new Font("Segoe UI", Font.BOLD, 13));
         FontMetrics metrics = g.getFontMetrics();
         int y = 8;
@@ -123,8 +126,13 @@ public final class Overlay {
                 String initial = s.name().isEmpty() ? "?" : s.name().substring(0, 1).toUpperCase();
                 g.drawString(initial, 26 - metrics.stringWidth(initial) / 2, y + 25);
             }
+            String label = ellipsize(s.name(), metrics, width - 64);
+            if (transparent) {
+                g.setColor(new Color(0, 0, 0, 200));
+                g.drawString(label, 53, y + 26);
+            }
             g.setColor(INK);
-            g.drawString(ellipsize(s.name(), metrics, width - 64), 52, y + 25);
+            g.drawString(label, 52, y + 25);
             y += ROW;
         }
         g.dispose();

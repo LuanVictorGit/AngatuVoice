@@ -89,6 +89,7 @@ public final class GroupService {
         if (group == null || RADMIN.equals(id)) {
             throw new IllegalArgumentException("cannot leave " + id);
         }
+        MessageService.clear(id);
         group.delete();
     }
 

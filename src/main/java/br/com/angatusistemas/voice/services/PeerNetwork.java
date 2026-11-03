@@ -169,6 +169,17 @@ public final class PeerNetwork {
         dial(host, port);
     }
 
+    public static void forget(String id) {
+        PeerLink link = LINKS.remove(id);
+        if (link != null) {
+            link.close();
+        }
+        Peer peer = Saveable.findById(Peer.class, id);
+        if (peer != null) {
+            peer.delete();
+        }
+    }
+
     public static List<PeerView> peers() {
         List<Peer> known = Saveable.query(Peer.class, "SELECT data FROM " + Saveable.tableName(Peer.class)
                 + " ORDER BY json_extract(data,'$.lastSeen') DESC LIMIT 200");

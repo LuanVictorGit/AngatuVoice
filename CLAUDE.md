@@ -137,7 +137,7 @@ Java 25, AngatuLibraries `62d2678fcb52c2f3c3da46c9221eadbf8d683ec2` (https://git
 ```
 mvn -B test
 mvn -q -B -DskipTests package
-java --enable-native-access=ALL-UNNAMED -jar target/angatu-voice-1.2.0.jar
+java --enable-native-access=ALL-UNNAMED -jar target/angatu-voice-1.3.0.jar
 ```
 Dados em `%APPDATA%\AngatuVoice` (`-Dangatu.data=` muda); caches e JCEF em `%LOCALAPPDATA%\AngatuVoice`. Tailwind: `tools\bin\tailwindcss.exe -i tools\tailwind\input.css -o src\main\resources\public\styles\tailwind.css --minify` (arquivo gerado é versionado). Distribuição: `tools\package.ps1`, depois `ISCC installer\angatu-voice.iss /DAppVersion=X.Y.Z`.
 Propriedades de desenvolvimento: `angatu.radmin.ip`/`angatu.radmin.alias` (simula o adaptador), `angatu.peer.port`, `angatu.debug.port` (depuração do Chromium em loopback, só para teste).
@@ -146,9 +146,9 @@ Propriedades de desenvolvimento: `angatu.radmin.ip`/`angatu.radmin.alias` (simul
 `Main`: logs em arquivo → `angatu.db` → instância única → migrações → porta livre em loopback → `new AngatuLib("localhost", porta, false)` (host Jetty fixado em `127.0.0.1` no construtor de `BootRoute`) → `PeerNetwork.start()` → `UpdateService.start()` → autostart → JFrame/JCEF abre `/boot?t=<token de uso único>` → cookie `av_session` → `/app`.
 
 ## Rotas / Entidades
-- Página: `/app` (HtmlRouteAPI). Rotas: `/health`, `/boot`, `GET /api/state`, `PUT /api/settings`, `PUT /api/me`, grupos (`/api/groups`, `/join`, `/{id}/invite`, `DELETE /{id}`), mensagens (`/api/messages`, `/read`), `/api/peers`, chamadas (`/api/call/state`, `/signal`), atualizador (`/api/update`, `/check`, `/install`, `/cancel`), `/api/system/{diagnostics,open}`, `/api/app/quit`, `PUT /api/me/avatar`, `GET /api/avatar/{id}`, `POST /api/overlay`, WS `/ws` (porta única, sessão checada em `LiveHub`)
+- Página: `/app` (HtmlRouteAPI). Rotas: `/health`, `/boot`, `GET /api/state`, `PUT /api/settings`, `PUT /api/me`, grupos (`/api/groups`, `/join`, `/{id}/invite`, `DELETE /{id}`), mensagens (`/api/messages`, `/read`, `DELETE /api/messages`), peers (`/api/peers`, `DELETE /{id}`), chamadas (`/api/call/state`, `/signal`), atualizador (`/api/update`, `/check`, `/install`, `/cancel`), `/api/system/{diagnostics,open}`, `/api/app/quit`, `PUT /api/me/avatar`, `GET /api/avatar/{id}`, `POST /api/overlay`, WS `/ws` (porta única, sessão checada em `LiveHub`)
 - Saveable: `Setting`, `Identity`, `Group`, `Peer`, `Message`, `UpdateRecord`, `SchemaState`
-- Eventos WS: `open`, `message`, `message.delivered`, `peer.online/offline`, `net`, `group.changed`, `call.state`, `call.signal`, `update`, `hotkey`, `peer.profile`
+- Eventos WS: `open`, `message`, `message.delivered`, `messages.cleared`, `peer.online/offline`, `peer.removed`, `net`, `group.changed`, `call.state`, `call.signal`, `update`, `hotkey`, `peer.profile`
 
 ## Env
 Nenhuma obrigatória. `ANGATU_UPDATE_TOKEN` (repositório privado). Segredo de CI: `UPDATE_SIGNING_KEY` (Ed25519 PKCS#8 Base64); a chave pública está em `updater.properties`.
@@ -157,7 +157,7 @@ Nenhuma obrigatória. `ANGATU_UPDATE_TOKEN` (repositório privado). Segredo de C
 Padrão Java da skill (`java-standard.md`); sem Javadoc em método; JSON só por `GsonAPI`; configurações só pelas chaves de `SettingsService` (strings validadas); `ds.css` única fonte visual, componentes em `@layer components`; texto visível em PT-BR; interface é SPA (nenhuma navegação além de `/boot` → `/app`).
 
 ## Versões
-Regra completa em `docs/VERSIONAMENTO.md`: toda release tem número novo e maior; `pom.xml`, `installer/angatu-voice.iss` e `CHANGELOG.md` mudam juntos; o workflow recusa a tag que não bater com o `pom.xml` e o `CHANGELOG.md`. Versão atual: 1.2.0. O `installer/angatu-voice.iss` fica só em ASCII: textos pelas mensagens `{cm:...}` do próprio Inno e acentos no `[Code]` como `#$E7`.
+Regra completa em `docs/VERSIONAMENTO.md`: toda release tem número novo e maior; `pom.xml`, `installer/angatu-voice.iss` e `CHANGELOG.md` mudam juntos; o workflow recusa a tag que não bater com o `pom.xml` e o `CHANGELOG.md`. Versão atual: 1.3.0. O `installer/angatu-voice.iss` fica só em ASCII: textos pelas mensagens `{cm:...}` do próprio Inno e acentos no `[Code]` como `#$E7`.
 
 ## Armadilhas já pagas
 - **Entrada no JCEF**: as janelas do Chromium pertencem à thread de eventos do Swing, que não lê mensagens do Windows; sem o laço de `PeekMessage` do `BrowserWindow.startMessagePump` a página renderiza e ignora mouse e teclado. Teste sempre com mouse e teclado reais (`mouse_event`/`SendKeys`), não só por CDP, e com a janela em primeiro plano.

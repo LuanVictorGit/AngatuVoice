@@ -134,6 +134,22 @@
     const start = E("button", { class: "btn" }, "Testar microfone");
     const chime = E("button", { class: "btn" }, "Testar áudio");
     let running = null;
+    let loopback = false;
+    const loopbackToggle = E("input", {
+      type: "checkbox",
+      "aria-label": "Escutar o próprio áudio",
+      onchange: (e) => {
+        loopback = e.target.checked;
+        if (running && running.monitorGain) {
+          running.monitorGain.gain.value = loopback ? 1 : 0;
+        }
+      }
+    });
+    const loopbackOption = E("label", { class: "flex items-center gap-2 cursor-pointer text-sm" },
+      loopbackToggle,
+      E("span", { class: "font-semibold" }, "Escutar o próprio áudio"),
+      E("span", { class: "text-xs text-muted" }, "(ideal usar fones de ouvido para evitar microfonia)")
+    );
     const stop = () => {
       if (!running) return;
       running.stream.getTracks().forEach((t) => t.stop());
@@ -156,8 +172,13 @@
         gain.gain.value = Number(value("audio.inputVolume")) / 100;
         ctx.createMediaStreamSource(stream).connect(gain);
         gain.connect(analyser);
+        const monitorGain = ctx.createGain();
+        monitorGain.gain.value = loopback ? 1 : 0;
+        gain.connect(monitorGain);
+        monitorGain.connect(ctx.destination);
+        if (ctx.setSinkId) await ctx.setSinkId(value("audio.output") || "").catch(() => {});
         const buffer = new Float32Array(analyser.fftSize);
-        running = { stream, ctx, frame: 0 };
+        running = { stream, ctx, frame: 0, monitorGain };
         const tick = () => {
           analyser.getFloatTimeDomainData(buffer);
           let sum = 0;
@@ -187,8 +208,8 @@
       });
       setTimeout(() => ctx.close(), 900);
     });
-    return E("div", { class: "row flex-col items-stretch" }, E("div", { class: "font-semibold" }, "Teste de áudio"),
-      E("div", { class: "meter" }, meter), status, E("div", { class: "flex gap-2" }, start, chime));
+    return E("div", { class: "row flex-col items-stretch gap-2" }, E("div", { class: "font-semibold" }, "Teste de microfone e áudio"),
+      E("div", { class: "meter" }, meter), status, loopbackOption, E("div", { class: "flex gap-2 pt-1" }, start, chime));
   }
 
   function videoTab(body) {
@@ -260,6 +281,7 @@
       toggle("privacy.preview", "Mostrar o texto nas notificações", "Desligado, a notificação só diz que chegou uma mensagem."),
       toggle("privacy.shareAlias", "Compartilhar meu apelido do Radmin", "Outros participantes veem o seu apelido do Radmin VPN ao lado do nome."),
       toggle("overlay.enabled", "Mostrar quem está falando no canto da tela", "Durante uma chamada, com o Angatu Voice em segundo plano, um aviso discreto mostra quem fala."),
+      toggle("overlay.transparent", "Fundo transparente nos avisos", "Remove a caixa escura de fundo, exibindo apenas as fotos e os nomes sobre a tela."),
       select("overlay.corner", "Posição do aviso", "", [["tr", "Canto superior direito"], ["tl", "Canto superior esquerdo"], ["br", "Canto inferior direito"], ["bl", "Canto inferior esquerdo"]]));
   }
 

@@ -128,7 +128,12 @@ kbd { font-family: var(--av-mono); font-size: 12px; padding: 2px 6px; border-rad
 .tile { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 120px; padding: 14px; border-radius: var(--av-radius); background: var(--av-bg2); border: 2px solid var(--av-line); transition: border-color var(--av-fast) var(--av-ease); }
 .tile.speaking { border-color: var(--av-ok); }
 .tile video { width: 100%; max-height: 52vh; border-radius: var(--av-radius-sm); background: #000; object-fit: contain; }
-.tile-video { grid-column: 1 / -1; align-items: stretch; }
+.tile-video { grid-column: 1 / -1; align-items: stretch; position: relative; overflow: hidden; padding: 0; }
+.tile-video video { border-radius: calc(var(--av-radius) - 2px); }
+.tile-video-header { position: absolute; top: 10px; left: 10px; right: 10px; z-index: 10; display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-radius: var(--av-radius-sm); background: rgba(15, 14, 13, 0.72); backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.08); }
+.tile-video.fullscreen { position: fixed !important; inset: 0 !important; z-index: 9999 !important; border-radius: 0 !important; border: none !important; background: #000 !important; padding: 0 !important; margin: 0 !important; width: 100vw !important; height: 100vh !important; max-height: none !important; }
+.tile-video.fullscreen video { width: 100% !important; height: 100% !important; max-height: none !important; border-radius: 0 !important; object-fit: contain !important; }
+.tile-video.fullscreen .tile-video-header { top: 16px; left: 16px; right: 16px; background: rgba(15, 14, 13, 0.85); }
 .tile-name { font-weight: 600; font-size: 13px; }
 
 .toast-host { position: fixed; right: 16px; bottom: 76px; display: flex; flex-direction: column; gap: 8px; z-index: 60; pointer-events: none; }

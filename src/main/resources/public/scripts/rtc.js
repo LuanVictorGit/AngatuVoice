@@ -38,8 +38,32 @@
     if (!ctx) return;
     master.gain.value = rtc.deafened ? 0 : num("audio.outputVolume") / 100;
     if (ctx.setSinkId) ctx.setSinkId(cfg()["audio.output"] || "").catch(() => {});
-    peers.forEach((p) => p.audios.forEach((a) => { a.gain.gain.value = peerGain(p.id); }));
+    peers.forEach((p) => p.audios.forEach((a) => {
+      if (a.share && rtc.isShareMuted(p.id)) {
+        a.gain.gain.value = 0;
+      } else {
+        a.gain.gain.value = peerGain(p.id);
+      }
+    }));
   }
+
+  rtc.mutedShares = new Set();
+  rtc.isShareMuted = function (id) {
+    return rtc.mutedShares.has(id);
+  };
+  rtc.toggleShareMute = function (id) {
+    if (rtc.mutedShares.has(id)) {
+      rtc.mutedShares.delete(id);
+    } else {
+      rtc.mutedShares.add(id);
+    }
+    if (id === myId() && rtc.localShare) {
+      const muted = rtc.mutedShares.has(id);
+      rtc.localShare.getAudioTracks().forEach((t) => { t.enabled = !muted; });
+    }
+    applyOutput();
+    rtc.onchange();
+  };
 
   function peerVolumes() {
     try { return JSON.parse(cfg()["audio.peerVolumes"] || "{}"); } catch (e) { return {}; }
@@ -194,7 +218,7 @@
     keepAlive.play().catch(() => {});
     const source = c.createMediaStreamSource(stream);
     const gain = c.createGain();
-    gain.gain.value = peerGain(p.id);
+    gain.gain.value = (share && rtc.isShareMuted(p.id)) ? 0 : peerGain(p.id);
     const analyser = c.createAnalyser();
     analyser.fftSize = 1024;
     source.connect(gain);
