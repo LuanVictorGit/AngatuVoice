@@ -124,6 +124,7 @@ public final class SettingsService {
         m.put("audio.sensitivity", new Rule("50", range(0, 100)));
         m.put("audio.ptt", new Rule("false", BOOL));
         m.put("audio.peerVolumes", new Rule("{}", v -> v.length() <= 4000 && v.startsWith("{")));
+        m.put("audio.shareVolumes", new Rule("{}", v -> v.length() <= 4000 && v.startsWith("{")));
         m.put("audio.peerMutes", new Rule("[]", v -> v.length() <= 4000 && v.startsWith("[")));
         m.put("audio.echo", new Rule("true", BOOL));
         m.put("audio.noise", new Rule("true", BOOL));

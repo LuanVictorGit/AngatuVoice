@@ -219,10 +219,20 @@
     return E("button", { id: "ping-chip", class: "ping-chip", title: ping.title, "aria-label": ping.title, onclick: latencyDialog }, AV.pingBadge(ping.ms, ping.text));
   }
 
+  /* Your own share is never shown back to you (it only cost decoding and a mirror of the screen); this says it is on air and how it leaves. */
+  function shareChip() {
+    if (!AV.rtc.localShare) return E("span", { id: "share-chip", class: "hidden" });
+    const info = AV.rtc.shareInfo();
+    const detail = info ? " · " + info.width + "×" + info.height + " · " + info.fps + " FPS" : "";
+    return E("span", { id: "share-chip", class: "chip text-danger", title: "Sua tela está sendo transmitida" }, "Transmitindo" + detail);
+  }
+
   function renderPing() {
     if (!AV.state) return;
     const chip = $("ping-chip");
     if (chip) chip.replaceWith(pingChip());
+    const share = $("share-chip");
+    if (share) share.replaceWith(shareChip());
     document.querySelectorAll("[data-ping-peer]").forEach((node) => AV.fill(node, AV.pingBadge(peerPing(node.dataset.pingPeer))));
   }
 
@@ -303,6 +313,7 @@
           E("div", { class: "flex items-center gap-2 text-xs text-muted" }, E("span", { class: "dot " + (r.connected ? "dot-on" : "dot-off") }), r.connected ? "Radmin · " + r.ip : "Sem conexão"))),
       E("div", { class: "flex-1" }),
       E("div", { class: "flex items-center gap-2" },
+        shareChip(),
         pingChip(),
         btn(rtc.muted ? "mic-off" : "mic", rtc.muted ? "Ativar microfone" : "Silenciar microfone", () => { rtc.toggleMute(); }, rtc.muted ? "btn-off" : ""),
         btn(rtc.deafened ? "headphones-off" : "headphones", rtc.deafened ? "Ativar áudio" : "Silenciar áudio", () => { rtc.toggleDeafen(); }, rtc.deafened ? "btn-off" : ""),
@@ -313,11 +324,29 @@
 
   async function shareToggle() {
     try {
-      if (AV.rtc.localShare) AV.rtc.stopShare();
-      else await AV.rtc.startShare();
+      if (AV.rtc.localShare) { AV.rtc.stopShare(); return; }
+      const sources = AV.rtc.shareSources();
+      const source = sources.length > 1 ? await pickShareSource(sources) : sources[0];
+      if (source && AV.rtc.room && !AV.rtc.localShare) await AV.rtc.startShare(source.id);
     } catch (e) {
       if (e && e.name !== "NotAllowedError" && e.name !== "AbortError") AV.toast("Não foi possível compartilhar a tela.", "error");
     }
+  }
+
+  function pickShareSource(sources) {
+    return new Promise((resolve) => {
+      let chosen = null;
+      AV.modal("Escolha a tela", (body, done) => {
+        body.append(E("div", { class: "grid grid-cols-1 gap-3 sm:grid-cols-2" }, sources.map((source) => {
+          const preview = E("div", { class: "share-preview" }, E("span", { class: "text-xs text-muted" }, "Carregando prévia…"));
+          AV.rtc.previewSource(source.id)
+            .then((url) => AV.fill(preview, E("img", { src: url, alt: "Prévia de " + source.label })))
+            .catch(() => AV.fill(preview, AV.icon("screen")));
+          return E("button", { class: "share-source", onclick: () => { chosen = source; done(); } },
+            preview, E("span", { class: "font-semibold" }, source.label));
+        })));
+      }, [{ label: "Cancelar", run: (done) => done() }], () => resolve(chosen));
+    });
   }
 
   function toggleFullscreen(tileKey) {
@@ -370,27 +399,27 @@
     const title = E("div", { class: "tile-name truncate" });
     const info = E("span", { class: "mono flex-none text-muted" });
     const sound = iconButton(() => AV.rtc.toggleShareMute(tile.id));
+    const volume = E("input", { type: "range", min: 0, max: 100, class: "w-24", value: AV.rtc.shareVolume(tile.id),
+      "aria-label": "Volume da transmissão", title: "Volume da transmissão",
+      onclick: (e) => e.stopPropagation(), ondblclick: (e) => e.stopPropagation(),
+      oninput: (e) => AV.rtc.setShareVolume(tile.id, Number(e.target.value)) });
     const expand = iconButton(() => toggleFullscreen(tile.key));
     const header = E("div", { class: "tile-video-header" },
       E("div", { class: "flex min-w-0 items-center gap-2" }, title, info),
-      E("div", { class: "flex flex-none items-center gap-1" }, sound, expand));
+      E("div", { class: "flex flex-none items-center gap-1" }, volume, sound, expand));
     const root = E("div", { class: "tile tile-video", dataset: { tile: tile.key }, tabindex: 0,
       onclick: () => { focusedTile = tile.key; renderCall(); },
       ondblclick: () => toggleFullscreen(tile.key) }, header, video);
-    view = { root, video, title, info, sound, expand };
+    view = { root, video, title, info, sound, volume, expand };
     callView.videos.set(tile.key, view);
     callView.stage.append(root);
     return view;
   }
 
   function videoInfo(tile) {
-    const data = tile.local ? AV.rtc.shareInfo() : AV.rtc.peerStats(tile.id);
-    if (!data) return "";
-    const width = tile.local ? data.width : data.inWidth;
-    const height = tile.local ? data.height : data.inHeight;
-    const fps = tile.local ? data.fps : data.inFps;
-    if (!height) return "";
-    return width + "×" + height + " · " + fps + " FPS" + (tile.local && data.codec ? " · " + data.codec : "");
+    const data = AV.rtc.peerStats(tile.id);
+    if (!data || !data.inHeight) return "";
+    return data.inWidth + "×" + data.inHeight + " · " + data.inFps + " FPS";
   }
 
   function syncVideos(tiles) {
@@ -405,14 +434,15 @@
         if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       }
     });
-    if (!keys.has(focusedTile)) focusedTile = tiles.length ? (tiles.find((t) => !t.local) || tiles[0]).key : null;
+    if (!keys.has(focusedTile)) focusedTile = tiles.length ? tiles[0].key : null;
     tiles.forEach((tile) => {
       const view = videoTile(tile);
       const full = activeFullscreenTile === tile.key;
       const muted = AV.rtc.isShareMuted(tile.id);
       view.root.classList.toggle("focused", tile.key === focusedTile);
       view.root.classList.toggle("fullscreen", full);
-      view.title.textContent = tile.local ? "Sua tela" : "Tela de " + nameOf(tile.id);
+      view.title.textContent = "Tela de " + nameOf(tile.id);
+      if (document.activeElement !== view.volume) view.volume.value = AV.rtc.shareVolume(tile.id);
       view.info.textContent = videoInfo(tile);
       setIconButton(view.sound, muted ? "volume-x" : "volume", muted ? "Reativar som da transmissão" : "Silenciar som da transmissão", muted);
       setIconButton(view.expand, full ? "minimize" : "maximize", full ? "Sair da tela cheia (Esc)" : "Abrir em tela cheia", false);

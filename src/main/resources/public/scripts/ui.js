@@ -97,11 +97,13 @@ AV.fail = function (error) {
   AV.toast(error && error.message ? error.message : "Algo deu errado.", "error");
 };
 
-AV.modal = function (title, build, actions) {
+AV.modal = function (title, build, actions, onClose) {
   const root = document.getElementById("overlay-root");
   const close = () => {
+    if (!overlay.isConnected) return;
     overlay.remove();
     document.removeEventListener("keydown", onKey);
+    if (onClose) onClose();
   };
   const onKey = (e) => { if (e.key === "Escape") close(); };
   const body = AV.el("div", { class: "mt-4" });

@@ -7,6 +7,19 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.4.6] - 2026-11-03
+
+### Adicionado
+- Ao compartilhar com mais de um monitor, uma janela mostra a prévia de cada tela para você escolher qual transmitir, ou todas juntas.
+- Volume próprio para cada transmissão que você assiste, separado do volume da voz da pessoa.
+- Aviso "Transmitindo" na barra inferior, com a resolução e os FPS que estão saindo.
+
+### Alterado
+- Sua própria transmissão não aparece mais para você.
+
+### Corrigido
+- Compartilhamento de tela travado e borrado: a imagem começava a 2–5 FPS e nunca ganhava banda. Agora fica fluida desde o início e a nitidez sobe em poucos segundos, com o codec mais leve para o processador.
+
 ## [1.4.5] - 2026-11-03
 
 ### Corrigido

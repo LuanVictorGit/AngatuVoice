@@ -16,7 +16,8 @@
   const DUCK_GAIN = 0.06;
   const CALL_TIMEOUT_MS = 45000;
   const STATE_CHANNEL_ID = 7;
-  const CODEC_ORDER = ["video/AV1", "video/VP9", "video/VP8"];
+  // No hardware encoder reaches the embedded Chromium (and no H.264 at all): VP8 is the only software codec that keeps 1080p at 30+ FPS here; VP9 and AV1 measured at 2 to 15 FPS.
+  const CODEC_ORDER = ["video/VP8", "video/VP9", "video/AV1"];
   const START_KBPS = 2500;
   const MIN_KBPS = 300;
   const LOWER_RUNGS = [1440, 1080, 720, 540, 360];
@@ -68,7 +69,7 @@
     master.gain.value = rtc.deafened ? 0 : num("audio.outputVolume") / 100;
     if (ctx.setSinkId) ctx.setSinkId(cfg()["audio.output"] || "").catch(() => {});
     peers.forEach((p) => p.audios.forEach((a) => {
-      a.gain.gain.value = a.share && rtc.isShareMuted(p.id) ? 0 : peerGain(p.id);
+      a.gain.gain.value = a.share ? shareGain(p.id) : peerGain(p.id);
     }));
   }
 
@@ -122,6 +123,28 @@
     AV.api("PUT", "/api/settings", { "audio.peerVolumes": cfg()["audio.peerVolumes"] }).catch(() => {});
   }, 600);
   rtc.peerVolume = (id) => { const v = peerVolumes()[id]; return v === undefined ? 100 : v; };
+
+  /* A watched share has its own volume, apart from the person's voice: lowering a loud game must not make the friend inaudible. */
+  function shareVolumes() {
+    try { return JSON.parse(cfg()["audio.shareVolumes"] || "{}"); } catch (e) { return {}; }
+  }
+
+  function shareGain(id) {
+    if (rtc.muteAll || rtc.isShareMuted(id)) return 0;
+    return rtc.shareVolume(id) / 100;
+  }
+
+  rtc.shareVolume = (id) => { const v = shareVolumes()[id]; return v === undefined ? 100 : v; };
+  rtc.setShareVolume = function (id, percent) {
+    const all = shareVolumes();
+    all[id] = percent;
+    cfg()["audio.shareVolumes"] = JSON.stringify(all);
+    applyOutput();
+    persistShareVolumes();
+  };
+  const persistShareVolumes = AV.debounce(() => {
+    AV.api("PUT", "/api/settings", { "audio.shareVolumes": cfg()["audio.shareVolumes"] }).catch(() => {});
+  }, 600);
   rtc.applyOutput = applyOutput;
 
   function threshold() {
@@ -432,7 +455,7 @@
     keepAlive.play().catch(() => {});
     const source = c.createMediaStreamSource(stream);
     const gain = c.createGain();
-    gain.gain.value = share && rtc.isShareMuted(p.id) ? 0 : peerGain(p.id);
+    gain.gain.value = share ? shareGain(p.id) : peerGain(p.id);
     const analyser = c.createAnalyser();
     analyser.fftSize = 1024;
     source.connect(gain);
@@ -686,7 +709,8 @@
     params.encodings[0].maxBitrate = step.maxKbps * 1000;
     params.encodings[0].maxFramerate = step.fps;
     params.encodings[0].scaleResolutionDownBy = step.scale;
-    params.degradationPreference = cfg()["video.priority"] === "motion" ? "maintain-framerate" : "maintain-resolution";
+    // Keeping resolution starves the frame rate at the start (2 to 5 FPS), and so few frames never let the bandwidth estimate climb: measured stuck near 400 kbps against 7 Mbps with this.
+    params.degradationPreference = "maintain-framerate";
     return sender.setParameters(params).catch((e) => console.warn("sender parameters refused", e));
   }
 
@@ -700,6 +724,35 @@
       }
     });
   }
+
+  /* What the share picker offers: each monitor, then all of them together. */
+  rtc.shareSources = function () {
+    const monitors = AV.state.monitors || [];
+    if (monitors.length < 2) return [{ id: FULL_DESKTOP, label: "Tela inteira", index: -1 }];
+    return [
+      ...monitors.map((m, i) => ({ id: "screen:" + m.id + ":0", label: "Tela " + (i + 1) + (m.primary ? " (principal)" : ""), index: i })),
+      { id: FULL_DESKTOP, label: "Todas as telas", index: -1 },
+    ];
+  };
+
+  rtc.previewSource = async function (sourceId) {
+    const stream = await AV.capture({ video: { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: sourceId, maxWidth: 480, maxHeight: 270, maxFrameRate: 5 } }, audio: false });
+    try {
+      const video = document.createElement("video");
+      video.muted = true;
+      video.srcObject = stream;
+      await video.play();
+      if (!video.videoWidth) await new Promise((resolve) => { video.onresize = resolve; setTimeout(resolve, 1500); });
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth || 480;
+      canvas.height = video.videoHeight || 270;
+      canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+      video.srcObject = null;
+      return canvas.toDataURL("image/jpeg", 0.7);
+    } finally {
+      stream.getTracks().forEach((t) => t.stop());
+    }
+  };
 
   function chosenSource() {
     const monitors = AV.state.monitors || [];
@@ -715,8 +768,8 @@
     };
   }
 
-  async function captureScreen(withAudio) {
-    const sourceId = chosenSource();
+  async function captureScreen(withAudio, picked) {
+    const sourceId = picked || chosenSource();
     try {
       return await AV.capture(captureRequest(sourceId, withAudio));
     } catch (e) {
@@ -780,12 +833,12 @@
     ducked = false;
   }
 
-  rtc.startShare = async function () {
+  rtc.startShare = async function (sourceId) {
     if (!rtc.room || rtc.localShare) return;
     const system = flag("video.systemAudio") ? await openSystemAudio() : null;
     let captured;
     try {
-      captured = await captureScreen(flag("video.systemAudio") && !system);
+      captured = await captureScreen(flag("video.systemAudio") && !system, sourceId);
     } catch (e) {
       if (system) system.stop();
       throw e;
@@ -937,7 +990,6 @@
 
   rtc.videoTiles = function () {
     const tiles = [];
-    if (rtc.localShare) tiles.push({ id: myId(), key: "local", local: true, stream: rtc.localShare });
     peers.forEach((p) => p.videos.forEach((stream, key) => tiles.push({ id: p.id, key: p.id + ":" + key, local: false, stream })));
     return tiles;
   };

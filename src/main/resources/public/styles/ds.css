@@ -167,6 +167,10 @@ kbd { font-family: var(--av-mono); font-size: 12px; padding: 2px 6px; border-rad
 .ping-bad { color: var(--av-danger); }
 .ping-bad .ping-bars > i:nth-child(1) { background: var(--av-danger); }
 .ping-chip { display: inline-flex; align-items: center; height: 36px; padding: 0 10px; border: 1px solid var(--av-line); border-radius: var(--av-radius-sm); background: transparent; font: inherit; cursor: pointer; transition: background var(--av-fast) var(--av-ease), border-color var(--av-fast) var(--av-ease); }
+.share-source { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 2px solid var(--av-line); border-radius: var(--av-radius); background: var(--av-bg2); color: var(--av-ink); font: inherit; text-align: left; cursor: pointer; transition: border-color var(--av-fast) var(--av-ease), background var(--av-fast) var(--av-ease); }
+.share-source:hover, .share-source:focus-visible { border-color: var(--av-accent); background: var(--av-bg3); outline: none; }
+.share-preview { display: flex; align-items: center; justify-content: center; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--av-radius-sm); background: #000; }
+.share-preview img { width: 100%; height: 100%; object-fit: contain; }
 .ping-chip:hover { background: var(--av-bg3); border-color: var(--av-faint); }
 
 .incoming-host { position: fixed; top: 20px; left: 0; right: 0; z-index: 10000; display: flex; flex-direction: column; align-items: center; gap: 10px; pointer-events: none; }
