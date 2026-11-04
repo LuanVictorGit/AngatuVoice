@@ -13,6 +13,7 @@ O atualizador só instala uma versão **maior** que a instalada. Se um número f
 
 - Não apague e recrie uma tag que já foi para usuários. Errou? Lance a próxima versão de correção.
 - Não pule a atualização do `pom.xml` e do `CHANGELOG.md`: o workflow recusa a publicação se a tag, o `pom.xml` e o `CHANGELOG.md` não disserem a mesma versão.
+- **Obrigatório a cada atualização:** fazer commit, dar push e atualizar a release (criar e enviar a tag `vX.Y.Z`, que dispara o workflow e publica a release no GitHub). Versão nova que fica só local ou sem release não chega a ninguém.
 
 ## Formato: MAJOR.MINOR.PATCH
 

@@ -159,7 +159,7 @@ Nenhuma obrigatória. `ANGATU_UPDATE_TOKEN` (repositório privado). Segredo de C
 Padrão Java da skill (`java-standard.md`); sem Javadoc em método; JSON só por `GsonAPI`; configurações só pelas chaves de `SettingsService` (strings validadas); `ds.css` única fonte visual, componentes em `@layer components`; texto visível em PT-BR; interface é SPA (nenhuma navegação além de `/boot` → `/app`).
 
 ## Versões
-Regra completa em `docs/VERSIONAMENTO.md`: toda release tem número novo e maior; `pom.xml`, `installer/angatu-voice.iss` e `CHANGELOG.md` mudam juntos; o workflow recusa a tag que não bater com o `pom.xml` e o `CHANGELOG.md`. Versão atual: 1.4.7. O `installer/angatu-voice.iss` fica só em ASCII: textos pelas mensagens `{cm:...}` do próprio Inno e acentos no `[Code]` como `#$E7`.
+Regra completa em `docs/VERSIONAMENTO.md`: toda release tem número novo e maior; `pom.xml`, `installer/angatu-voice.iss` e `CHANGELOG.md` mudam juntos; o workflow recusa a tag que não bater com o `pom.xml` e o `CHANGELOG.md`. Versão atual: 1.4.7. **Toda atualização obriga, sem pedir: commit, push e release atualizada** (tag `vX.Y.Z` enviada, o workflow publica a release; conferir com `gh release list`). O `installer/angatu-voice.iss` fica só em ASCII: textos pelas mensagens `{cm:...}` do próprio Inno e acentos no `[Code]` como `#$E7`.
 
 ## Armadilhas já pagas
 - **Entrada no JCEF**: as janelas do Chromium pertencem à thread de eventos do Swing, que não lê mensagens do Windows; sem o laço de `PeekMessage` do `BrowserWindow.startMessagePump` a página renderiza e ignora mouse e teclado. Teste sempre com mouse e teclado reais (`mouse_event`/`SendKeys`), não só por CDP, e com a janela em primeiro plano.
