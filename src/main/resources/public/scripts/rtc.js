@@ -45,6 +45,8 @@
   let callTimer = null;
   let gateOpenUntil = 0;
   let lastStateSent = 0;
+  let sendChain = Promise.resolve();
+  let receiveChain = Promise.resolve();
   const cfg = () => AV.state.settings;
   const myId = () => AV.state.me.id;
   const num = (key) => Number(cfg()[key]);
@@ -282,7 +284,8 @@
     const room = rtc.room;
     if (!room) return;
     const body = { ...data, sid: p ? p.sid : "", ack: p ? p.remoteSid || "" : "" };
-    AV.api("POST", "/api/call/signal", { room, to: id, kind, data: body }).catch(() => {});
+    // Parallel requests reach the other side in any order (a candidate before its offer, a bye after the new offer), so they go one at a time.
+    sendChain = sendChain.then(() => AV.api("POST", "/api/call/signal", { room, to: id, kind, data: body })).catch(() => {});
   }
 
   /* Each connection tells the other side where its encoder should begin; without this it starts near 300 kbps and the first seconds of a share are mush. */
@@ -451,7 +454,13 @@
     rtc.onchange();
   }
 
-  rtc.handleSignal = async function ({ from, room, kind, data }) {
+  /* Each signal waits for the previous one: an answer applied while its offer is still being set breaks the negotiation for good. */
+  rtc.handleSignal = function (signal) {
+    receiveChain = receiveChain.then(() => applySignal(signal)).catch((e) => console.warn("signal handling failed", e));
+    return receiveChain;
+  };
+
+  async function applySignal({ from, room, kind, data }) {
     if (room !== rtc.room) return;
     let p = peers.get(from);
     // Signals travel as separate requests, so a bye from a connection already replaced can arrive after the new offer.
@@ -462,6 +471,8 @@
       closePeer(from);
       p = null;
     }
+    // An answer to an offer from a connection already closed here would only push this one into a wrong state.
+    if (p && kind === "answer" && data.ack && data.ack !== p.sid) return;
     p = p || ensurePeer(from);
     if (data.sid) p.remoteSid = data.sid;
     const pc = p.pc;
@@ -485,7 +496,7 @@
     } catch (e) {
       console.warn("signal handling failed", kind, e);
     }
-  };
+  }
 
   rtc.handleRoom = function ({ room, members }) {
     AV.state.calls[room] = members;
