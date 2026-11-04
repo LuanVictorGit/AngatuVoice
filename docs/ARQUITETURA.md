@@ -48,7 +48,7 @@ Cada link tem uma fila de saída e uma thread própria de escrita: um par travad
 | Situação | O que acontece |
 |---|---|
 | A cada 3 s | `ping`/`pong` em cada link: mede a latência e prova que o outro lado responde |
-| 7 s sem receber nada | o par é suspeito: disca de novo sem mexer na presença, e o socket novo substitui o antigo |
+| 10 s sem receber nada | o par é suspeito: disca de novo sem mexer na presença, e o socket novo substitui o antigo |
 | 20 s sem receber nada | o socket é fechado |
 | Socket fechado sem `bye` | a pessoa fica "reconectando" por até 20 s, continua nas salas e a mídia WebRTC segue; o redial é imediato, e o lado de id maior espera 400 ms para os dois não discarem juntos |
 | Volta dentro da carência | evento `peer.relinked`, sem aviso; a interface termina a negociação que estava pendente |
