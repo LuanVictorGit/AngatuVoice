@@ -53,6 +53,8 @@ final class BrowserWindow {
             "--disable-background-timer-throttling",
             "--disable-backgrounding-occluded-windows",
             "--disable-renderer-backgrounding",
+            // WebRTC never lists the virtual Radmin adapter; without enumeration it binds its ports on every interface, Radmin included.
+            "--force-webrtc-ip-handling-policy=default_public_and_private_interfaces",
             "--disable-features=WebRtcHideLocalIpsWithMdns,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling",
     };
 

@@ -317,11 +317,17 @@
     if (d) signal(p.id, d.type, { type: d.type, sdp: withVideoHints(d.sdp) });
   }
 
-  function allowedCandidate(candidate) {
+  /*
+   * Chromium never lists the Radmin adapter (it is virtual), so its only IPv4 candidate carries the default route address.
+   * BrowserWindow makes it bind that port on every interface, so the same port answers on the Radmin address: announce that one instead.
+   */
+  function radminCandidate(candidate) {
     const radmin = AV.state.radmin;
-    if (!radmin || radmin.adapter === "dev-loopback" || !radmin.ip) return true;
-    const address = (candidate.candidate || "").split(" ")[4] || "";
-    return address.startsWith(radmin.ip.split(".")[0] + ".");
+    if (!radmin || radmin.adapter === "dev-loopback" || !radmin.ip) return candidate;
+    const parts = (candidate.candidate || "").split(" ");
+    if (parts.length < 8 || parts[7] !== "host" || !/^\d+\.\d+\.\d+\.\d+$/.test(parts[4])) return null;
+    parts[4] = radmin.ip;
+    return { ...candidate, candidate: parts.join(" ") };
   }
 
   function preferCodecs(transceiver) {
@@ -370,7 +376,10 @@
         peer.makingOffer = false;
       }
     };
-    pc.onicecandidate = (e) => { if (e.candidate && allowedCandidate(e.candidate)) signal(id, "candidate", e.candidate.toJSON()); };
+    pc.onicecandidate = (e) => {
+      const candidate = e.candidate && radminCandidate(e.candidate.toJSON());
+      if (candidate) signal(id, "candidate", candidate);
+    };
     pc.oniceconnectionstatechange = () => {
       if (pc.iceConnectionState === "failed") { peer.restartedAt = performance.now(); pc.restartIce(); }
     };
