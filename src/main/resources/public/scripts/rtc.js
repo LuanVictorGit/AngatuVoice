@@ -281,7 +281,7 @@
     const p = peers.get(id);
     const room = rtc.room;
     if (!room) return;
-    const body = { ...data, sid: p ? p.sid : "" };
+    const body = { ...data, sid: p ? p.sid : "", ack: p ? p.remoteSid || "" : "" };
     AV.api("POST", "/api/call/signal", { room, to: id, kind, data: body }).catch(() => {});
   }
 
@@ -456,7 +456,8 @@
     if (kind === "bye") { closePeer(from); return; }
     let p = peers.get(from);
     // A new id means the other side rebuilt its connection (reload, restart): this one can never match it again.
-    if (p && p.remoteSid && data.sid && data.sid !== p.remoteSid) {
+    // If the sender already knows our current id, it rebuilt to pair with us; rebuilding again would loop forever.
+    if (p && p.remoteSid && data.sid && data.sid !== p.remoteSid && data.ack !== p.sid) {
       closePeer(from);
       p = null;
     }

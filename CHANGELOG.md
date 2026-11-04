@@ -7,6 +7,11 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.4.1] - 2026-11-03
+
+### Corrigido
+- Chamadas que ficavam em "Conectando…" para sempre depois que alguém reabria o aplicativo ou a conexão era refeita.
+
 ## [1.4.0] - 2026-11-03
 
 ### Adicionado
