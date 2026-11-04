@@ -202,7 +202,7 @@
 
   /* System audio capture also hears the app's own output, so while someone talks the shared sound is pulled down or they would hear themselves come back. */
   function duckShareAudio(duck) {
-    if (!shareAudio || duck === ducked) return;
+    if (!shareAudio || shareAudio.kind === "isolated" || duck === ducked) return;
     ducked = duck;
     shareAudio.duck.gain.setTargetAtTime(duck ? DUCK_GAIN : 1, ctx.currentTime, duck ? 0.01 : 0.35);
   }
@@ -708,24 +708,58 @@
     return "screen:" + chosen.id + ":0";
   }
 
-  function captureRequest(sourceId) {
+  function captureRequest(sourceId, withAudio) {
     return {
       video: { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: sourceId, maxWidth: 7680, maxHeight: 4320, maxFrameRate: num("video.fps") } },
-      audio: flag("video.systemAudio") ? { mandatory: { chromeMediaSource: "desktop" } } : false,
+      audio: withAudio ? { mandatory: { chromeMediaSource: "desktop" } } : false,
     };
   }
 
-  async function captureScreen() {
+  async function captureScreen(withAudio) {
     const sourceId = chosenSource();
     try {
-      return await AV.capture(captureRequest(sourceId));
+      return await AV.capture(captureRequest(sourceId, withAudio));
     } catch (e) {
       if (sourceId === FULL_DESKTOP) throw e;
-      return AV.capture(captureRequest(FULL_DESKTOP));
+      return AV.capture(captureRequest(FULL_DESKTOP, withAudio));
     }
   }
 
+  /* System sound captured by Java without anything this app plays, so call voices and ringtones never reach the share. Resolves null where Windows lacks it. */
+  async function openSystemAudio() {
+    const c = audioContext();
+    try {
+      await c.audioWorklet.addModule("/scripts/system-audio-worklet.js");
+    } catch (e) {
+      console.warn("system audio player unavailable", e);
+      return null;
+    }
+    const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/system-audio");
+    ws.binaryType = "arraybuffer";
+    const ready = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), 6000);
+      ws.onmessage = (e) => { if (e.data === "ready") { clearTimeout(timer); resolve(true); } };
+      ws.onclose = () => { clearTimeout(timer); resolve(false); };
+    });
+    if (!ready) { ws.close(); return null; }
+    const player = new AudioWorkletNode(c, "system-audio-player", { numberOfInputs: 0, outputChannelCount: [2] });
+    ws.onmessage = (e) => { if (e.data instanceof ArrayBuffer) player.port.postMessage(e.data, [e.data]); };
+    ws.onclose = null;
+    return { player, stop: () => { ws.onmessage = null; ws.close(); player.port.close(); } };
+  }
+
   /* Mute only governs the microphone path, so nothing but the system mix may ever enter the share: a microphone here would bypass it. */
+  function shareAudioFrom(source, stop, kind) {
+    const c = audioContext();
+    const duck = c.createGain();
+    const dest = c.createMediaStreamDestination();
+    source.connect(duck);
+    duck.connect(dest);
+    const track = dest.stream.getAudioTracks()[0];
+    track.enabled = !rtc.isShareMuted(myId());
+    return { source, stop, duck, track, kind };
+  }
+
   function buildShareAudio(captured) {
     const raw = captured.getAudioTracks()[0];
     if (!raw) return null;
@@ -734,21 +768,13 @@
       AV.toast("Não foi possível capturar o áudio do sistema. A tela será compartilhada sem som.", "error");
       return null;
     }
-    const c = audioContext();
-    const source = c.createMediaStreamSource(new MediaStream([raw]));
-    const duck = c.createGain();
-    const dest = c.createMediaStreamDestination();
-    source.connect(duck);
-    duck.connect(dest);
-    const track = dest.stream.getAudioTracks()[0];
-    track.enabled = !rtc.isShareMuted(myId());
-    return { raw, source, duck, track };
+    return shareAudioFrom(audioContext().createMediaStreamSource(new MediaStream([raw])), () => raw.stop(), "loopback");
   }
 
   function closeShareAudio() {
     if (!shareAudio) return;
     shareAudio.source.disconnect();
-    shareAudio.raw.stop();
+    shareAudio.stop();
     shareAudio.track.stop();
     shareAudio = null;
     ducked = false;
@@ -756,12 +782,19 @@
 
   rtc.startShare = async function () {
     if (!rtc.room || rtc.localShare) return;
-    const captured = await captureScreen();
+    const system = flag("video.systemAudio") ? await openSystemAudio() : null;
+    let captured;
+    try {
+      captured = await captureScreen(flag("video.systemAudio") && !system);
+    } catch (e) {
+      if (system) system.stop();
+      throw e;
+    }
     const video = captured.getVideoTracks()[0];
     video.contentHint = cfg()["video.priority"] === "motion" ? "motion" : "detail";
     video.onended = () => rtc.stopShare();
     await watchShareSize(video);
-    shareAudio = buildShareAudio(captured);
+    shareAudio = system ? shareAudioFrom(system.player, system.stop, "isolated") : buildShareAudio(captured);
     rtc.localShare = new MediaStream(shareAudio ? [video, shareAudio.track] : [video]);
     peers.forEach((p) => {
       p.level = 0;
@@ -916,7 +949,7 @@
       room: rtc.room,
       microphone: mic ? { open: mic.track.enabled, device: mic.raw.getAudioTracks()[0].label } : null,
       muted: rtc.muted,
-      sharing: rtc.localShare ? { systemAudio: shareAudio ? shareAudio.raw.getSettings().deviceId : null, ducked } : null,
+      sharing: rtc.localShare ? { systemAudio: shareAudio ? shareAudio.kind : null, ducked } : null,
       peers: [...peers.values()].map((p) => ({
         id: p.id,
         connection: p.pc.connectionState,

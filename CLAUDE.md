@@ -128,7 +128,7 @@ Java 25, AngatuLibraries `62d2678fcb52c2f3c3da46c9221eadbf8d683ec2` (https://git
 
 ## Estrutura
 - `src/main/java/br/com/angatusistemas/voice/` — `Main`, `entities/` (Saveable), `services/` (regras, rede entre pares, presença, chamadas, sessão, migrações), `routes/` (HTTP/WS da interface), `desktop/` (JFrame, JCEF, bandeja, atalhos, instância única, aviso de chamada), `updater/` (atualização), `utils/`
-- `src/main/resources/public/` — SPA: `index.html` (shell), `app.html` (fragmento servido em `/app`), `scripts/{ui,live,rtc,settings,app}.js`, `styles/{ds.css,tailwind.css}`, `assets/` (inclui `ringtone.mp3`, a música de chamada escolhida pelo dono)
+- `src/main/resources/public/` — SPA: `index.html` (shell), `app.html` (fragmento servido em `/app`), `scripts/{ui,live,rtc,settings,app,system-audio-worklet}.js`, `styles/{ds.css,tailwind.css}`, `assets/` (inclui `ringtone.mp3`, a música de chamada escolhida pelo dono)
 - `src/main/resources/updater/apply-update.ps1` — troca de arquivos com rollback (parâmetros vêm do app, nunca de download)
 - `tools/` — `package.ps1` (app-image + zip), `Release.java` (manifesto assinado), `IconGen.java`, `tailwind/input.css`
 - `installer/angatu-voice.iss`, `.github/workflows/{ci,release}.yml`, `docs/`
@@ -137,7 +137,7 @@ Java 25, AngatuLibraries `62d2678fcb52c2f3c3da46c9221eadbf8d683ec2` (https://git
 ```
 mvn -B test
 mvn -q -B -DskipTests package
-java --enable-native-access=ALL-UNNAMED -jar target/angatu-voice-1.4.4.jar
+java --enable-native-access=ALL-UNNAMED -jar target/angatu-voice-1.4.5.jar
 ```
 `JAVA_HOME` precisa apontar para o JDK 25: nesta máquina o padrão é o 21 e o `mvn` falha com `release version 25 not supported`. `PeerClusterTest` sobe vários nós em JVMs próprias e leva alguns minutos; ao mexer em outra coisa, rode só os testes da classe tocada.
 Dados em `%APPDATA%\AngatuVoice` (`-Dangatu.data=` muda); caches e JCEF em `%LOCALAPPDATA%\AngatuVoice`. Tailwind: `tools\bin\tailwindcss.exe -i tools\tailwind\input.css -o src\main\resources\public\styles\tailwind.css --minify` (arquivo gerado é versionado). Distribuição: `tools\package.ps1`, depois `ISCC installer\angatu-voice.iss /DAppVersion=X.Y.Z`.
@@ -147,7 +147,7 @@ Propriedades de desenvolvimento: `angatu.radmin.ip`/`angatu.radmin.alias` (simul
 `Main`: logs em arquivo → `angatu.db` → instância única → migrações → porta livre em loopback → `new AngatuLib("localhost", porta, false)` (host Jetty fixado em `127.0.0.1` no construtor de `BootRoute`) → `PeerNetwork.start()` → `UpdateService.start()` → autostart → JFrame/JCEF abre `/boot?t=<token de uso único>` → cookie `av_session` → `/app`. A janela abre normalmente, inclusive pelo início com o Windows; só `startMinimized` a mantém escondida, com o Chromium já rodando (`addNotify` + `createImmediately`).
 
 ## Rotas / Entidades
-- Página: `/app` (HtmlRouteAPI). Rotas: `/health`, `/boot`, `GET /api/state`, `PUT /api/settings`, `PUT /api/me`, grupos (`/api/groups`, `/join`, `/{id}/invite`, `DELETE /{id}`), mensagens (`/api/messages`, `/read`, `DELETE /api/messages`), peers (`/api/peers`, `DELETE /{id}`), chamadas (`/api/call/state`, `/signal`, `/decline`), atualizador (`/api/update`, `/check`, `/install`, `/cancel`), `/api/system/{diagnostics,open}`, `/api/app/quit`, `PUT /api/me/avatar`, `GET /api/avatar/{id}`, `POST /api/overlay`, WS `/ws` (porta única, sessão checada em `LiveHub`)
+- Página: `/app` (HtmlRouteAPI). Rotas: `/health`, `/boot`, `GET /api/state`, `PUT /api/settings`, `PUT /api/me`, grupos (`/api/groups`, `/join`, `/{id}/invite`, `DELETE /{id}`), mensagens (`/api/messages`, `/read`, `DELETE /api/messages`), peers (`/api/peers`, `DELETE /{id}`), chamadas (`/api/call/state`, `/signal`, `/decline`), atualizador (`/api/update`, `/check`, `/install`, `/cancel`), `/api/system/{diagnostics,open}`, `/api/app/quit`, `PUT /api/me/avatar`, `GET /api/avatar/{id}`, `POST /api/overlay`, WS `/ws` (porta única, sessão checada em `LiveHub`), WS `/ws/system-audio` (PCM do som do sistema sem o próprio app, sessão checada em `SystemAudio`)
 - Saveable: `Setting`, `Identity`, `Group`, `Peer`, `Message`, `UpdateRecord`, `SchemaState`
 - Eventos WS: `open`, `message`, `message.delivered`, `messages.cleared`, `peer.online/offline`, `peer.changed`, `peer.relinked`, `peer.removed`, `net`, `net.latency`, `group.changed`, `call.state`, `call.signal`, `call.incoming`, `call.action`, `call.declined`, `call.missed`, `update`, `hotkey`, `peer.profile`
 - Quadros entre pares (`proto` 2, ver `docs/ARQUITETURA.md`): `auth`, `msg`, `ack`, `sync`, `call`, `rooms`, `decline`, `sig`, `profile`, `ping`, `pong`, `peers`, `bye`
@@ -159,11 +159,12 @@ Nenhuma obrigatória. `ANGATU_UPDATE_TOKEN` (repositório privado). Segredo de C
 Padrão Java da skill (`java-standard.md`); sem Javadoc em método; JSON só por `GsonAPI`; configurações só pelas chaves de `SettingsService` (strings validadas); `ds.css` única fonte visual, componentes em `@layer components`; texto visível em PT-BR; interface é SPA (nenhuma navegação além de `/boot` → `/app`).
 
 ## Versões
-Regra completa em `docs/VERSIONAMENTO.md`: toda release tem número novo e maior; `pom.xml`, `installer/angatu-voice.iss` e `CHANGELOG.md` mudam juntos; o workflow recusa a tag que não bater com o `pom.xml` e o `CHANGELOG.md`. Versão atual: 1.4.4. O `installer/angatu-voice.iss` fica só em ASCII: textos pelas mensagens `{cm:...}` do próprio Inno e acentos no `[Code]` como `#$E7`.
+Regra completa em `docs/VERSIONAMENTO.md`: toda release tem número novo e maior; `pom.xml`, `installer/angatu-voice.iss` e `CHANGELOG.md` mudam juntos; o workflow recusa a tag que não bater com o `pom.xml` e o `CHANGELOG.md`. Versão atual: 1.4.5. O `installer/angatu-voice.iss` fica só em ASCII: textos pelas mensagens `{cm:...}` do próprio Inno e acentos no `[Code]` como `#$E7`.
 
 ## Armadilhas já pagas
 - **Entrada no JCEF**: as janelas do Chromium pertencem à thread de eventos do Swing, que não lê mensagens do Windows; sem o laço de `PeekMessage` do `BrowserWindow.startMessagePump` a página renderiza e ignora mouse e teclado. Teste sempre com mouse e teclado reais (`mouse_event`/`SendKeys`), não só por CDP, e com a janela em primeiro plano.
 - `AttachThreadInput` só dentro de `Foreground.raise`, sempre com o desanexar no `finally`.
+- **O loopback do Chromium ouve o próprio app** (vozes da chamada e toques vão para o compartilhamento) e o CEF ignora estrictOwnAudio (testado: aceita, mas o som continua). O áudio do compartilhamento vem de SystemAudio: loopback por processo do Windows excluindo a árvore deste processo (o Chromium roda como filho), PCM pelo /ws/system-audio até um AudioWorklet. Medido: tom do app -34 dB no loopback comum e ~-100 dB no isolado; som de outro processo igual nos dois. Sem a API (Windows antes do 2004), volta ao loopback comum com abaixamento.
 - **Nunca `--use-fake-ui-for-media-stream`**: com ela, o áudio de `getDisplayMedia` é o microfone padrão com o nome "Fake audio": ele escapa do botão de silenciar e duplica a voz, que chega abafada. As capturas usam `--enable-media-stream`, e `buildShareAudio` só aceita `deviceId` que começa com `loopback`.
 - **A primeira captura da sessão falha** com `AbortError: Failed due to shutdown` quando a janela não está em primeiro plano, e o mesmo pedido passa logo depois. Toda captura passa por `AV.capture`, que repete.
 - **`getSettings()` de uma captura de tela mente**: informa o `maxHeight` pedido, não o tamanho dos quadros. Com ele, a escala sai errada e 1080p vira 360p. O tamanho vem de `videoHeight` (`watchShareSize`).

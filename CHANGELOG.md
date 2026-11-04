@@ -7,6 +7,11 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.4.5] - 2026-11-03
+
+### Corrigido
+- As vozes da chamada e os sons do próprio aplicativo não vão mais junto com o áudio do compartilhamento de tela: quem assiste ouve só o som do computador, sem eco. Precisa do Windows 10 versão 2004 ou mais novo; nos mais antigos, continua o comportamento anterior.
+
 ## [1.4.4] - 2026-11-03
 
 ### Corrigido
