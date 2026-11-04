@@ -349,7 +349,7 @@
     if (p) return p;
     const pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: "max-bundle" });
     p = {
-      id, pc, sid: crypto.randomUUID(), remoteSid: null, polite: myId() > id, makingOffer: false, ignoreOffer: false,
+      id, pc, sid: crypto.randomUUID(), remoteSid: null, polite: myId() > id, makingOffer: false, ignoreOffer: false, pendingCandidates: [],
       audios: new Map(), videos: new Map(), shareSenders: [], channel: null, state: null, voice: newMeter(), stats: null,
       level: 0, levelAt: 0, pressure: 0, upHold: UP_HOLD_MS, calmSince: 0, troubleSince: 0, restartedAt: 0,
       resetAfter: RESET_AFTER_MS + Math.random() * RESET_JITTER_MS,
@@ -453,8 +453,9 @@
 
   rtc.handleSignal = async function ({ from, room, kind, data }) {
     if (room !== rtc.room) return;
-    if (kind === "bye") { closePeer(from); return; }
     let p = peers.get(from);
+    // Signals travel as separate requests, so a bye from a connection already replaced can arrive after the new offer.
+    if (kind === "bye") { if (p && (!data.sid || !p.remoteSid || data.sid === p.remoteSid)) closePeer(from); return; }
     // A new id means the other side rebuilt its connection (reload, restart): this one can never match it again.
     // If the sender already knows our current id, it rebuilt to pair with us; rebuilding again would loop forever.
     if (p && p.remoteSid && data.sid && data.sid !== p.remoteSid && data.ack !== p.sid) {
@@ -466,6 +467,8 @@
     const pc = p.pc;
     try {
       if (kind === "candidate") {
+        // Candidates can overtake the description they belong to; adding them now would throw and lose them.
+        if (!pc.remoteDescription) { p.pendingCandidates.push(data); return; }
         try { await pc.addIceCandidate(data); } catch (e) { if (!p.ignoreOffer) throw e; }
         return;
       }
@@ -473,6 +476,8 @@
       p.ignoreOffer = !p.polite && collision;
       if (p.ignoreOffer) return;
       await pc.setRemoteDescription({ type: data.type, sdp: data.sdp });
+      const queued = p.pendingCandidates.splice(0);
+      for (const c of queued) { try { await pc.addIceCandidate(c); } catch (e) { console.warn("queued candidate refused", e); } }
       if (kind === "offer") {
         await pc.setLocalDescription();
         sendDescription(p);
