@@ -28,8 +28,8 @@
 1. **Instale e abra.** O instalador é por usuário, não pede administrador e já configura o início com o Windows (você pode desmarcar).
 2. **Entre na sua rede do Radmin VPN.** O Angatu Voice reconhece o Radmin sozinho, lê o seu apelido e começa a procurar quem mais está na rede.
 3. **Converse.** A *Rede Radmin* é o grupo de todo mundo da sua rede. Para um círculo menor, crie um grupo privado e mande o convite só para quem deve entrar.
-4. **Chame no voz.** Um clique em *Chamar* abre a chamada, com indicador de quem está falando, volume por pessoa e atalhos que funcionam até com o aplicativo minimizado.
-5. **Mostre a sua tela.** Em 720p ou 1080p, a 30 ou 60 quadros por segundo; se a rede não acompanhar, a qualidade desce sozinha e volta quando melhora.
+4. **Chame no voz.** Um clique em *Chamar* faz tocar para quem você chamou, com aviso de quem é mesmo com o aplicativo em segundo plano. Na chamada, você vê quem está falando, o ping de cada um e pode silenciar ou ajustar o volume de cada pessoa só para você.
+5. **Mostre a sua tela.** Até a resolução original, a 30 ou 60 quadros por segundo; se a rede de alguém não acompanhar, a qualidade desce só para essa pessoa e volta quando melhora.
 
 Tudo trafega direto entre os computadores, dentro do Radmin VPN, com identidade verificada e conexão cifrada.
 
@@ -56,7 +56,8 @@ Tudo trafega direto entre os computadores, dentro do Radmin VPN, com identidade 
 - **Grupos privados** com convite, conversas individuais, histórico salvo no seu computador e mensagens pendentes entregues quando a pessoa volta.
 - **Chamadas** individuais e em grupo, com baixa latência, cancelamento de eco e supressão de ruído.
 - **Atalhos globais** para apertar para falar, silenciar microfone ou áudio, entrar e sair da chamada.
-- **Bandeja do sistema**, notificações e início automático com o Windows, sempre sob o seu controle.
+- **Bandeja do sistema**, notificações e início automático com o Windows, sempre sob o seu controle. Minimizar ou fechar a janela não derruba a conexão; encerrar é só pela opção Sair.
+- **Conexão que aguenta oscilação:** quedas curtas na rede são recuperadas sozinhas, sem derrubar a chamada e sem avisos falsos de que alguém saiu.
 - **Atualização automática** pelas versões publicadas neste repositório, com assinatura digital, verificação de integridade e volta para a versão anterior se a nova não abrir.
 
 ## Para quem desenvolve
@@ -64,7 +65,7 @@ Tudo trafega direto entre os computadores, dentro do Radmin VPN, com identidade 
 ```powershell
 mvn -B test
 mvn -q -B -DskipTests package
-java --enable-native-access=ALL-UNNAMED -jar target\angatu-voice-1.2.0.jar
+java --enable-native-access=ALL-UNNAMED -jar target\angatu-voice-1.4.0.jar
 ```
 
 Requisitos: JDK 25 (com `jpackage`), Maven 3.9+ e o binário do [Tailwind](https://github.com/tailwindlabs/tailwindcss/releases) em `tools\bin\`. O pacote e o instalador saem de `tools\package.ps1` e `installer\angatu-voice.iss`; o GitHub Actions faz tudo isso ao publicar uma tag `vX.Y.Z`.

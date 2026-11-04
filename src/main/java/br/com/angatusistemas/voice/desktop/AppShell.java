@@ -4,6 +4,7 @@ import br.com.angatusistemas.lib.console.Console;
 import br.com.angatusistemas.voice.services.Notifications;
 import br.com.angatusistemas.voice.services.PeerNetwork;
 import br.com.angatusistemas.voice.services.SettingsService;
+import com.sun.jna.platform.win32.Kernel32;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef;
 import com.sun.jna.ptr.IntByReference;
@@ -19,6 +20,8 @@ import java.net.URI;
 public final class AppShell {
 
     private static final long FOCUS_POLL_MS = 400;
+    private static final String LIBRARY_SHUTDOWN_THREAD = "angatu-shutdown";
+    private static final long LIBRARY_SHUTDOWN_WAIT_MS = 3_000;
     private static volatile BrowserWindow window;
 
     private AppShell() {
@@ -28,13 +31,14 @@ public final class AppShell {
         return SingleInstance.acquire(AppShell::show);
     }
 
-    public static void open(int port, boolean startMinimized) throws Exception {
+    public static void open(int port) throws Exception {
         Tray.install();
         Notifications.bind(Tray::notify, AppShell::focused);
+        Notifications.bindRinging(CallPopup::update);
         Hotkeys.start();
         BrowserWindow created = new BrowserWindow(port);
         window = created;
-        created.open(startMinimized || SettingsService.flag("startMinimized"));
+        created.open(SettingsService.flag("startMinimized"));
         Thread watcher = new Thread(AppShell::watchFocus, "av-focus");
         watcher.setDaemon(true);
         watcher.start();
@@ -75,10 +79,31 @@ public final class AppShell {
             PeerNetwork.stop();
             BrowserWindow current = window;
             if (current != null) {
-                current.dispose();
+                current.hide();
             }
-            System.exit(0);
+            exit();
         });
+    }
+
+    // The Chromium builder disposes itself in its own shutdown hook, and disposing it here too deadlocks against that hook:
+    // the window went away but the process stayed alive for good. This hook also ends the process if native teardown
+    // hangs, because a process left behind keeps the single-instance lock and the app would no longer open.
+    public static void exit() {
+        Runtime.getRuntime().addShutdownHook(new Thread(AppShell::endProcess, "av-exit"));
+        System.exit(0);
+    }
+
+    private static void endProcess() {
+        for (Thread thread : Thread.getAllStackTraces().keySet()) {
+            if (LIBRARY_SHUTDOWN_THREAD.equals(thread.getName())) {
+                try {
+                    thread.join(LIBRARY_SHUTDOWN_WAIT_MS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
+        Kernel32.INSTANCE.TerminateProcess(Kernel32.INSTANCE.GetCurrentProcess(), 0);
     }
 
     private static void watchFocus() {
@@ -88,6 +113,7 @@ public final class AppShell {
             if (now != last) {
                 last = now;
                 Overlay.refresh();
+                CallPopup.refresh();
             }
             try {
                 Thread.sleep(FOCUS_POLL_MS);

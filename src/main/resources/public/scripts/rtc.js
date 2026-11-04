@@ -2,22 +2,49 @@
 /* Voice and screen sharing over WebRTC. Media flows peer to peer across the Radmin adapter; Java only relays signalling. */
 (function () {
   const peers = new Map();
-  const BASE_BITRATE = { "720-30": 2500000, "720-60": 4000000, "1080-30": 5000000, "1080-60": 8000000 };
-  const VOICE_BITRATE = 40000;
-  const HOLD_MS = 280;
+  const VOICE_BITRATE = 64000;
+  const VAD_TICK_MS = 50;
+  const STATS_TICK_MS = 2000;
+  const STATE_EVERY_MS = 2000;
+  const STATE_STALE_MS = 5000;
+  const GATE_HOLD_MS = 500;
+  const SPEAK_HOLD_MS = 600;
+  const SPEAK_ATTACK_TICKS = 2;
+  const RELEASE_RATIO = 0.6;
+  const PRE_ROLL_S = 0.05;
+  const REMOTE_SPEECH_LEVEL = 0.012;
+  const DUCK_GAIN = 0.06;
+  const CALL_TIMEOUT_MS = 45000;
+  const STATE_CHANNEL_ID = 7;
+  const CODEC_ORDER = ["video/AV1", "video/VP9", "video/VP8"];
+  const START_KBPS = 2500;
+  const MIN_KBPS = 300;
+  const LOWER_RUNGS = [1440, 1080, 720, 540, 360];
+  const FULL_DESKTOP = "screen:-1:0";
+  const SETTLE_MS = 10000;
+  const PRESSURE_TICKS = 3;
+  const UP_HOLD_MS = 20000;
+  const UP_HOLD_MAX_MS = 120000;
+  const RESTART_AFTER_MS = 6000;
+  const RESET_AFTER_MS = 25000;
+  const RESET_JITTER_MS = 5000;
 
   const rtc = AV.rtc = {
-    room: null, muted: false, deafened: false, muteAll: false, pttDown: false,
-    localShare: null, speaking: {}, onchange: () => {}, onspeaking: () => {},
+    room: null, muted: false, deafened: false, muteAll: false, pttDown: false, calling: false,
+    localShare: null, speaking: {}, onchange: () => {}, onspeaking: () => {}, onstats: () => {},
   };
   let ctx = null;
   let master = null;
   let mic = null;
+  let shareAudio = null;
+  let shareProbe = null;
+  let shareHeight = 0;
+  let ducked = false;
   let vadTimer = null;
-  let adaptTimer = null;
-  let level = 0;
-  let good = 0;
-  let voiceOpenUntil = 0;
+  let statsTimer = null;
+  let callTimer = null;
+  let gateOpenUntil = 0;
+  let lastStateSent = 0;
   const cfg = () => AV.state.settings;
   const myId = () => AV.state.me.id;
   const num = (key) => Number(cfg()[key]);
@@ -25,7 +52,7 @@
 
   function audioContext() {
     if (!ctx) {
-      ctx = new AudioContext({ latencyHint: "interactive" });
+      ctx = new AudioContext({ latencyHint: "interactive", sampleRate: 48000 });
       master = ctx.createGain();
       master.connect(ctx.destination);
       applyOutput();
@@ -39,28 +66,16 @@
     master.gain.value = rtc.deafened ? 0 : num("audio.outputVolume") / 100;
     if (ctx.setSinkId) ctx.setSinkId(cfg()["audio.output"] || "").catch(() => {});
     peers.forEach((p) => p.audios.forEach((a) => {
-      if (a.share && rtc.isShareMuted(p.id)) {
-        a.gain.gain.value = 0;
-      } else {
-        a.gain.gain.value = peerGain(p.id);
-      }
+      a.gain.gain.value = a.share && rtc.isShareMuted(p.id) ? 0 : peerGain(p.id);
     }));
   }
 
   rtc.mutedShares = new Set();
-  rtc.isShareMuted = function (id) {
-    return rtc.mutedShares.has(id);
-  };
+  rtc.isShareMuted = (id) => rtc.mutedShares.has(id);
   rtc.toggleShareMute = function (id) {
-    if (rtc.mutedShares.has(id)) {
-      rtc.mutedShares.delete(id);
-    } else {
-      rtc.mutedShares.add(id);
-    }
-    if (id === myId() && rtc.localShare) {
-      const muted = rtc.mutedShares.has(id);
-      rtc.localShare.getAudioTracks().forEach((t) => { t.enabled = !muted; });
-    }
+    if (rtc.mutedShares.has(id)) rtc.mutedShares.delete(id);
+    else rtc.mutedShares.add(id);
+    if (id === myId() && shareAudio) shareAudio.track.enabled = !rtc.mutedShares.has(id);
     applyOutput();
     rtc.onchange();
   };
@@ -69,21 +84,40 @@
     try { return JSON.parse(cfg()["audio.peerVolumes"] || "{}"); } catch (e) { return {}; }
   }
 
+  function peerMutes() {
+    try { return JSON.parse(cfg()["audio.peerMutes"] || "[]"); } catch (e) { return []; }
+  }
+
   function peerGain(id) {
-    if (rtc.muteAll) return 0;
+    if (rtc.muteAll || rtc.isPeerMuted(id)) return 0;
     const v = peerVolumes()[id];
     return (v === undefined ? 100 : v) / 100;
   }
 
+  rtc.isPeerMuted = (id) => peerMutes().includes(id);
+  rtc.isAudible = (id) => id === myId() || (!rtc.muteAll && !rtc.isPeerMuted(id));
+  rtc.togglePeerMute = function (id) {
+    const muted = peerMutes();
+    const next = muted.includes(id) ? muted.filter((x) => x !== id) : [...muted, id];
+    cfg()["audio.peerMutes"] = JSON.stringify(next);
+    applyOutput();
+    persistMutes();
+    AV.sound(next.includes(id) ? "mute" : "unmute");
+    rtc.onchange();
+  };
+  const persistMutes = AV.debounce(() => {
+    AV.api("PUT", "/api/settings", { "audio.peerMutes": cfg()["audio.peerMutes"] }).catch(AV.fail);
+  }, 300);
+
   rtc.setPeerVolume = function (id, percent) {
     const all = peerVolumes();
     all[id] = percent;
-    AV.state.settings["audio.peerVolumes"] = JSON.stringify(all);
+    cfg()["audio.peerVolumes"] = JSON.stringify(all);
     applyOutput();
-    AV.rtc.persistVolumes();
+    rtc.persistVolumes();
   };
   rtc.persistVolumes = AV.debounce(() => {
-    AV.api("PUT", "/api/settings", { "audio.peerVolumes": AV.state.settings["audio.peerVolumes"] }).catch(() => {});
+    AV.api("PUT", "/api/settings", { "audio.peerVolumes": cfg()["audio.peerVolumes"] }).catch(() => {});
   }, 600);
   rtc.peerVolume = (id) => { const v = peerVolumes()[id]; return v === undefined ? 100 : v; };
   rtc.applyOutput = applyOutput;
@@ -100,6 +134,25 @@
     return Math.sqrt(sum / buffer.length);
   }
 
+  function newMeter() {
+    return { on: false, until: 0, hits: 0 };
+  }
+
+  /* Hysteresis so a word turns the indicator on once and it stays on through pauses, instead of blinking with the level. */
+  function metered(meter, level, openAt, now) {
+    if (level > (meter.on ? openAt * RELEASE_RATIO : openAt)) {
+      meter.hits++;
+      if (meter.on || meter.hits >= SPEAK_ATTACK_TICKS) {
+        meter.on = true;
+        meter.until = now + SPEAK_HOLD_MS;
+      }
+    } else {
+      meter.hits = 0;
+      if (meter.on && now >= meter.until) meter.on = false;
+    }
+    return meter.on;
+  }
+
   function setSpeaking(id, value) {
     if (!!rtc.speaking[id] !== value) {
       rtc.speaking[id] = value;
@@ -109,58 +162,156 @@
 
   function updateGate() {
     if (!mic) return;
-    const open = !rtc.muted && (flag("audio.ptt") ? rtc.pttDown : performance.now() < voiceOpenUntil || num("audio.sensitivity") >= 100);
+    const open = !rtc.muted && (flag("audio.ptt") ? rtc.pttDown : performance.now() < gateOpenUntil || num("audio.sensitivity") >= 100);
     if (mic.track.enabled !== open) mic.track.enabled = open;
   }
 
   function vadLoop() {
     const now = performance.now();
     if (mic) {
-      const loud = rms(mic.analyser, mic.buffer) > threshold();
-      if (loud) voiceOpenUntil = now + HOLD_MS;
+      const level = rms(mic.analyser, mic.buffer);
+      const openAt = threshold();
+      if (level > openAt) gateOpenUntil = now + GATE_HOLD_MS;
       updateGate();
-      setSpeaking(myId(), mic.track.enabled && now < voiceOpenUntil);
+      const talking = metered(mic.meter, level, openAt, now) && mic.track.enabled;
+      if (talking !== !!rtc.speaking[myId()]) {
+        setSpeaking(myId(), talking);
+        broadcastState();
+      }
+    } else {
+      setSpeaking(myId(), false);
     }
+    let remoteAudible = false;
     peers.forEach((p) => {
-      let talking = false;
-      p.audios.forEach((a) => { if (!a.share && rms(a.analyser, a.buffer) > 0.012) talking = true; });
-      setSpeaking(p.id, talking && !rtc.muteAll);
+      let voice = 0;
+      p.audios.forEach((a) => {
+        const level = rms(a.analyser, a.buffer);
+        if (!a.share) voice = Math.max(voice, level);
+        if (level > REMOTE_SPEECH_LEVEL && a.gain.gain.value > 0) remoteAudible = true;
+      });
+      // The sender's own word starts the indicator on time; what is heard here keeps it on, because the sound arrives later than the word that it ended.
+      const heard = metered(p.voice, voice, REMOTE_SPEECH_LEVEL, now);
+      const fresh = p.state && now - p.state.at < STATE_STALE_MS;
+      setSpeaking(p.id, !(fresh && p.state.muted) && (heard || !!(fresh && p.state.speaking)));
     });
+    duckShareAudio(remoteAudible && !rtc.deafened);
+    if (now - lastStateSent >= STATE_EVERY_MS) broadcastState();
   }
 
-  async function openMic() {
-    const device = cfg()["audio.input"];
-    const raw = await navigator.mediaDevices.getUserMedia({
+  /* System audio capture also hears the app's own output, so while someone talks the shared sound is pulled down or they would hear themselves come back. */
+  function duckShareAudio(duck) {
+    if (!shareAudio || duck === ducked) return;
+    ducked = duck;
+    shareAudio.duck.gain.setTargetAtTime(duck ? DUCK_GAIN : 1, ctx.currentTime, duck ? 0.01 : 0.35);
+  }
+
+  function micConstraints(device) {
+    return {
       audio: {
         deviceId: device ? { exact: device } : undefined,
         echoCancellation: flag("audio.echo"), noiseSuppression: flag("audio.noise"), autoGainControl: true, channelCount: 1,
       },
-    });
+    };
+  }
+
+  async function captureMic() {
+    const device = cfg()["audio.input"];
+    try {
+      return await AV.capture(micConstraints(device));
+    } catch (e) {
+      // The chosen device may have been unplugged; the default one is better than a silent call.
+      if (!device) throw e;
+      return AV.capture(micConstraints(""));
+    }
+  }
+
+  function attachMicSource(raw) {
+    const source = ctx.createMediaStreamSource(raw);
+    source.connect(mic.gain);
+    mic.raw = raw;
+    mic.source = source;
+    raw.getAudioTracks()[0].onended = () => { if (mic && mic.raw === raw) reconnectMic(); };
+  }
+
+  async function reconnectMic() {
+    try {
+      const raw = await captureMic();
+      if (!mic) { raw.getTracks().forEach((t) => t.stop()); return; }
+      const old = mic.raw;
+      mic.source.disconnect();
+      old.getAudioTracks()[0].onended = null;
+      old.getTracks().forEach((t) => t.stop());
+      attachMicSource(raw);
+    } catch (e) {
+      AV.toast("O microfone foi desconectado.", "error");
+    }
+  }
+
+  async function openMic() {
+    const raw = await captureMic();
     const c = audioContext();
-    const source = c.createMediaStreamSource(raw);
     const gain = c.createGain();
     gain.gain.value = num("audio.inputVolume") / 100;
     const analyser = c.createAnalyser();
     analyser.fftSize = 1024;
+    // The gate opens a tick after the voice starts; this delay keeps the first syllable from being cut.
+    const preRoll = c.createDelay(0.2);
+    preRoll.delayTime.value = PRE_ROLL_S;
     const dest = c.createMediaStreamDestination();
-    source.connect(gain);
     gain.connect(analyser);
-    gain.connect(dest);
-    mic = { raw, gain, analyser, buffer: new Float32Array(analyser.fftSize), track: dest.stream.getAudioTracks()[0], stream: dest.stream, source };
+    gain.connect(preRoll);
+    preRoll.connect(dest);
+    mic = { gain, analyser, buffer: new Float32Array(analyser.fftSize), track: dest.stream.getAudioTracks()[0], stream: dest.stream, meter: newMeter() };
+    attachMicSource(raw);
     updateGate();
   }
 
   function closeMic() {
     if (!mic) return;
+    mic.raw.getAudioTracks()[0].onended = null;
     mic.raw.getTracks().forEach((t) => t.stop());
     mic.source.disconnect();
     mic = null;
   }
 
   rtc.applyInput = function () { if (mic) mic.gain.gain.value = num("audio.inputVolume") / 100; };
+  rtc.switchInput = function () { if (mic) reconnectMic(); };
 
-  function signal(to, kind, data) {
-    AV.api("POST", "/api/call/signal", { room: rtc.room, to, kind, data }).catch(() => {});
+  function signal(id, kind, data) {
+    const p = peers.get(id);
+    const room = rtc.room;
+    if (!room) return;
+    const body = { ...data, sid: p ? p.sid : "" };
+    AV.api("POST", "/api/call/signal", { room, to: id, kind, data: body }).catch(() => {});
+  }
+
+  /* Each connection tells the other side where its encoder should begin; without this it starts near 300 kbps and the first seconds of a share are mush. */
+  function withVideoHints(sdp) {
+    const hints = "x-google-start-bitrate=" + START_KBPS + ";x-google-min-bitrate=" + MIN_KBPS;
+    const lines = sdp.split("\r\n");
+    const out = [];
+    let inVideo = false;
+    let pending = [];
+    const flush = () => { pending.forEach((pt) => out.push("a=fmtp:" + pt + " " + hints)); pending = []; };
+    for (const line of lines) {
+      if (line.startsWith("m=")) { flush(); inVideo = line.startsWith("m=video"); }
+      const rtpmap = inVideo && line.match(/^a=rtpmap:(\d+) (VP8|VP9|AV1)\//);
+      const fmtp = inVideo && line.match(/^a=fmtp:(\d+) /);
+      if (rtpmap) pending.push(rtpmap[1]);
+      if (fmtp && pending.includes(fmtp[1])) {
+        pending = pending.filter((pt) => pt !== fmtp[1]);
+        out.push(line + ";" + hints);
+        continue;
+      }
+      if (line === "" ) flush();
+      out.push(line);
+    }
+    return out.join("\r\n");
+  }
+
+  function sendDescription(p) {
+    const d = p.pc.localDescription;
+    if (d) signal(p.id, d.type, { type: d.type, sdp: withVideoHints(d.sdp) });
   }
 
   function allowedCandidate(candidate) {
@@ -170,18 +321,46 @@
     return address.startsWith(radmin.ip.split(".")[0] + ".");
   }
 
+  function preferCodecs(transceiver) {
+    const caps = RTCRtpSender.getCapabilities("video");
+    if (!caps || !transceiver.setCodecPreferences) return;
+    const usable = caps.codecs.filter((c) => !(c.mimeType === "video/VP9" && (c.sdpFmtpLine || "").includes("profile-id=2")));
+    const rank = (c) => { const i = CODEC_ORDER.indexOf(c.mimeType); return i < 0 ? CODEC_ORDER.length : i; };
+    try {
+      transceiver.setCodecPreferences([...usable].sort((a, b) => rank(a) - rank(b)));
+    } catch (e) {
+      console.warn("codec preferences refused", e);
+    }
+  }
+
+  function tuneVoice(p) {
+    const sender = p.pc.getSenders().find((s) => mic && s.track === mic.track);
+    if (!sender) return;
+    const params = sender.getParameters();
+    if (!params.encodings || !params.encodings.length) return;
+    params.encodings[0].maxBitrate = VOICE_BITRATE;
+    params.encodings[0].priority = "high";
+    params.encodings[0].networkPriority = "high";
+    sender.setParameters(params).catch(() => {});
+  }
+
   function ensurePeer(id) {
     let p = peers.get(id);
     if (p) return p;
     const pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: "max-bundle" });
-    p = { id, pc, polite: myId() > id, makingOffer: false, ignoreOffer: false, audios: new Map(), videos: new Map(), shareSenders: [] };
+    p = {
+      id, pc, sid: crypto.randomUUID(), remoteSid: null, polite: myId() > id, makingOffer: false, ignoreOffer: false,
+      audios: new Map(), videos: new Map(), shareSenders: [], channel: null, state: null, voice: newMeter(), stats: null,
+      level: 0, levelAt: 0, pressure: 0, upHold: UP_HOLD_MS, calmSince: 0, troubleSince: 0, restartedAt: 0,
+      resetAfter: RESET_AFTER_MS + Math.random() * RESET_JITTER_MS,
+    };
     peers.set(id, p);
     const peer = p;
     pc.onnegotiationneeded = async () => {
       try {
         peer.makingOffer = true;
         await pc.setLocalDescription();
-        signal(id, pc.localDescription.type, { type: pc.localDescription.type, sdp: pc.localDescription.sdp });
+        sendDescription(peer);
       } catch (e) {
         console.warn("negotiation failed", e);
       } finally {
@@ -190,23 +369,46 @@
     };
     pc.onicecandidate = (e) => { if (e.candidate && allowedCandidate(e.candidate)) signal(id, "candidate", e.candidate.toJSON()); };
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === "failed") pc.restartIce();
+      if (pc.iceConnectionState === "failed") { peer.restartedAt = performance.now(); pc.restartIce(); }
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "connected") { tuneVoice(peer); peer.troubleSince = 0; }
+      rtc.onchange();
     };
     pc.ontrack = (e) => {
       const stream = e.streams[0] || new MediaStream([e.track]);
       if (e.track.kind === "audio") attachAudio(peer, e.track, stream.getVideoTracks().length > 0);
-      else attachVideo(peer, e.track, stream);
+      else { preferCodecs(e.transceiver); attachVideo(peer, e.track, stream); }
     };
-    if (mic) {
-      const sender = pc.addTrack(mic.track, mic.stream);
-      const params = sender.getParameters();
-      params.encodings = [{ maxBitrate: VOICE_BITRATE }];
-      sender.setParameters(params).catch(() => {});
-    } else {
-      pc.addTransceiver("audio", { direction: "recvonly" });
-    }
+    peer.channel = pc.createDataChannel("av-state", { negotiated: true, id: STATE_CHANNEL_ID });
+    peer.channel.onopen = () => sendState(peer);
+    peer.channel.onmessage = (e) => onPeerState(peer, e.data);
+    if (mic) pc.addTrack(mic.track, mic.stream);
+    else pc.addTransceiver("audio", { direction: "recvonly" });
     if (rtc.localShare) addShareTracks(peer);
     return p;
+  }
+
+  function onPeerState(p, raw) {
+    let o;
+    try { o = JSON.parse(raw); } catch (e) { return; }
+    const previous = p.state;
+    p.state = { speaking: o.s === 1, muted: o.m === 1, deafened: o.d === 1, at: performance.now() };
+    if (!previous || previous.muted !== p.state.muted || previous.deafened !== p.state.deafened) rtc.onchange();
+  }
+
+  function sendState(p) {
+    if (!p.channel || p.channel.readyState !== "open") return;
+    try {
+      p.channel.send(JSON.stringify({ s: rtc.speaking[myId()] ? 1 : 0, m: rtc.muted ? 1 : 0, d: rtc.deafened ? 1 : 0 }));
+    } catch (e) {
+      console.warn("state not sent", e);
+    }
+  }
+
+  function broadcastState() {
+    lastStateSent = performance.now();
+    peers.forEach(sendState);
   }
 
   function attachAudio(p, track, share) {
@@ -218,7 +420,7 @@
     keepAlive.play().catch(() => {});
     const source = c.createMediaStreamSource(stream);
     const gain = c.createGain();
-    gain.gain.value = (share && rtc.isShareMuted(p.id)) ? 0 : peerGain(p.id);
+    gain.gain.value = share && rtc.isShareMuted(p.id) ? 0 : peerGain(p.id);
     const analyser = c.createAnalyser();
     analyser.fftSize = 1024;
     source.connect(gain);
@@ -251,10 +453,17 @@
 
   rtc.handleSignal = async function ({ from, room, kind, data }) {
     if (room !== rtc.room) return;
-    const p = ensurePeer(from);
+    if (kind === "bye") { closePeer(from); return; }
+    let p = peers.get(from);
+    // A new id means the other side rebuilt its connection (reload, restart): this one can never match it again.
+    if (p && p.remoteSid && data.sid && data.sid !== p.remoteSid) {
+      closePeer(from);
+      p = null;
+    }
+    p = p || ensurePeer(from);
+    if (data.sid) p.remoteSid = data.sid;
     const pc = p.pc;
     try {
-      if (kind === "bye") { closePeer(from); return; }
       if (kind === "candidate") {
         try { await pc.addIceCandidate(data); } catch (e) { if (!p.ignoreOffer) throw e; }
         return;
@@ -262,10 +471,10 @@
       const collision = kind === "offer" && (p.makingOffer || pc.signalingState !== "stable");
       p.ignoreOffer = !p.polite && collision;
       if (p.ignoreOffer) return;
-      await pc.setRemoteDescription(data);
+      await pc.setRemoteDescription({ type: data.type, sdp: data.sdp });
       if (kind === "offer") {
         await pc.setLocalDescription();
-        signal(from, "answer", { type: pc.localDescription.type, sdp: pc.localDescription.sdp });
+        sendDescription(p);
       }
     } catch (e) {
       console.warn("signal handling failed", kind, e);
@@ -279,9 +488,53 @@
     const before = [...peers.keys()];
     if (others.some((id) => !before.includes(id))) AV.sound("peerJoin");
     if (before.some((id) => !others.includes(id))) AV.sound("peerLeave");
+    if (others.length) stopCalling();
     others.forEach((id) => { if (!peers.has(id) && myId() < id) ensurePeer(id); });
     [...peers.keys()].filter((id) => !others.includes(id)).forEach(closePeer);
     rtc.onchange();
+  };
+
+  /* The signalling link just came back: anything sent while it was down is lost, so finish the negotiation now. */
+  rtc.resync = function (id) {
+    if (!rtc.room) return;
+    const members = AV.state.calls[rtc.room] || [];
+    const p = peers.get(id);
+    if (!p) {
+      if (members.includes(id) && myId() < id) ensurePeer(id);
+      return;
+    }
+    if (p.pc.signalingState === "have-local-offer") sendDescription(p);
+    else if (["failed", "disconnected"].includes(p.pc.iceConnectionState)) { p.restartedAt = performance.now(); p.pc.restartIce(); }
+  };
+
+  function startCalling() {
+    rtc.calling = true;
+    AV.ringtone.start("outgoing");
+    callTimer = setTimeout(onNoAnswer, CALL_TIMEOUT_MS);
+  }
+
+  function stopCalling() {
+    if (!rtc.calling) return;
+    rtc.calling = false;
+    clearTimeout(callTimer);
+    AV.ringtone.stop("outgoing");
+  }
+
+  function onNoAnswer() {
+    const room = rtc.room;
+    stopCalling();
+    if (room && room.startsWith("dm:")) {
+      AV.toast("Ninguém atendeu a chamada.");
+      rtc.leave();
+    }
+    rtc.onchange();
+  }
+
+  rtc.onDeclined = function ({ room, name }) {
+    if (room !== rtc.room) return;
+    AV.toast(name + " recusou a chamada.");
+    if (room.startsWith("dm:")) rtc.leave();
+    else if (!(AV.state.calls[room] || []).some((id) => id !== myId())) stopCalling();
   };
 
   rtc.join = async function (room) {
@@ -290,24 +543,30 @@
     try {
       await openMic();
     } catch (e) {
+      console.warn("microphone unavailable", e);
       AV.toast("Sem acesso ao microfone: você ouvirá a chamada, mas não será ouvido.", "error");
     }
     rtc.room = room;
     audioContext();
     await AV.api("POST", "/api/call/state", { room, joined: true });
-    (AV.state.calls[room] || []).filter((id) => id !== myId()).forEach(ensurePeer);
-    vadTimer = setInterval(vadLoop, 80);
+    const others = (AV.state.calls[room] || []).filter((id) => id !== myId());
+    others.forEach(ensurePeer);
+    vadTimer = setInterval(vadLoop, VAD_TICK_MS);
+    statsTimer = setInterval(statsTick, STATS_TICK_MS);
     AV.sound("join");
+    if (!others.length) startCalling();
     rtc.onchange();
   };
 
   rtc.leave = async function () {
     const room = rtc.room;
     if (!room) return;
+    stopCalling();
     if (rtc.localShare) rtc.stopShare();
     peers.forEach((p, id) => { signal(id, "bye", {}); });
     [...peers.keys()].forEach(closePeer);
     clearInterval(vadTimer);
+    clearInterval(statsTimer);
     closeMic();
     rtc.room = null;
     rtc.pttDown = false;
@@ -317,69 +576,174 @@
     rtc.onchange();
   };
 
-  rtc.toggleMute = function () { rtc.muted = !rtc.muted; AV.sound(rtc.muted ? "mute" : "unmute"); updateGate(); rtc.onchange(); };
+  rtc.toggleMute = function () {
+    rtc.muted = !rtc.muted;
+    AV.sound(rtc.muted ? "mute" : "unmute");
+    updateGate();
+    broadcastState();
+    rtc.onchange();
+  };
   rtc.toggleDeafen = function () {
     rtc.deafened = !rtc.deafened;
     applyOutput();
     AV.sound(rtc.deafened ? "deafen" : "undeafen");
+    broadcastState();
     rtc.onchange();
   };
   rtc.toggleMuteAll = function () { rtc.muteAll = !rtc.muteAll; applyOutput(); rtc.onchange(); };
   rtc.setPtt = function (down) { rtc.pttDown = down; updateGate(); };
   rtc.hasMic = () => !!mic;
+  rtc.peerState = (id) => { const p = peers.get(id); return p && p.state ? p.state : null; };
+  rtc.connectionState = (id) => { const p = peers.get(id); return p ? p.pc.connectionState : "closed"; };
+  rtc.peerStats = (id) => { const p = peers.get(id); return p ? p.stats : null; };
 
-  function bitrateFor(step) {
-    const res = cfg()["video.resolution"];
-    const fps = num("video.fps");
-    const custom = num("video.bitrate");
-    return (custom > 0 ? custom * 1000 : BASE_BITRATE[res + "-" + fps]) * step.mult;
+  /* ---- screen sharing ---- */
+
+  function sourceHeight() {
+    return shareHeight || 1080;
+  }
+
+  /* A capture track reports the size it was allowed to reach, not the frames it delivers, and every scale is computed from this. */
+  function watchShareSize(video) {
+    shareProbe = document.createElement("video");
+    shareProbe.muted = true;
+    shareProbe.srcObject = new MediaStream([video]);
+    const probe = shareProbe;
+    return new Promise((resolve) => {
+      const update = () => {
+        if (!probe.videoHeight) return;
+        const changed = shareHeight && probe.videoHeight !== shareHeight;
+        shareHeight = probe.videoHeight;
+        resolve();
+        if (changed) peers.forEach(reconfigure);
+      };
+      probe.onloadedmetadata = update;
+      probe.onresize = update;
+      probe.play().catch(() => {});
+      setTimeout(resolve, 2000);
+    });
+  }
+
+  function stopWatchingShareSize() {
+    if (!shareProbe) return;
+    shareProbe.onloadedmetadata = null;
+    shareProbe.onresize = null;
+    shareProbe.srcObject = null;
+    shareProbe = null;
+    shareHeight = 0;
+  }
+
+  function capKbps(height, fps) {
+    const pixelsPerSecond = (height * 16 / 9) * height * fps;
+    return Math.round((pixelsPerSecond * 0.128 / 1000) * (fps > 30 ? 0.75 : 1));
   }
 
   function ladder() {
+    const source = sourceHeight();
     const fps = num("video.fps");
-    return [
-      { scale: 1, fps, mult: 1 },
-      { scale: 1, fps: Math.min(fps, 30), mult: 0.7 },
-      { scale: 1.5, fps: 30, mult: 0.5 },
-      { scale: 2, fps: 24, mult: 0.35 },
-      { scale: 3, fps: 15, mult: 0.2 },
-    ];
+    const setting = cfg()["video.resolution"];
+    const top = Math.min(source, setting === "native" ? source : Number(setting));
+    const custom = num("video.bitrate");
+    const heights = [top, ...LOWER_RUNGS.filter((h) => h < top)];
+    return heights.map((height) => {
+      const rate = height >= 720 ? fps : Math.min(fps, height >= 540 ? 24 : 15);
+      const scaled = custom > 0 ? Math.round(custom * (height / top) * (height / top)) : capKbps(height, rate);
+      return { height, fps: rate, scale: source / height, maxKbps: scaled, needKbps: Math.round(capKbps(height, rate) * 0.25) };
+    });
   }
 
-  function configureSender(sender, step) {
+  function configureSender(p, sender) {
+    const steps = ladder();
+    const step = steps[Math.min(p.level, steps.length - 1)];
     const params = sender.getParameters();
     if (!params.encodings || !params.encodings.length) params.encodings = [{}];
-    params.encodings[0].maxBitrate = Math.round(bitrateFor(step));
+    params.encodings[0].maxBitrate = step.maxKbps * 1000;
     params.encodings[0].maxFramerate = step.fps;
     params.encodings[0].scaleResolutionDownBy = step.scale;
-    params.degradationPreference = "balanced";
-    return sender.setParameters(params).catch(() => {});
+    params.degradationPreference = cfg()["video.priority"] === "motion" ? "maintain-framerate" : "maintain-resolution";
+    return sender.setParameters(params).catch((e) => console.warn("sender parameters refused", e));
   }
 
   function addShareTracks(p) {
     rtc.localShare.getTracks().forEach((t) => {
       const sender = p.pc.addTrack(t, rtc.localShare);
       p.shareSenders.push(sender);
-      if (t.kind === "video") configureSender(sender, ladder()[level]);
+      if (t.kind === "video") {
+        preferCodecs(p.pc.getTransceivers().find((x) => x.sender === sender));
+        configureSender(p, sender);
+      }
     });
+  }
+
+  function chosenSource() {
+    const monitors = AV.state.monitors || [];
+    if (monitors.length < 2) return FULL_DESKTOP;
+    const chosen = monitors[num("video.monitor")] || monitors.find((m) => m.primary) || monitors[0];
+    return "screen:" + chosen.id + ":0";
+  }
+
+  function captureRequest(sourceId) {
+    return {
+      video: { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: sourceId, maxWidth: 7680, maxHeight: 4320, maxFrameRate: num("video.fps") } },
+      audio: flag("video.systemAudio") ? { mandatory: { chromeMediaSource: "desktop" } } : false,
+    };
+  }
+
+  async function captureScreen() {
+    const sourceId = chosenSource();
+    try {
+      return await AV.capture(captureRequest(sourceId));
+    } catch (e) {
+      if (sourceId === FULL_DESKTOP) throw e;
+      return AV.capture(captureRequest(FULL_DESKTOP));
+    }
+  }
+
+  /* Mute only governs the microphone path, so nothing but the system mix may ever enter the share: a microphone here would bypass it. */
+  function buildShareAudio(captured) {
+    const raw = captured.getAudioTracks()[0];
+    if (!raw) return null;
+    if (!(raw.getSettings().deviceId || "").startsWith("loopback")) {
+      raw.stop();
+      AV.toast("Não foi possível capturar o áudio do sistema. A tela será compartilhada sem som.", "error");
+      return null;
+    }
+    const c = audioContext();
+    const source = c.createMediaStreamSource(new MediaStream([raw]));
+    const duck = c.createGain();
+    const dest = c.createMediaStreamDestination();
+    source.connect(duck);
+    duck.connect(dest);
+    const track = dest.stream.getAudioTracks()[0];
+    track.enabled = !rtc.isShareMuted(myId());
+    return { raw, source, duck, track };
+  }
+
+  function closeShareAudio() {
+    if (!shareAudio) return;
+    shareAudio.source.disconnect();
+    shareAudio.raw.stop();
+    shareAudio.track.stop();
+    shareAudio = null;
+    ducked = false;
   }
 
   rtc.startShare = async function () {
     if (!rtc.room || rtc.localShare) return;
-    const hd = cfg()["video.resolution"] === "1080";
-    const fps = num("video.fps");
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { width: { ideal: hd ? 1920 : 1280 }, height: { ideal: hd ? 1080 : 720 }, frameRate: { ideal: fps, max: fps } },
-      audio: flag("video.systemAudio"),
-    });
-    const video = stream.getVideoTracks()[0];
-    video.contentHint = "motion";
+    const captured = await captureScreen();
+    const video = captured.getVideoTracks()[0];
+    video.contentHint = cfg()["video.priority"] === "motion" ? "motion" : "detail";
     video.onended = () => rtc.stopShare();
-    rtc.localShare = stream;
-    level = 0;
-    good = 0;
-    peers.forEach(addShareTracks);
-    if (flag("video.auto")) adaptTimer = setInterval(adapt, 3000);
+    await watchShareSize(video);
+    shareAudio = buildShareAudio(captured);
+    rtc.localShare = new MediaStream(shareAudio ? [video, shareAudio.track] : [video]);
+    peers.forEach((p) => {
+      p.level = 0;
+      p.pressure = 0;
+      p.upHold = UP_HOLD_MS;
+      p.levelAt = performance.now();
+      addShareTracks(p);
+    });
     rtc.onchange();
   };
 
@@ -387,54 +751,155 @@
     const stream = rtc.localShare;
     if (!stream) return;
     rtc.localShare = null;
-    clearInterval(adaptTimer);
     peers.forEach((p) => {
       p.shareSenders.forEach((s) => { try { p.pc.removeTrack(s); } catch (e) { /* connection already closed */ } });
       p.shareSenders = [];
     });
-    stream.getTracks().forEach((t) => t.stop());
+    stream.getVideoTracks().forEach((t) => t.stop());
+    closeShareAudio();
+    stopWatchingShareSize();
     rtc.onchange();
   };
 
-  async function adapt() {
-    const first = [...peers.values()].find((p) => p.shareSenders.some((s) => s.track && s.track.kind === "video"));
-    if (!first) return;
-    const stats = await first.pc.getStats();
-    let loss = 0;
-    let rtt = 0;
-    let limited = false;
-    stats.forEach((r) => {
-      if (r.type === "remote-inbound-rtp" && r.kind === "video") { loss = r.fractionLost || 0; rtt = r.roundTripTime || 0; }
-      if (r.type === "outbound-rtp" && r.kind === "video" && r.qualityLimitationReason === "bandwidth") limited = true;
-    });
+  rtc.applyVideo = function () {
+    const stream = rtc.localShare;
+    if (!stream) return;
+    const video = stream.getVideoTracks()[0];
+    video.contentHint = cfg()["video.priority"] === "motion" ? "motion" : "detail";
+    video.applyConstraints({ frameRate: { max: num("video.fps") } }).catch(() => {});
+    peers.forEach((p) => { p.level = 0; reconfigure(p); });
+    rtc.onchange();
+  };
+
+  function reconfigure(p) {
+    p.levelAt = performance.now();
+    p.pressure = 0;
+    p.shareSenders.forEach((s) => { if (s.track && s.track.kind === "video") configureSender(p, s); });
+  }
+
+  /* Each viewer has its own encoder and its own path, so one weak connection never blurs the image for everyone else. */
+  function adaptShare(p, now) {
+    if (!flag("video.auto") || !p.stats || !p.shareSenders.length || now - p.levelAt < SETTLE_MS) return;
     const steps = ladder();
-    if (loss > 0.06 || limited || rtt > 0.4) {
-      good = 0;
-      if (level < steps.length - 1) { level++; applyLevel(steps[level]); }
-    } else if (++good >= 5 && level > 0) {
-      good = 0;
-      level--;
-      applyLevel(steps[level]);
+    const step = steps[Math.min(p.level, steps.length - 1)];
+    const s = p.stats;
+    const starving = s.availKbps > 0 && s.availKbps < step.needKbps * 0.75;
+    const pressured = starving || s.limit === "cpu" || s.loss > 0.08;
+    p.pressure = pressured ? p.pressure + 1 : 0;
+    if (pressured) p.calmSince = 0;
+    else if (!p.calmSince) p.calmSince = now;
+    if (p.pressure >= PRESSURE_TICKS && p.level < steps.length - 1) {
+      p.level++;
+      // Going back up too soon would only fall again; each failed attempt waits longer before the next one.
+      p.upHold = Math.min(p.upHold * 2, UP_HOLD_MAX_MS);
+      reconfigure(p);
+      rtc.onchange();
+    } else if (p.level > 0 && p.calmSince && now - p.calmSince >= p.upHold) {
+      p.level--;
+      p.calmSince = 0;
+      reconfigure(p);
+      rtc.onchange();
     }
   }
 
-  function applyLevel(step) {
-    peers.forEach((p) => p.shareSenders.forEach((s) => { if (s.track && s.track.kind === "video") configureSender(s, step); }));
-    rtc.onchange();
+  /* ---- connection watch ---- */
+
+  function watchConnection(p, now) {
+    const pc = p.pc;
+    if (pc.connectionState === "connected") {
+      p.troubleSince = 0;
+      return;
+    }
+    if (!p.troubleSince) p.troubleSince = now;
+    const elapsed = now - p.troubleSince;
+    if (elapsed >= p.resetAfter) {
+      // Start over on both ends: the bye makes the other side drop its half, and the jitter keeps both from doing this at once.
+      const id = p.id;
+      signal(id, "bye", {});
+      closePeer(id);
+      ensurePeer(id);
+    } else if (elapsed >= RESTART_AFTER_MS && now - p.restartedAt >= RESTART_AFTER_MS) {
+      p.restartedAt = now;
+      if (pc.signalingState === "have-local-offer") sendDescription(p);
+      else if (pc.signalingState === "stable") pc.restartIce();
+    }
   }
 
-  rtc.quality = () => {
-    const s = ladder()[level];
-    return { level, scale: s.scale, fps: s.fps };
+  async function readStats(p) {
+    const report = await p.pc.getStats();
+    const s = { rtt: null, loss: 0, availKbps: 0, limit: "none", codec: "", outWidth: 0, outHeight: 0, outFps: 0, inWidth: 0, inHeight: 0, inFps: 0, at: performance.now() };
+    let pair = null;
+    report.forEach((r) => { if (r.type === "transport" && r.selectedCandidatePairId) pair = report.get(r.selectedCandidatePairId); });
+    if (!pair) report.forEach((r) => { if (r.type === "candidate-pair" && r.nominated && r.state === "succeeded") pair = r; });
+    if (pair) {
+      if (pair.currentRoundTripTime !== undefined) s.rtt = Math.round(pair.currentRoundTripTime * 1000);
+      s.availKbps = Math.round((pair.availableOutgoingBitrate || 0) / 1000);
+    }
+    report.forEach((r) => {
+      if (r.kind !== "video") return;
+      if (r.type === "outbound-rtp" && r.frameHeight) {
+        s.outWidth = r.frameWidth;
+        s.outHeight = r.frameHeight;
+        s.outFps = Math.round(r.framesPerSecond || 0);
+        s.limit = r.qualityLimitationReason || "none";
+        const codec = report.get(r.codecId);
+        s.codec = codec ? codec.mimeType.replace("video/", "") : "";
+      }
+      if (r.type === "remote-inbound-rtp") s.loss = r.fractionLost || 0;
+      if (r.type === "inbound-rtp" && r.frameHeight) {
+        s.inWidth = r.frameWidth;
+        s.inHeight = r.frameHeight;
+        s.inFps = Math.round(r.framesPerSecond || 0);
+      }
+    });
+    return s;
+  }
+
+  async function statsTick() {
+    const now = performance.now();
+    for (const p of [...peers.values()]) {
+      try {
+        p.stats = await readStats(p);
+      } catch (e) {
+        p.stats = null;
+      }
+      watchConnection(p, now);
+      if (rtc.localShare) adaptShare(p, now);
+    }
+    rtc.onstats();
+  }
+
+  rtc.shareInfo = function () {
+    const sending = [...peers.values()].map((p) => p.stats).filter((s) => s && s.outHeight);
+    if (!sending.length) return null;
+    const best = sending.reduce((a, b) => (b.outHeight > a.outHeight ? b : a));
+    return { width: best.outWidth, height: best.outHeight, fps: best.outFps, codec: best.codec };
   };
 
   rtc.videoTiles = function () {
     const tiles = [];
-    if (rtc.localShare) tiles.push({ id: myId(), local: true, stream: rtc.localShare });
-    peers.forEach((p) => p.videos.forEach((stream, key) => tiles.push({ id: p.id, key, local: false, stream })));
+    if (rtc.localShare) tiles.push({ id: myId(), key: "local", local: true, stream: rtc.localShare });
+    peers.forEach((p) => p.videos.forEach((stream, key) => tiles.push({ id: p.id, key: p.id + ":" + key, local: false, stream })));
     return tiles;
   };
 
   rtc.participants = () => (rtc.room ? [myId(), ...peers.keys()] : []);
 
+  rtc.diagnostics = function () {
+    return {
+      room: rtc.room,
+      microphone: mic ? { open: mic.track.enabled, device: mic.raw.getAudioTracks()[0].label } : null,
+      muted: rtc.muted,
+      sharing: rtc.localShare ? { systemAudio: shareAudio ? shareAudio.raw.getSettings().deviceId : null, ducked } : null,
+      peers: [...peers.values()].map((p) => ({
+        id: p.id,
+        connection: p.pc.connectionState,
+        ice: p.pc.iceConnectionState,
+        muted: rtc.isPeerMuted(p.id),
+        level: p.level,
+        stats: p.stats,
+        audio: [...p.audios.values()].map((a) => ({ share: a.share, gain: a.gain.gain.value, level: Number(rms(a.analyser, a.buffer).toFixed(4)) })),
+      })),
+    };
+  };
 })();

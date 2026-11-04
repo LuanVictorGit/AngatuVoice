@@ -2,7 +2,6 @@ package br.com.angatusistemas.voice.services;
 
 import br.com.angatusistemas.voice.updater.UpdateService;
 import br.com.angatusistemas.voice.utils.Version;
-import java.awt.GraphicsEnvironment;
 import java.util.List;
 import java.util.Map;
 
@@ -28,8 +27,7 @@ public final class StateService {
                 .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
         return new State(new Me(me.id(), me.name(), radmin.alias(), AvatarService.version(AvatarService.own().orElse(null))), radmin, radmin.issues(), Version.current().toString(),
                 groups, peers, directUnread, CallService.snapshot(), SettingsService.all(), UpdateService.status(),
-                AutostartService.available(),
-                GraphicsEnvironment.isHeadless() ? 1 : GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices().length);
+                AutostartService.available(), DisplayService.monitors(), CallService.ringing());
     }
 
     public record Me(String id, String name, String alias, String avatar) {
@@ -41,6 +39,7 @@ public final class StateService {
     public record State(Me me, RadminService.Status radmin, List<String> issues, String version, List<GroupView> groups,
                         List<PeerNetwork.PeerView> peers, Map<String, Integer> directUnread,
                         Map<String, List<String>> calls, Map<String, String> settings, UpdateService.Status update,
-                        boolean autostartAvailable, int monitors) {
+                        boolean autostartAvailable, List<DisplayService.Monitor> monitors,
+                        List<CallService.Incoming> incoming) {
     }
 }

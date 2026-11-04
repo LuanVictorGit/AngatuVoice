@@ -31,7 +31,7 @@
     </header>
     <section id="call-panel" class="hidden max-h-[55vh] flex-none overflow-y-auto border-b border-line bg-bg1 p-4"></section>
     <section id="messages" class="min-h-0 flex-1 overflow-y-auto py-3" aria-live="polite"></section>
-    <footer class="flex-none px-5 pb-4 pt-2">
+    <footer id="composer-area" class="flex-none px-5 pb-4 pt-2">
       <div class="card flex items-end gap-2 p-2">
         <button id="btn-emoji" class="btn btn-ghost btn-icon" title="Emojis" aria-label="Emojis"><svg class="ic"><use href="#i-smile"/></svg></button>
         <textarea id="composer" class="input flex-1 border-0 bg-transparent" rows="1" maxlength="4000" placeholder="Escreva uma mensagem" aria-label="Mensagem"></textarea>
@@ -45,6 +45,7 @@
 
   <div id="bottombar" class="col-span-full flex items-center gap-3 border-t border-line bg-bg1 px-3"></div>
 </div>
+<div id="incoming" class="incoming-host" aria-live="assertive"></div>
 <div id="toasts" class="toast-host" aria-live="polite"></div>
 <div id="overlay-root"></div>
 <div id="audio-root" hidden></div>

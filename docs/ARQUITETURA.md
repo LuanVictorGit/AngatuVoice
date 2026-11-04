@@ -39,19 +39,53 @@ O Radmin VPN **não tem API pública**. O que ele expõe localmente e o app usa:
 - **Handshake**: cada lado envia `hello` assinado (chave, X25519 efêmera, nome, porta, hora). As chaves de sessão derivam do segredo X25519 e da transcrição, uma por direção; AES-GCM com nonce de contador estrito (replay ou adulteração derrubam o link).
 - **Pertencimento a grupo privado**: tag HMAC(segredo, "member", transcrição, id) enviada no `auth`; quem não tem o segredo não prova e não recebe nada.
 - **Mensagens**: id `<autor>:<uuid>`, assinadas pelo autor; quem retransmite não consegue forjar. Limite de 4000 caracteres, controles removidos, texto exibido sempre como texto. Histórico persistente; ao reconectar, `sync` pede o que faltou e DMs pendentes são reenviadas até a confirmação (`ack`).
-- **Chamadas**: a mídia é WebRTC ponto a ponto no adaptador Radmin (candidatos filtrados para a faixa 26.x); o Java só mantém presença (`call`) e relaya sinalização (`sig`, até 32 KiB, tipos `offer`, `answer`, `candidate`, `bye`) entre pares autenticados. Negociação perfeita, reconexão por `restartIce`, malha completa em grupo.
-- Limites: 64 links, 8 handshakes simultâneos, 120 quadros por segundo por link, quadro de até 256 KiB.
+- **Chamadas**: a mídia é WebRTC ponto a ponto no adaptador Radmin (candidatos filtrados para a faixa 26.x); o Java só mantém presença (`call`, `rooms`, `decline`) e relaya sinalização (`sig`, até 64 KiB, tipos `offer`, `answer`, `candidate`, `bye`) entre pares autenticados. Negociação perfeita, reconexão por `restartIce`, malha completa em grupo.
+- Limites: 64 links, 8 handshakes simultâneos, rajada de 4000 quadros com reposição de 400 por segundo por link, quadro de até 256 KiB, 16 MiB de fila de saída por link.
+
+### Conexão e presença
+Cada link tem uma fila de saída e uma thread própria de escrita: um par travado nunca segura os outros, o relógio da rede nem as rotas. Um quadro que este lado não entende é descartado sem derrubar o link.
+
+| Situação | O que acontece |
+|---|---|
+| A cada 3 s | `ping`/`pong` em cada link: mede a latência e prova que o outro lado responde |
+| 7 s sem receber nada | o par é suspeito: disca de novo sem mexer na presença, e o socket novo substitui o antigo |
+| 20 s sem receber nada | o socket é fechado |
+| Socket fechado sem `bye` | a pessoa fica "reconectando" por até 20 s, continua nas salas e a mídia WebRTC segue; o redial é imediato, e o lado de id maior espera 400 ms para os dois não discarem juntos |
+| Volta dentro da carência | evento `peer.relinked`, sem aviso; a interface termina a negociação que estava pendente |
+| Porta recusa duas vezes | o programa do outro lado fechou: acaba a carência na hora |
+| `bye` recebido | saída imediata, sem carência |
+
+**Qual socket fica.** Dois dials que se cruzam nos primeiros 5 s são decididos pela ordem dos ids, então os dois lados escolhem o mesmo. Depois disso o socket novo sempre vence: o outro lado só discaria se a ponta dele tivesse morrido, e recusá-lo deixaria a pessoa offline para um dos lados até o tempo limite.
+
+**Quem chega depois.** O `auth` traz os endereços conhecidos e quem chega é apresentado aos demais por um quadro `peers` na hora, repetido a cada 30 s, sem depender de broadcast. O redial usa espera de 1 a 30 s por endereço, zerada quando chega um beacon, e o adaptador do Radmin só é dado como perdido depois de duas leituras seguidas e 30 s de carência.
+
+**Salas.** Na volta do link, `rooms` lista as salas em que a pessoa está naquele momento, com a idade da chamada, e substitui o que este lado sabia: o que mudou durante a queda é corrigido na hora. Versões até 1.3.0 não têm `proto` no `auth`; para elas valem os tempos antigos (ping a cada 20 s, queda em 70 s) e o primeiro `call` de uma sala vazia conta como toque.
+
+### Chamada recebida
+Quem entra numa sala vazia é quem chama, e o quadro leva `ring`. Quem recebe guarda a chamada em `CallService` até ela acabar: atendida, recusada (`decline`, e fica quieta até a sala esvaziar), cancelada ou sem resposta em 45 s, que vira chamada perdida. Quem chega no meio toca se a chamada ainda é nova (no mínimo por 15 s) e vê a faixa de chamada em andamento se não. A interface lê a lista em `/api/state` e no evento `call.incoming`; com a janela em segundo plano, `CallPopup` mostra Atender e Recusar sobre os outros programas sem roubar o foco, e a escolha volta pelo evento `call.action`. O toque é a música `assets/ringtone.mp3`, tocada em laço por um único elemento de áudio, que para na hora e usa a saída escolhida. Quem liga e quem já está em outra chamada ouvem sons curtos sintetizados em laço.
 
 ## Voz e tela
-Microfone com cancelamento de eco, supressão de ruído, ganho de entrada, detecção de voz (limiar pela sensibilidade; apertar para falar por atalho global), volume por pessoa e geral, saída selecionável (`setSinkId`). Tela: `getDisplayMedia` com 720p ou 1080p e 30 ou 60 FPS; a cada 3 s o controle adaptativo observa perda, RTT e limitação por banda e desce ou sobe uma escada (resolução, FPS e taxa de bits). Atalhos globais: gancho de teclado `WH_KEYBOARD_LL` via JNA (só observa, nada é engolido).
+Microfone com cancelamento de eco, supressão de ruído, ganho de entrada, detecção de voz (limiar pela sensibilidade, 50 ms de pré-rolagem para não cortar a primeira sílaba; apertar para falar por atalho global), volume e silêncio por pessoa e geral, saída selecionável (`setSinkId`). Atalhos globais: gancho de teclado `WH_KEYBOARD_LL` via JNA (só observa, nada é engolido).
 
-**Limitação conhecida:** o JCEF não oferece seletor nativo de fonte; a captura usa a flag `--auto-select-desktop-capture-source` (tela inteira). Escolher monitor ou janela específica exigiria um seletor próprio.
+**Quem está falando.** Cada par tem um canal de dados `av-state` que leva fala, microfone e áudio de quem envia, então todos veem o mesmo que o próprio falante. O indicador acende com dois ciclos de 50 ms acima do limiar, apaga com 60% dele (histerese) e fica 600 ms aceso depois da fala. Sem mensagem no canal por 5 s, cai para a medição local do áudio recebido.
+
+**Tela.** A captura vem de `getUserMedia` com `chromeMediaSource: desktop`, porque é o único caminho que aceita escolher o monitor (`screen:<índice>:0`, o mesmo índice de `EnumDisplayDevices`) e que entrega o áudio do sistema de verdade.
+
+- **Nitidez:** `contentHint = detail` e preferência AV1, VP9, VP8. O par VP8 com `motion` que se usava antes transmitia 1080p a 480×270 nos primeiros segundos; AV1 mantém 1920×1080 com metade da taxa de bits do VP9 e cerca de 10 ms por quadro numa CPU de 6 núcleos. Cada oferta e resposta leva `x-google-start-bitrate=2500`, para o codificador não começar perto de 300 kbps.
+- **Proporção:** o tamanho real vem dos quadros (`videoHeight` de um `<video>` fora da tela), porque `getSettings()` de uma captura informa o limite pedido, não o que chega. A redução é só `scaleResolutionDownBy`, e a tela usa `object-fit: contain`.
+- **Adaptação por pessoa:** a cada 2 s, cada conexão compara a banda disponível com o mínimo do degrau, a perda e a limitação por CPU. Três leituras ruins descem um degrau, e a volta espera 20 s estáveis, dobrando a cada queda até 2 minutos. Um espectador com rede ruim não afeta os outros.
+- **Áudio do sistema:** só entra faixa cujo `deviceId` começa com `loopback`, pois o microfone tem de passar sempre pelo silenciar. A captura também ouve a saída do próprio aplicativo (`restrictOwnAudio` e o cancelamento de eco não a removem no CEF), então, enquanto alguém fala, o som compartilhado baixa para 6% para a pessoa não ouvir a si mesma de volta.
+
+**Limitação conhecida:** só o monitor inteiro é compartilhado; escolher uma janela específica exigiria um seletor próprio. A mídia é codificada em software, porque o CEF desta versão não oferece codificador por hardware para AV1 e VP9, e cada espectador custa um codificador.
+
+## Janela e segundo plano
+Minimizar é o minimizar do Windows, o botão de fechar esconde a janela na bandeja (avisando na primeira vez) e `quit` só vem do Sair da bandeja ou de Configurações, depois de enviar `bye`. `Tray` restaura com um clique, e a janela volta no estado em que estava. Com "Iniciar escondido na bandeja", `addNotify` e `createImmediately` criam o Chromium sem mostrar a janela, porque chamadas e avisos vivem na página. `--disable-background-timer-throttling`, `--disable-backgrounding-occluded-windows`, `--disable-renderer-backgrounding` e `IntensiveWakeUpThrottling` desligado mantêm a detecção de voz em tempo real com a janela escondida.
 
 ## Persistência e migrações
 `Saveable` (SQLite, nada em RAM). `Migrations` roda passos ordenados em transação, faz backup (`VACUUM INTO`, os 3 últimos) antes de migrar e **recusa abrir dados de esquema mais novo** (sem downgrade).
 
 ## Configurações
-Aplicativo (nome, iniciar com o Windows, minimizado, bandeja, tema, notificações, privacidade), Áudio, Vídeo, Rede (diagnóstico, conexão por IP), Atualizações (canal, intervalo, histórico) e Sobre. Tudo salvo localmente; a chave `update.token` nunca é devolvida à interface.
+Aplicativo (nome, iniciar com o Windows, iniciar escondido, bandeja, tema, notificações, privacidade), Áudio, Vídeo, Rede (diagnóstico, conexão por IP), Atualizações (canal, intervalo, histórico) e Sobre. Tudo salvo localmente; a chave `update.token` nunca é devolvida à interface. O instalador pergunta sobre o início com o Windows: até a pessoa mudar nas configurações, o registro é a resposta.
 
 ## Segurança, resumo
 Loopback único para a interface; sessão por token de uso único; Host, Origin e cookie em toda rota; CSP e `no-store`; rede só no adaptador Radmin com autenticação mútua Ed25519 e sessão cifrada; mensagens assinadas e saneadas; limites por link; atualizador com assinatura Ed25519, SHA-256, hosts permitidos e sem downgrade; nenhum script ou comando vem do repositório, e o script de atualização é do próprio app e recebe parâmetros do próprio app.

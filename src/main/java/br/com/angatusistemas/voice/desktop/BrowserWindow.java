@@ -8,11 +8,13 @@ import br.com.angatusistemas.voice.utils.AppDirs;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinUser;
 import java.awt.Dimension;
+import java.awt.Frame;
 import java.awt.Image;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Map;
 import javax.imageio.ImageIO;
 import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
@@ -44,6 +46,15 @@ final class BrowserWindow {
     private static final int RELOAD_LIMIT = 3;
     private static final int PUMP_MS = 8;
     private static final int PM_REMOVE = 1;
+    private static final String[] CHROMIUM_FLAGS = {
+            "--enable-media-stream",
+            "--autoplay-policy=no-user-gesture-required",
+            "--disable-extensions",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-features=WebRtcHideLocalIpsWithMdns,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling",
+    };
 
     private final JFrame frame = new JFrame("Angatu Voice");
     private final String origin;
@@ -52,36 +63,37 @@ final class BrowserWindow {
     private CefBrowser browser;
     private final SplashPanel splash = new SplashPanel();
     private int reloads;
+    private int restoreState = Frame.MAXIMIZED_BOTH;
 
     BrowserWindow(int port) {
         this.origin = "http://127.0.0.1:" + port;
     }
 
-    void open(boolean startMinimized) {
+    void open(boolean startHidden) {
         frame.setIconImage(icon());
         frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         frame.setMinimumSize(new Dimension(900, 600));
         frame.setSize(1280, 800);
         frame.setLocationRelativeTo(null);
-        frame.setExtendedState(JFrame.MAXIMIZED_BOTH);
+        frame.setExtendedState(restoreState);
         frame.getContentPane().setBackground(SplashPanel.BACKGROUND);
         frame.getContentPane().add(splash);
         frame.addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
-                if (SettingsService.flag("closeToTray") && Tray.available()) {
-                    frame.setVisible(false);
-                } else {
-                    AppShell.quit();
-                }
+                closeRequested();
             }
 
             @Override
             public void windowIconified(WindowEvent e) {
                 if (SettingsService.flag("minimizeToTray") && Tray.available()) {
                     frame.setVisible(false);
-                    frame.setExtendedState(JFrame.MAXIMIZED_BOTH);
                 }
+            }
+        });
+        frame.addWindowStateListener(e -> {
+            if ((e.getNewState() & Frame.ICONIFIED) == 0) {
+                restoreState = e.getNewState();
             }
         });
         frame.addWindowFocusListener(new java.awt.event.WindowAdapter() {
@@ -90,7 +102,10 @@ final class BrowserWindow {
                 focusBrowser();
             }
         });
-        if (!startMinimized || !Tray.available()) {
+        if (startHidden && Tray.available()) {
+            // Calls and notifications live in the page, so Chromium needs a real window to run in even before it is shown.
+            frame.addNotify();
+        } else {
             show();
         }
         Thread starter = new Thread(this::startBrowser, "av-chromium-start");
@@ -101,11 +116,29 @@ final class BrowserWindow {
     void show() {
         SwingUtilities.invokeLater(() -> {
             frame.setVisible(true);
-            frame.setExtendedState(JFrame.MAXIMIZED_BOTH);
+            frame.setExtendedState(restoreState);
             frame.toFront();
             Foreground.raise(frame);
             focusBrowser();
         });
+    }
+
+    private void closeRequested() {
+        if (!SettingsService.flag("closeToTray")) {
+            AppShell.quit();
+        } else if (Tray.available()) {
+            frame.setVisible(false);
+            showTrayHintOnce();
+        } else {
+            frame.setExtendedState(frame.getExtendedState() | Frame.ICONIFIED);
+        }
+    }
+
+    private static void showTrayHintOnce() {
+        if (!SettingsService.flag("ui.trayHintShown")) {
+            SettingsService.update(Map.of("ui.trayHintShown", "true"));
+            Tray.notify("Angatu Voice", "O aplicativo continua aberto na bandeja para receber chamadas. Para encerrar, clique com o botão direito no ícone e escolha Sair.");
+        }
     }
 
     private void focusBrowser() {
@@ -123,12 +156,15 @@ final class BrowserWindow {
                 case LOCATING, EXTRACTING, INSTALL -> "Preparando o aplicativo pela primeira vez…";
                 default -> "Iniciando a interface…";
             }));
+            builder.getCefSettings().root_cache_path = AppDirs.ensure(AppDirs.chromiumProfile()).toString();
             builder.getCefSettings().log_severity = org.cef.CefSettings.LogSeverity.LOGSEVERITY_ERROR;
             builder.getCefSettings().log_file = AppDirs.ensure(AppDirs.logs()).resolve("chromium.log").toString();
             builder.getCefSettings().background_color = builder.getCefSettings().new ColorType(255, 15, 14, 13);
-            builder.addJcefArgs("--use-fake-ui-for-media-stream", "--enable-usermedia-screen-capturing",
-                    "--auto-select-desktop-capture-source=Entire screen", "--disable-features=WebRtcHideLocalIpsWithMdns",
-                    "--autoplay-policy=no-user-gesture-required", "--disable-extensions");
+            builder.addJcefArgs(CHROMIUM_FLAGS);
+            String extraFlags = System.getProperty("angatu.debug.chromium");
+            if (extraFlags != null && !extraFlags.isBlank()) {
+                builder.addJcefArgs(extraFlags.trim().split("\s+"));
+            }
             String debugPort = System.getProperty("angatu.debug.port");
             if (debugPort != null && debugPort.matches("\\d{4,5}")) {
                 builder.addJcefArgs("--remote-debugging-port=" + debugPort, "--remote-allow-origins=*");
@@ -166,6 +202,9 @@ final class BrowserWindow {
         frame.getContentPane().add(browser.getUIComponent());
         frame.revalidate();
         frame.repaint();
+        if (!frame.isVisible()) {
+            browser.createImmediately();
+        }
         // The native child window only paints after a real size change, so nudge the frame once it is attached.
         Dimension size = frame.getSize();
         if (frame.getExtendedState() != JFrame.MAXIMIZED_BOTH) {
@@ -181,16 +220,8 @@ final class BrowserWindow {
         focusBrowser();
     }
 
-    void dispose() {
-        SwingUtilities.invokeLater(() -> {
-            frame.dispose();
-            if (client != null) {
-                client.dispose();
-            }
-            if (cefApp != null) {
-                cefApp.dispose();
-            }
-        });
+    void hide() {
+        SwingUtilities.invokeLater(() -> frame.setVisible(false));
     }
 
     private String bootUrl() {

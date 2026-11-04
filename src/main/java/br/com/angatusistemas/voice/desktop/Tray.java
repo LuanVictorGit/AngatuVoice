@@ -6,13 +6,16 @@ import java.awt.MenuItem;
 import java.awt.PopupMenu;
 import java.awt.SystemTray;
 import java.awt.TrayIcon;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
 import javax.imageio.ImageIO;
 
 /**
- * The notification-area icon: open the window, toggle the microphone, quit, and native notifications.
+ * The notification-area icon: one click restores the window, the menu toggles the microphone and quits for real, and
+ * it carries the native notifications.
  *
  * @author Angatu Sistemas
  */
@@ -39,6 +42,15 @@ final class Tray {
             menu.add(item("Sair", AppShell::quit));
             TrayIcon created = new TrayIcon(ImageIO.read(in), "Angatu Voice", menu);
             created.setImageAutoSize(true);
+            // AWT only fires the action on a double click, while every other chat app restores on a single one.
+            created.addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseClicked(MouseEvent e) {
+                    if (e.getButton() == MouseEvent.BUTTON1) {
+                        AppShell.show();
+                    }
+                }
+            });
             created.addActionListener(e -> AppShell.show());
             SystemTray.getSystemTray().add(created);
             icon = created;

@@ -4,7 +4,12 @@
   const E = AV.el;
   const PAGE = 50;
   const EMOJIS = ["😀", "😁", "😂", "🤣", "😊", "😍", "😎", "🤔", "😅", "😉", "😢", "😭", "😡", "🥳", "😴", "🙄", "👍", "👎", "👏", "🙏", "💪", "👀", "🔥", "✨", "🎉", "🎮", "🎧", "☕", "🍕", "❤️", "💔", "💯", "✅", "❌", "⚠️", "🚀", "💡", "📌", "🎵", "👋"];
-  const videoEls = new Map();
+  const LATENCY_STALE_MS = 8000;
+  const CALL_RTT_STALE_MS = 6000;
+  let callView = null;
+  let focusedTile = null;
+  let chatOverStage = false;
+  let incomingKey = "";
   let messages = [];
   let hasMore = false;
   let linkDown = false;
@@ -13,6 +18,7 @@
 
   AV.state = null;
   AV.chat = "radmin";
+  AV.latency = null;
 
   const $ = (id) => document.getElementById(id);
   const me = () => AV.state.me;
@@ -28,6 +34,7 @@
 
   AV.refresh = async function () {
     AV.state = await AV.api("GET", "/api/state");
+    AV.latency = { peers: Object.fromEntries(AV.state.peers.map((p) => [p.id, p.rtt])), at: Date.now() };
     document.documentElement.dataset.theme = setting("theme");
     renderAll();
     cleanStaleCalls();
@@ -43,6 +50,8 @@
   AV.applySettings = function (key) {
     if (key === "theme") document.documentElement.dataset.theme = setting("theme");
     if (key.startsWith("audio.")) { AV.rtc.applyOutput(); AV.rtc.applyInput(); }
+    if (key === "audio.input") AV.rtc.switchInput();
+    if (key.startsWith("video.")) AV.rtc.applyVideo();
     if (key === "ui.lastChat") return;
     renderBottom();
   };
@@ -54,6 +63,7 @@
     renderCall();
     renderBottom();
     renderBanners();
+    renderIncoming();
   }
 
   function navItem(id, label, iconOrAvatar, unread, extra) {
@@ -81,7 +91,7 @@
       groups.map((g) => navItem(g.id, g.name, AV.icon("users"), g.unread, callMark(g.id))),
       E("div", { class: "nav-title hidden md:block" }, "Conversas privadas"),
       peers.length === 0 && E("div", { class: "hidden px-2 py-2 text-xs text-faint md:block" }, "Quando alguém entrar na rede, aparece aqui."),
-      peers.map((p) => navItem("dm:" + p.id, p.name, AV.avatar(p.id, p.name, "avatar-sm", p.online), AV.state.directUnread["dm:" + p.id] || 0, callMark("dm:" + p.id))));
+      peers.map((p) => navItem("dm:" + p.id, p.name, AV.avatar(p.id, p.name, "avatar-sm", p.online, p.unstable), AV.state.directUnread["dm:" + p.id] || 0, callMark("dm:" + p.id))));
   }
 
   function chatTitle() {
@@ -99,14 +109,15 @@
     const group = dm ? null : groupOf(AV.chat);
     const room = roomOf(AV.chat);
     const inThisCall = AV.rtc.room === room;
-    AV.fill($("chat-title"), dm && peer ? AV.avatar(peer.id, peer.name, "avatar-sm mr-2 inline-grid align-middle", peer.online) : null,
+    AV.fill($("chat-title"), dm && peer ? AV.avatar(peer.id, peer.name, "avatar-sm mr-2 inline-grid align-middle", peer.online, peer.unstable) : null,
       E("span", {}, chatTitle()),
       group && group.kind === "radmin" && E("span", { class: "chip ml-3 align-middle" }, E("span", { class: "dot " + (AV.state.radmin.connected ? "dot-on" : "dot-off") }), AV.state.radmin.connected ? "Radmin conectado" : "Sem Radmin"),
-      dm && peer && E("span", { class: "chip ml-3 align-middle" }, peer.online ? "Online" : "Offline"));
+      dm && peer && E("span", { class: "chip ml-3 align-middle" }, peer.unstable ? "Reconectando…" : peer.online ? "Online" : "Offline"));
     AV.fill($("chat-tools"), 
       group && group.hasInvite && E("button", { class: "btn", onclick: () => inviteDialog(group) }, AV.icon("copy", "ic-sm"), E("span", { class: "hidden lg:inline" }, "Convidar")),
       group && group.kind !== "radmin" && E("button", { class: "btn btn-ghost btn-icon text-muted hover:text-danger", title: "Excluir grupo", "aria-label": "Excluir grupo", onclick: () => deleteGroup(group) }, AV.icon("trash")),
       dm && peer && E("button", { class: "btn btn-ghost btn-icon text-muted hover:text-danger", title: "Limpar ou excluir conversa", "aria-label": "Limpar ou excluir conversa", onclick: () => dmOptionsDialog(peer) }, AV.icon("trash")),
+      E("button", { id: "stage-chat", class: "btn hidden", onclick: toggleChatOverStage }, AV.icon("chat", "ic-sm"), chatOverStage ? "Ocultar conversa" : "Mostrar conversa"),
       E("button", { class: "btn btn-ghost btn-icon xl:hidden", title: "Participantes", "aria-label": "Participantes", onclick: membersDialog }, AV.icon("users")),
       E("button", { class: "btn " + (inThisCall ? "btn-danger" : "btn-primary"), disabled: dm && peer && !peer.online && !inThisCall,
         onclick: () => (inThisCall ? AV.rtc.leave() : startCall(AV.chat)) },
@@ -114,12 +125,21 @@
     $("composer").placeholder = "Mensagem para " + (dm ? "" : "#") + chatTitle();
   }
 
-  function memberRow(id, name, online, alias, duplicate) {
-    return E("div", { class: "flex items-center gap-3 rounded-md px-2 py-1.5", dataset: { peer: id } },
-      AV.avatar(id, name, "avatar-sm", online),
+  function toggleChatOverStage() {
+    chatOverStage = !chatOverStage;
+    renderHeader();
+    renderCall();
+  }
+
+  function memberRow(id, name, online, alias, duplicate, unstable) {
+    const self = id === me().id;
+    return E("div", { class: "member-row flex items-center gap-3 rounded-md px-2 py-1.5" + (AV.rtc.speaking[id] ? " speaking" : ""), dataset: { peer: id } },
+      AV.avatar(id, name, "avatar-sm", online, unstable),
       E("div", { class: "min-w-0 flex-1" }, E("div", { class: "truncate font-semibold " + (online ? "" : "text-faint") }, name),
-        E("div", { class: "truncate text-xs text-faint" }, (alias ? alias + " · " : "") + id.slice(0, 8))),
+        E("div", { class: "truncate text-xs text-faint" }, unstable ? "Reconectando…" : (alias ? alias + " · " : "") + id.slice(0, 8))),
       duplicate && E("span", { class: "chip", title: "Outro participante usa o mesmo nome. Confira o código antes de confiar." }, AV.icon("alert", "ic-sm")),
+      !self && online && E("span", { dataset: { pingPeer: id } }, AV.pingBadge(peerPing(id))),
+      !self && AV.rtc.isPeerMuted(id) && E("span", { title: "Silenciado por você" }, AV.icon("volume-x", "ic-sm text-danger")),
       (AV.state.calls[roomOf(AV.chat)] || []).includes(id) && AV.icon("volume", "ic-sm text-ok"));
   }
 
@@ -128,7 +148,7 @@
     const others = AV.state.peers.filter((p) => (isDm(AV.chat) ? "dm:" + p.id === AV.chat : group && group.kind === "radmin" ? true : p.online && p.groups.includes(AV.chat)));
     const online = others.filter((p) => p.online);
     const offline = others.filter((p) => !p.online);
-    const section = (title, list) => list.length ? [E("div", { class: "nav-title" }, title + " — " + list.length), list.map((p) => memberRow(p.id, p.name, p.online, p.alias, p.duplicateName))] : [];
+    const section = (title, list) => list.length ? [E("div", { class: "nav-title" }, title + " — " + list.length), list.map((p) => memberRow(p.id, p.name, p.online, p.alias, p.duplicateName, p.unstable))] : [];
     return [E("div", { class: "nav-title" }, "Você"), memberRow(me().id, me().name, true, me().alias, false), section("Online", online), section("Offline", offline)];
   }
 
@@ -148,6 +168,10 @@
         E("button", { class: "btn", onclick: () => AV.openSettings("network") }, "Ver rede")));
     }
     if (linkDown) banners.push(E("div", { class: "banner" }, AV.icon("refresh"), "Reconectando ao aplicativo…"));
+    callsElsewhere().forEach(([room, members]) => banners.push(E("div", { class: "banner info" }, AV.icon("phone"),
+      E("div", { class: "min-w-0 flex-1 truncate" }, members.map(nameOf).join(", ") + (members.length > 1 ? " estão" : " está") + " em chamada em " + roomName(room) + "."),
+      E("button", { class: "btn", onclick: () => selectChat(chatOfRoom(room)) }, "Ver"),
+      E("button", { class: "btn btn-primary", onclick: () => startCall(chatOfRoom(room)) }, "Entrar"))));
     const u = AV.state.update;
     if (u.state === "available") banners.push(E("div", { class: "banner info" }, AV.icon("download"), E("div", { class: "flex-1" }, "A versão " + u.available + " está disponível."), E("button", { class: "btn", onclick: () => AV.openSettings("update") }, "Ver detalhes")));
     if (u.state === "ready") banners.push(E("div", { class: "banner info" }, AV.icon("download"), E("div", { class: "flex-1" }, "A versão " + u.available + " está pronta."),
@@ -156,6 +180,116 @@
     if (u.state === "restarting" || u.state === "installing") banners.push(E("div", { class: "banner info" }, AV.icon("refresh"), "Atualizando o Angatu Voice. O aplicativo vai reiniciar sozinho."));
     if (u.state === "rolledback") banners.push(E("div", { class: "banner error" }, AV.icon("alert"), u.message));
     AV.fill($("banners"), ...banners);
+  }
+
+  function roomName(room) {
+    if (room.startsWith("dm:")) return "uma conversa privada";
+    const group = groupOf(room);
+    return group ? group.name : "um grupo";
+  }
+
+  function callsElsewhere() {
+    return Object.entries(AV.state.calls).filter(([room, members]) => members.length > 0 && !members.includes(me().id)
+      && room !== roomOf(AV.chat) && !(AV.state.incoming || []).some((c) => c.room === room));
+  }
+
+  /* ---- latency ---- */
+
+  function peerPing(id) {
+    const stats = AV.rtc.peerStats(id);
+    if (stats && stats.rtt !== null && performance.now() - stats.at < CALL_RTT_STALE_MS && AV.rtc.connectionState(id) === "connected") return stats.rtt;
+    const fresh = AV.latency && Date.now() - AV.latency.at < LATENCY_STALE_MS;
+    const value = fresh ? AV.latency.peers[id] : undefined;
+    return value === undefined || value < 0 ? null : value;
+  }
+
+  function networkPing() {
+    if (!AV.state.radmin.connected) return { ms: null, text: "Sem rede", title: "Sem conexão com o Radmin VPN, não há como medir a latência." };
+    const room = AV.rtc.room;
+    const ids = room ? (AV.state.calls[room] || []).filter((id) => id !== me().id) : AV.state.peers.filter((p) => p.online).map((p) => p.id);
+    if (!ids.length) return { ms: null, text: "—", title: "Ninguém conectado para medir a latência." };
+    const samples = ids.map(peerPing).filter((v) => v !== null).sort((a, b) => a - b);
+    if (!samples.length) return { ms: null, text: "Sem medição", title: "A latência não pôde ser medida agora. A conexão pode estar instável." };
+    const ms = samples[Math.floor(samples.length / 2)];
+    return { ms, text: ms + " ms", title: "Latência " + AV.pingWord(ms) + ": " + ms + " ms até " + (room ? "a chamada" : "a rede") + ". Clique para ver por pessoa." };
+  }
+
+  function pingChip() {
+    const ping = networkPing();
+    return E("button", { id: "ping-chip", class: "ping-chip", title: ping.title, "aria-label": ping.title, onclick: latencyDialog }, AV.pingBadge(ping.ms, ping.text));
+  }
+
+  function renderPing() {
+    if (!AV.state) return;
+    const chip = $("ping-chip");
+    if (chip) chip.replaceWith(pingChip());
+    document.querySelectorAll("[data-ping-peer]").forEach((node) => AV.fill(node, AV.pingBadge(peerPing(node.dataset.pingPeer))));
+  }
+
+  function latencyDialog() {
+    const online = AV.state.peers.filter((p) => p.online);
+    AV.modal("Qualidade da conexão", (body) => {
+      body.append(E("p", { class: "mb-3 text-sm text-muted" }, "O ping é o tempo de ida e volta até cada pessoa. Até 100 ms é bom, até 200 ms é intermediário e acima disso a conversa começa a atrasar."));
+      if (!online.length) body.append(E("p", { class: "text-muted" }, "Ninguém conectado para medir a latência."));
+      online.forEach((p) => body.append(E("div", { class: "row" },
+        E("div", { class: "flex min-w-0 items-center gap-3" }, AV.avatar(p.id, p.name, "avatar-sm", p.online, p.unstable), E("span", { class: "truncate font-semibold" }, p.name)),
+        E("span", { dataset: { pingPeer: p.id } }, AV.pingBadge(peerPing(p.id))))));
+    }, [{ label: "Fechar", run: (close) => close() }]);
+  }
+
+  /* ---- incoming calls ---- */
+
+  function incomingCard(call) {
+    const where = call.room.startsWith("dm:") ? "Chamada privada" : "Chamada em " + roomName(call.room);
+    return E("div", { class: "incoming", role: "alertdialog", "aria-label": call.callerName + " está chamando você" },
+      E("div", { class: "flex min-w-0 items-center gap-4" },
+        E("div", { class: "incoming-avatar" }, AV.avatar(call.callerId, call.callerName, "avatar-lg")),
+        E("div", { class: "min-w-0 flex-1" },
+          E("div", { class: "text-xs font-bold uppercase tracking-wider text-ok" }, "Chamada recebida"),
+          E("div", { class: "truncate text-lg font-bold" }, call.callerName),
+          E("div", { class: "truncate text-sm text-muted" }, where))),
+      E("div", { class: "mt-4 grid grid-cols-2 gap-2" },
+        E("button", { class: "btn btn-answer", onclick: () => answerCall(call) }, AV.icon("phone", "ic-sm"), "Atender"),
+        E("button", { class: "btn btn-danger", onclick: () => declineCall(call) }, AV.icon("phone-off", "ic-sm"), "Recusar")));
+  }
+
+  function syncRingtone() {
+    if ((AV.state.incoming || []).length) AV.ringtone.start(AV.rtc.room ? "waiting" : "incoming");
+    else if (AV.ringtone.active() !== "outgoing") AV.ringtone.stop();
+  }
+
+  function renderIncoming() {
+    const calls = AV.state.incoming || [];
+    const key = calls.map((c) => c.room + "|" + c.callerName).join(",");
+    if (key !== incomingKey) {
+      // Rebuilding the card restarts its pulse, so it only happens when the list of calls really changes.
+      incomingKey = key;
+      AV.fill($("incoming"), ...calls.map(incomingCard));
+      renderBanners();
+    }
+    syncRingtone();
+  }
+
+  function dropIncoming(call) {
+    AV.state.incoming = (AV.state.incoming || []).filter((c) => c.room !== call.room);
+    renderIncoming();
+  }
+
+  async function answerCall(call) {
+    dropIncoming(call);
+    await startCall(chatOfRoom(call.room));
+  }
+
+  function declineCall(call) {
+    dropIncoming(call);
+    AV.api("POST", "/api/call/decline", { room: call.room }).catch(AV.fail);
+  }
+
+  function onCallAction({ action, room }) {
+    const call = (AV.state.incoming || []).find((c) => c.room === room);
+    if (!call) return;
+    if (action === "answer") answerCall(call);
+    else declineCall(call);
   }
 
   function renderBottom() {
@@ -169,6 +303,7 @@
           E("div", { class: "flex items-center gap-2 text-xs text-muted" }, E("span", { class: "dot " + (r.connected ? "dot-on" : "dot-off") }), r.connected ? "Radmin · " + r.ip : "Sem conexão"))),
       E("div", { class: "flex-1" }),
       E("div", { class: "flex items-center gap-2" },
+        pingChip(),
         btn(rtc.muted ? "mic-off" : "mic", rtc.muted ? "Ativar microfone" : "Silenciar microfone", () => { rtc.toggleMute(); }, rtc.muted ? "btn-off" : ""),
         btn(rtc.deafened ? "headphones-off" : "headphones", rtc.deafened ? "Ativar áudio" : "Silenciar áudio", () => { rtc.toggleDeafen(); }, rtc.deafened ? "btn-off" : ""),
         btn("screen", rtc.localShare ? "Parar compartilhamento" : "Compartilhar tela", shareToggle, rtc.localShare ? "btn-live" : "", !inCall),
@@ -183,21 +318,6 @@
     } catch (e) {
       if (e && e.name !== "NotAllowedError" && e.name !== "AbortError") AV.toast("Não foi possível compartilhar a tela.", "error");
     }
-  }
-
-  function videoEl(tile) {
-    const key = (tile.local ? "local" : tile.id) + ":" + (tile.key || "");
-    let node = videoEls.get(key);
-    const shouldMute = tile.local || AV.rtc.isShareMuted(tile.id);
-    if (!node || node.srcObject !== tile.stream) {
-      node = E("video", { autoplay: true, playsinline: true, muted: shouldMute, "aria-label": "Tela de " + nameOf(tile.id) });
-      node.muted = shouldMute;
-      node.srcObject = tile.stream;
-      videoEls.set(key, node);
-    } else if (node.muted !== shouldMute) {
-      node.muted = shouldMute;
-    }
-    return node;
   }
 
   function toggleFullscreen(tileKey) {
@@ -215,65 +335,205 @@
     renderCall();
   }
 
+  function buildCallView() {
+    const status = E("div", { class: "call-status hidden", role: "status" });
+    const stage = E("div", { class: "stage hidden" });
+    const people = E("div", { class: "people" });
+    return { root: E("div", { class: "call-view" }, status, stage, people), status, stage, people, videos: new Map(), tiles: new Map() };
+  }
+
+  function iconButton(onclick) {
+    return E("button", { class: "btn btn-ghost btn-icon !h-7 !w-7", onclick: (e) => { e.stopPropagation(); onclick(); } });
+  }
+
+  function setIconButton(button, icon, label, on) {
+    if (button.dataset.icon !== icon) {
+      AV.fill(button, AV.icon(icon, "ic-sm"));
+      button.dataset.icon = icon;
+    }
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.classList.toggle("btn-off", !!on);
+  }
+
+  /* Video nodes are created once and only ever updated: rebuilding them on every state change is what made the picture blink. */
+  function videoTile(tile) {
+    let view = callView.videos.get(tile.key);
+    if (view) {
+      if (view.video.srcObject !== tile.stream) view.video.srcObject = tile.stream;
+      return view;
+    }
+    // Every sound goes through Web Audio, where mute and volume apply; audio from this element would play on top of it.
+    const video = E("video", { autoplay: true, playsinline: true, muted: true, "aria-label": "Tela de " + nameOf(tile.id) });
+    video.muted = true;
+    video.srcObject = tile.stream;
+    const title = E("div", { class: "tile-name truncate" });
+    const info = E("span", { class: "mono flex-none text-muted" });
+    const sound = iconButton(() => AV.rtc.toggleShareMute(tile.id));
+    const expand = iconButton(() => toggleFullscreen(tile.key));
+    const header = E("div", { class: "tile-video-header" },
+      E("div", { class: "flex min-w-0 items-center gap-2" }, title, info),
+      E("div", { class: "flex flex-none items-center gap-1" }, sound, expand));
+    const root = E("div", { class: "tile tile-video", dataset: { tile: tile.key }, tabindex: 0,
+      onclick: () => { focusedTile = tile.key; renderCall(); },
+      ondblclick: () => toggleFullscreen(tile.key) }, header, video);
+    view = { root, video, title, info, sound, expand };
+    callView.videos.set(tile.key, view);
+    callView.stage.append(root);
+    return view;
+  }
+
+  function videoInfo(tile) {
+    const data = tile.local ? AV.rtc.shareInfo() : AV.rtc.peerStats(tile.id);
+    if (!data) return "";
+    const width = tile.local ? data.width : data.inWidth;
+    const height = tile.local ? data.height : data.inHeight;
+    const fps = tile.local ? data.fps : data.inFps;
+    if (!height) return "";
+    return width + "×" + height + " · " + fps + " FPS" + (tile.local && data.codec ? " · " + data.codec : "");
+  }
+
+  function syncVideos(tiles) {
+    const keys = new Set(tiles.map((t) => t.key));
+    callView.videos.forEach((view, key) => {
+      if (keys.has(key)) return;
+      view.video.srcObject = null;
+      view.root.remove();
+      callView.videos.delete(key);
+      if (activeFullscreenTile === key) {
+        activeFullscreenTile = null;
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      }
+    });
+    if (!keys.has(focusedTile)) focusedTile = tiles.length ? (tiles.find((t) => !t.local) || tiles[0]).key : null;
+    tiles.forEach((tile) => {
+      const view = videoTile(tile);
+      const full = activeFullscreenTile === tile.key;
+      const muted = AV.rtc.isShareMuted(tile.id);
+      view.root.classList.toggle("focused", tile.key === focusedTile);
+      view.root.classList.toggle("fullscreen", full);
+      view.title.textContent = tile.local ? "Sua tela" : "Tela de " + nameOf(tile.id);
+      view.info.textContent = videoInfo(tile);
+      setIconButton(view.sound, muted ? "volume-x" : "volume", muted ? "Reativar som da transmissão" : "Silenciar som da transmissão", muted);
+      setIconButton(view.expand, full ? "minimize" : "maximize", full ? "Sair da tela cheia (Esc)" : "Abrir em tela cheia", false);
+    });
+    callView.stage.classList.toggle("hidden", tiles.length === 0);
+    callView.stage.classList.toggle("single", tiles.length === 1);
+    setStageMode(tiles.length > 0);
+  }
+
+  function setStageMode(on) {
+    $("call-panel").classList.toggle("call-stage", on);
+    // A shared screen needs the height: the conversation steps aside until someone asks for it.
+    document.getElementById("shell").classList.toggle("stage-focus", on && !chatOverStage);
+    const toggle = $("stage-chat");
+    if (toggle) toggle.classList.toggle("hidden", !on);
+  }
+
+  function personTile(id) {
+    let view = callView.tiles.get(id);
+    if (view) return view;
+    const avatarSlot = E("div", {});
+    const name = E("div", { class: "tile-name max-w-full truncate" });
+    const flags = E("div", { class: "tile-flags" });
+    const root = E("div", { class: "tile person", dataset: { peer: id } }, avatarSlot, name, flags);
+    view = { root, avatarSlot, name, flags, avatarKey: null, flagsKey: null };
+    if (id !== me().id) {
+      view.mute = E("button", { class: "btn btn-ghost btn-icon !h-8 !w-8", onclick: () => AV.rtc.togglePeerMute(id) });
+      view.slider = E("input", { type: "range", min: 0, max: 200, class: "w-24", "aria-label": "Volume de " + nameOf(id),
+        title: "Volume de " + nameOf(id), oninput: (e) => AV.rtc.setPeerVolume(id, Number(e.target.value)) });
+      view.ping = E("span", { dataset: { pingPeer: id } }, AV.pingBadge(peerPing(id)));
+      root.append(view.ping, E("div", { class: "flex items-center gap-1" }, view.mute, view.slider));
+    }
+    callView.tiles.set(id, view);
+    callView.people.append(root);
+    return view;
+  }
+
+  function flagIcon(icon, label) {
+    return E("span", { title: label, "aria-label": label, role: "img" }, AV.icon(icon, "ic-sm text-danger"));
+  }
+
+  function personFlags(id, self) {
+    const rtc = AV.rtc;
+    if (self) {
+      return [rtc.muted && flagIcon("mic-off", "Seu microfone está silenciado"), rtc.deafened && flagIcon("headphones-off", "Seu áudio está silenciado")];
+    }
+    const state = rtc.peerState(id);
+    const link = rtc.connectionState(id);
+    return [
+      state && state.muted && flagIcon("mic-off", "Microfone desligado"),
+      state && state.deafened && flagIcon("headphones-off", "Áudio desligado"),
+      rtc.isPeerMuted(id) && E("span", { class: "chip !h-5 !px-2 text-danger" }, "Silenciado por você"),
+      link !== "connected" && E("span", { class: "chip !h-5 !px-2" }, link === "failed" || link === "disconnected" ? "Reconectando…" : "Conectando…"),
+    ];
+  }
+
+  function updatePerson(id) {
+    const rtc = AV.rtc;
+    const self = id === me().id;
+    const view = personTile(id);
+    const label = nameOf(id);
+    const avatarKey = label + "|" + AV.avatarVersion(id);
+    if (view.avatarKey !== avatarKey) {
+      AV.fill(view.avatarSlot, AV.avatar(id, label, "avatar-lg"));
+      view.avatarKey = avatarKey;
+    }
+    view.name.textContent = self ? "Você" : label;
+    view.root.classList.toggle("speaking", !!rtc.speaking[id]);
+    AV.fill(view.flags, ...personFlags(id, self).filter(Boolean));
+    if (!self) {
+      const muted = rtc.isPeerMuted(id);
+      view.root.classList.toggle("muted-local", muted);
+      setIconButton(view.mute, muted ? "volume-x" : "volume", muted ? "Reativar o áudio de " + label : "Silenciar " + label + " só para você", muted);
+      view.mute.setAttribute("aria-pressed", String(muted));
+      view.slider.disabled = muted;
+      if (document.activeElement !== view.slider) view.slider.value = rtc.peerVolume(id);
+    }
+  }
+
+  function syncPeople(ids) {
+    const wanted = new Set(ids);
+    callView.tiles.forEach((view, id) => {
+      if (!wanted.has(id)) { view.root.remove(); callView.tiles.delete(id); }
+    });
+    ids.forEach(updatePerson);
+  }
+
+  function renderCallStatus() {
+    const calling = AV.rtc.calling;
+    callView.status.classList.toggle("hidden", !calling);
+    if (calling) {
+      const peer = isDm(AV.chat) ? peerOf(AV.chat.slice(3)) : null;
+      AV.fill(callView.status, AV.icon("phone", "ic-sm"), peer ? "Chamando " + peer.name + "…" : "Chamando os participantes…");
+    }
+  }
+
   function renderCall() {
     const panel = $("call-panel");
     const room = roomOf(AV.chat);
     const active = AV.state.calls[room] || [];
     const rtc = AV.rtc;
     const inThis = rtc.room === room;
-    if (!inThis && active.length === 0 && !rtc.room) { panel.classList.add("hidden"); AV.fill(panel); return; }
-    panel.classList.remove("hidden");
     if (!inThis) {
+      callView = null;
+      setStageMode(false);
+      if (active.length === 0 && !rtc.room) { panel.classList.add("hidden"); AV.fill(panel); return; }
+      panel.classList.remove("hidden");
       const here = rtc.room ? "Você está em outra chamada." : active.map(nameOf).join(", ") + (active.length > 1 ? " estão" : " está") + " em chamada.";
       AV.fill(panel, E("div", { class: "flex items-center gap-3" }, AV.icon("volume", "text-ok"), E("div", { class: "flex-1" }, here),
         !rtc.room && E("button", { class: "btn btn-primary", onclick: () => startCall(AV.chat) }, "Entrar na chamada"),
         rtc.room && E("button", { class: "btn", onclick: () => selectChat(chatOfRoom(rtc.room)) }, "Ir para a chamada")));
       return;
     }
-    const ids = [...new Set([me().id, ...active])];
-    const tiles = ids.map((id) => E("div", { class: "tile" + (rtc.speaking[id] ? " speaking" : ""), dataset: { peer: id } },
-      AV.avatar(id, nameOf(id), "avatar-lg"),
-      E("div", { class: "tile-name" }, id === me().id ? "Você" : nameOf(id), id === me().id && rtc.muted && AV.icon("mic-off", "ic-sm ml-2 inline text-danger")),
-      id !== me().id && E("input", { type: "range", min: 0, max: 200, value: rtc.peerVolume(id), class: "w-28", "aria-label": "Volume de " + nameOf(id),
-        title: "Volume de " + nameOf(id), oninput: (e) => rtc.setPeerVolume(id, Number(e.target.value)) })));
-    const videos = rtc.videoTiles().map((t) => {
-      const tileKey = (t.local ? "local" : t.id) + ":" + (t.key || "");
-      const isFullscreen = activeFullscreenTile === tileKey;
-      const isMuted = rtc.isShareMuted(t.id);
-      return E("div", {
-        class: "tile tile-video" + (isFullscreen ? " fullscreen" : ""),
-        dataset: { tile: tileKey },
-        ondblclick: () => toggleFullscreen(tileKey)
-      },
-        E("div", { class: "tile-video-header" },
-          E("div", { class: "tile-name truncate" }, (t.local ? "Sua tela" : "Tela de " + nameOf(t.id)) + (t.local ? qualityLabel() : "")),
-          E("div", { class: "flex items-center gap-1" },
-            E("button", {
-              class: "btn btn-ghost btn-icon !h-7 !w-7 hover:bg-bg2",
-              title: isMuted ? "Reativar som da transmissão" : "Silenciar transmissão de tela",
-              "aria-label": isMuted ? "Reativar som da transmissão" : "Silenciar transmissão de tela",
-              onclick: (e) => { e.stopPropagation(); rtc.toggleShareMute(t.id); }
-            }, AV.icon(isMuted ? "volume-x" : "volume", "ic-sm")),
-            E("button", {
-              class: "btn btn-ghost btn-icon !h-7 !w-7 hover:bg-bg2",
-              title: isFullscreen ? "Sair da tela cheia (Esc)" : "Abrir transmissão em tela cheia",
-              "aria-label": isFullscreen ? "Sair da tela cheia (Esc)" : "Abrir transmissão em tela cheia",
-              onclick: (e) => { e.stopPropagation(); toggleFullscreen(tileKey); }
-            }, AV.icon(isFullscreen ? "minimize" : "maximize", "ic-sm"))
-          )
-        ),
-        videoEl(t)
-      );
-    });
-    AV.fill(panel, E("div", { class: "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" }, videos, tiles));
-    for (const key of [...videoEls.keys()]) {
-      if (!rtc.videoTiles().some((t) => (t.local ? "local" : t.id) + ":" + (t.key || "") === key)) videoEls.delete(key);
+    panel.classList.remove("hidden");
+    if (!callView) {
+      callView = buildCallView();
+      AV.fill(panel, callView.root);
     }
-  }
-
-  function qualityLabel() {
-    const q = AV.rtc.quality();
-    return q.level === 0 ? " · qualidade máxima" : " · qualidade reduzida (" + q.fps + " FPS)";
+    renderCallStatus();
+    syncVideos(rtc.videoTiles());
+    syncPeople([...new Set([me().id, ...active])]);
   }
 
   async function startCall(chat) {
@@ -285,7 +545,8 @@
     }
   }
 
-  AV.rtc.onchange = () => { renderCall(); renderBottom(); renderHeader(); renderNav(); renderMembers(); };
+  AV.rtc.onchange = () => { renderHeader(); renderCall(); renderBottom(); renderNav(); renderMembers(); syncRingtone(); };
+  AV.rtc.onstats = () => { renderCall(); renderPing(); };
   AV.rtc.onspeaking = (id, value) => {
     document.querySelectorAll('[data-peer="' + id + '"]').forEach((n) => n.classList.toggle("speaking", value));
     pushOverlay();
@@ -293,7 +554,7 @@
 
   let lastOverlay = "";
   const pushOverlay = AV.debounce(() => {
-    const speaking = AV.rtc.room ? Object.entries(AV.rtc.speaking).filter(([, on]) => on).map(([id]) => ({ id, name: nameOf(id) })) : [];
+    const speaking = AV.rtc.room ? Object.entries(AV.rtc.speaking).filter(([id, on]) => on && AV.rtc.isAudible(id)).map(([id]) => ({ id, name: nameOf(id) })) : [];
     const key = JSON.stringify(speaking);
     if (key === lastOverlay) return;
     lastOverlay = key;
@@ -530,7 +791,12 @@
     if (action === "mic") { rtc.toggleMute(); AV.toast(rtc.muted ? "Microfone silenciado." : "Microfone ativado."); }
     if (action === "deafen") { rtc.toggleDeafen(); AV.toast(rtc.deafened ? "Áudio silenciado." : "Áudio ativado."); }
     if (action === "muteAll") { rtc.toggleMuteAll(); AV.toast(rtc.muteAll ? "Todos silenciados." : "Todos reativados."); }
-    if (action === "call") { if (rtc.room) rtc.leave(); else startCall(AV.chat); }
+    if (action === "call") {
+      const ringing = (AV.state.incoming || [])[0];
+      if (ringing) answerCall(ringing);
+      else if (rtc.room) rtc.leave();
+      else startCall(AV.chat);
+    }
     if (action === "share") {
       if (!rtc.room) { AV.toast("Entre em uma chamada para compartilhar a tela."); return; }
       shareToggle();
@@ -556,14 +822,21 @@
     AV.on("expired", () => AV.modal("Sessão encerrada", (b) => b.append(E("p", { class: "text-muted" }, "Feche e abra o Angatu Voice de novo para continuar.")), []));
     AV.on("message", onMessage);
     AV.on("message.delivered", ({ id }) => { const m = messages.find((x) => x.id === id); if (m) { m.pending = false; renderMessages(false); } });
-    AV.on("peer.online", ({ name }) => { AV.toast(name + " entrou na rede."); refreshSoon(); });
+    AV.on("peer.online", ({ id, name }) => { AV.toast(name + " entrou na rede."); AV.rtc.resync(id); refreshSoon(); });
     AV.on("peer.offline", ({ name }) => { AV.toast(name + " saiu da rede."); refreshSoon(); });
+    AV.on("peer.changed", () => refreshSoon());
+    AV.on("peer.relinked", ({ id }) => { AV.rtc.resync(id); refreshSoon(); });
+    AV.on("net.latency", ({ peers }) => { AV.latency = { peers, at: Date.now() }; renderPing(); });
     AV.on("net", () => refreshSoon());
     AV.on("group.changed", () => refreshSoon());
     AV.on("peer.profile", () => refreshSoon());
     AV.on("messages.cleared", ({ chat }) => { if (chat === AV.chat) { messages = []; renderMessages(true); } });
     AV.on("peer.removed", ({ id }) => { if (AV.chat === "dm:" + id) { selectChat("radmin"); } refreshSoon(); });
-    AV.on("call.state", (d) => { AV.rtc.handleRoom(d); renderCall(); renderNav(); renderMembers(); renderHeader(); });
+    AV.on("call.state", (d) => { AV.rtc.handleRoom(d); renderHeader(); renderCall(); renderNav(); renderMembers(); renderBanners(); });
+    AV.on("call.incoming", ({ calls }) => { AV.state.incoming = calls; renderIncoming(); });
+    AV.on("call.action", onCallAction);
+    AV.on("call.declined", (d) => AV.rtc.onDeclined(d));
+    AV.on("call.missed", ({ name }) => AV.toast("Chamada perdida de " + name + "."));
     AV.on("call.signal", (d) => AV.rtc.handleSignal(d));
     AV.on("update", onUpdate);
     AV.on("hotkey", onHotkey);
@@ -588,6 +861,7 @@
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
     });
     window.addEventListener("focus", markRead);
+    setInterval(renderPing, 3000);
   }
 
   async function init() {

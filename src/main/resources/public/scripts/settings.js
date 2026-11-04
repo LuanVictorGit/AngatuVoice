@@ -103,7 +103,7 @@
   async function devices() {
     let list = await navigator.mediaDevices.enumerateDevices();
     if (list.some((d) => d.kind === "audioinput" && !d.label)) {
-      try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop()); } catch (e) { return list; }
+      try { (await AV.capture({ audio: true })).getTracks().forEach((t) => t.stop()); } catch (e) { return list; }
       list = await navigator.mediaDevices.enumerateDevices();
     }
     return list;
@@ -124,7 +124,9 @@
       toggle("audio.echo", "Cancelamento de eco", "Evita que sua voz volte pelas caixas de som."),
       toggle("audio.noise", "Supressão de ruído", "Reduz ruídos constantes, como ventilador e teclado."),
       toggle("sounds.enabled", "Sons do aplicativo", "Sons curtos ao silenciar, entrar e sair de chamadas e receber mensagens."),
-      range("sounds.volume", "Volume dos sons", "", 0, 100, "%"),
+      toggle("sounds.ring", "Toque de chamada", "Toca a música de chamada enquanto alguém chama você, e um som de espera enquanto você aguarda ser atendido."),
+      range("sounds.volume", "Volume dos sons", "Vale também para o toque de chamada.", 0, 100, "%"),
+      row("Testar o toque", "Toca alguns segundos da música, com o volume escolhido.", E("button", { class: "btn", onclick: () => AV.ringtone.preview() }, "Tocar")),
       micTest());
   }
 
@@ -164,7 +166,7 @@
       if (running) { stop(); return; }
       try {
         const device = value("audio.input");
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: device ? { exact: device } : undefined,
+        const stream = await AV.capture({ audio: { deviceId: device ? { exact: device } : undefined,
           echoCancellation: value("audio.echo") === "true", noiseSuppression: value("audio.noise") === "true" } });
         const ctx = new AudioContext();
         const analyser = ctx.createAnalyser();
@@ -213,14 +215,15 @@
   }
 
   function videoTab(body) {
-    const monitors = Array.from({ length: AV.state.monitors || 1 }, (_, i) => [String(i), "Monitor " + (i + 1)]);
+    const monitors = (AV.state.monitors || []).map((m, i) => [String(i), "Monitor " + (i + 1) + (m.primary ? " (principal)" : "")]);
     body.append(
-      select("video.monitor", "Monitor", "Qual tela entra primeiro na lista de compartilhamento.", monitors),
-      select("video.resolution", "Resolução", "A resolução máxima da transmissão.", [["720", "720p"], ["1080", "1080p Full HD"]]),
+      select("video.monitor", "Monitor", "Qual tela você compartilha.", monitors.length ? monitors : [["0", "Monitor 1"]]),
+      select("video.resolution", "Resolução", "A resolução máxima da transmissão. A proporção da tela é sempre preservada.", [["720", "720p"], ["1080", "1080p Full HD"], ["1440", "1440p Quad HD"], ["native", "Original da tela"]]),
       select("video.fps", "Quadros por segundo", "60 FPS exige um computador e uma conexão que aguentem.", [["30", "30 FPS"], ["60", "60 FPS"]]),
-      toggle("video.auto", "Qualidade automática", "Reduz resolução e quadros quando a rede não acompanha, e volta quando melhora."),
-      select("video.bitrate", "Taxa de bits máxima", "Automática respeita a resolução escolhida.", [["0", "Automática"], ["1500", "1,5 Mbps"], ["3000", "3 Mbps"], ["5000", "5 Mbps"], ["8000", "8 Mbps"], ["12000", "12 Mbps"]]),
-      toggle("video.systemAudio", "Compartilhar áudio do sistema", "Disponível ao compartilhar a tela inteira."));
+      select("video.priority", "Prioridade", "Nitidez deixa textos e detalhes legíveis. Fluidez favorece jogos e vídeos com muito movimento.", [["detail", "Nitidez"], ["motion", "Fluidez"]]),
+      toggle("video.auto", "Qualidade automática", "Reduz a resolução só para quem está com a rede ruim e volta quando melhora."),
+      select("video.bitrate", "Taxa de bits máxima", "Automática respeita a resolução escolhida.", [["0", "Automática"], ["3000", "3 Mbps"], ["5000", "5 Mbps"], ["8000", "8 Mbps"], ["12000", "12 Mbps"], ["20000", "20 Mbps"], ["30000", "30 Mbps"]]),
+      toggle("video.systemAudio", "Compartilhar áudio do sistema", "Envia o som do computador junto com a tela. O microfone continua separado e obedece ao botão de silenciar."));
   }
 
   function photoRow() {
@@ -272,10 +275,10 @@
     body.append(
       photoRow(),
       row("Seu nome", "É como os outros participantes veem você.", name),
-      toggle("autostart", "Iniciar com o Windows", AV.state.autostartAvailable ? "O aplicativo abre quando você entra no Windows." : "Disponível apenas na versão instalada.", !AV.state.autostartAvailable),
-      toggle("startMinimized", "Iniciar minimizado", "Abre direto na bandeja."),
-      toggle("minimizeToTray", "Minimizar para a bandeja", "Minimizar esconde a janela em vez de ocupar a barra de tarefas."),
-      toggle("closeToTray", "Fechar para a bandeja", "O botão de fechar mantém o aplicativo rodando para você receber chamadas."),
+      toggle("autostart", "Iniciar com o Windows", AV.state.autostartAvailable ? "O aplicativo abre com a janela principal e já se conecta à rede quando você entra no Windows." : "Disponível apenas na versão instalada.", !AV.state.autostartAvailable),
+      toggle("startMinimized", "Iniciar escondido na bandeja", "Abre sem mostrar a janela, mas já conectado e recebendo chamadas."),
+      toggle("minimizeToTray", "Minimizar para a bandeja", "Ao minimizar, a janela sai também da barra de tarefas e fica só na bandeja."),
+      toggle("closeToTray", "Fechar para a bandeja", "O botão de fechar só esconde a janela, e você continua recebendo chamadas. Para encerrar de verdade, use Sair no ícone da bandeja."),
       select("theme", "Tema", "", [["dark", "Escuro"], ["light", "Claro"]]),
       toggle("notifications", "Notificações", "Avisa sobre mensagens e entradas quando a janela está em segundo plano."),
       toggle("privacy.preview", "Mostrar o texto nas notificações", "Desligado, a notificação só diz que chegou uma mensagem."),
@@ -328,6 +331,7 @@
       E("button", { class: "btn mt-6", onclick: async () => {
         try {
           const d = await AV.api("GET", "/api/system/diagnostics");
+          d.call = AV.rtc.diagnostics();
           AV.modal("Diagnóstico", (b) => b.append(E("pre", { class: "selectable mono whitespace-pre-wrap" }, JSON.stringify(d, null, 2))), [{ label: "Fechar", run: (close) => close() }]);
         } catch (e) { AV.fail(e); }
       } }, "Executar diagnóstico"));

@@ -75,12 +75,12 @@ AV.avatarVersion = function (id) {
   return peer ? peer.avatar || "" : "";
 };
 
-AV.avatar = function (id, name, size, online) {
+AV.avatar = function (id, name, size, online, unstable) {
   const version = AV.avatarVersion(id);
   const node = AV.el("div", { class: "avatar " + (size || ""), style: "background:" + AV.colorFor(id), "aria-hidden": "true" },
     version ? AV.el("img", { src: "/api/avatar/" + id + "?v=" + version, alt: "", draggable: "false", class: "avatar-img" })
       : (name || "?").trim().charAt(0).toUpperCase());
-  if (online !== undefined) node.append(AV.el("span", { class: "presence" + (online ? " on" : "") }));
+  if (online !== undefined) node.append(AV.el("span", { class: "presence" + (online ? " on" : "") + (unstable ? " unstable" : "") }));
   return node;
 };
 
@@ -159,9 +159,137 @@ AV.debounce = function (fn, ms) {
   };
 };
 
+/* Chromium refuses the first capture of a session with AbortError unless the window is in front, and grants the very same request right after. */
+AV.capture = async function (constraints) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (e) {
+      if (e.name !== "AbortError" || attempt >= 3) throw e;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+  }
+};
+
+/* Latency is judged by what a voice call tolerates: under 100 ms it goes unnoticed, past 200 ms people talk over each other. */
+AV.pingLevel = (ms) => (ms === null ? "none" : ms <= 100 ? "good" : ms <= 200 ? "mid" : "bad");
+AV.pingWord = (ms) => ({ none: "indisponível", good: "boa", mid: "intermediária", bad: "ruim" }[AV.pingLevel(ms)]);
+
+AV.pingBadge = function (ms, text) {
+  return AV.el("span", { class: "ping ping-" + AV.pingLevel(ms) },
+    AV.el("span", { class: "ping-bars", "aria-hidden": "true" }, AV.el("i"), AV.el("i"), AV.el("i")),
+    AV.el("span", { class: "mono" }, text || (ms === null ? "—" : ms + " ms")));
+};
+
+AV.cueContext = (function () {
+  let ctx = null;
+  return function () {
+    if (!ctx) ctx = new AudioContext();
+    if (ctx.state === "suspended") ctx.resume();
+    const s = AV.state && AV.state.settings;
+    if (s && ctx.setSinkId) ctx.setSinkId(s["audio.output"] || "").catch(() => {});
+    return ctx;
+  };
+})();
+
+/* The sounds of a call: the ringtone is a song streamed by one audio element, and the softer signals are synthesised into a looping buffer. All stop the instant they are told to. */
+AV.ringtone = (function () {
+  const SONG = "/assets/ringtone.mp3";
+  const PREVIEW_MS = 6000;
+  const PATTERNS = {
+    waiting: { seconds: 4, gain: 0.45, notes: [[830.61, 0, 0.25], [987.77, 0.2, 0.35]] },
+    outgoing: { seconds: 3.4, gain: 0.5, notes: [[440, 0, 1.1], [554.37, 0, 1.1]] },
+  };
+  let playing = null;
+  let song = null;
+
+  function render(ctx, pattern) {
+    const buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * pattern.seconds), ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (const [freq, at, length] of pattern.notes) {
+      const start = Math.floor(at * ctx.sampleRate);
+      const samples = Math.floor(length * ctx.sampleRate);
+      for (let i = 0; i < samples && start + i < data.length; i++) {
+        const t = i / ctx.sampleRate;
+        const envelope = Math.min(1, t / 0.012) * Math.exp(-3.2 * t / length);
+        const tone = 0.72 * Math.sin(2 * Math.PI * freq * t) + 0.2 * Math.sin(4 * Math.PI * freq * t) + 0.08 * Math.sin(6 * Math.PI * freq * t);
+        data[start + i] += 0.33 * envelope * tone;
+      }
+    }
+    return buffer;
+  }
+
+  function playPattern(kind) {
+    const ctx = AV.cueContext();
+    const pattern = PATTERNS[kind];
+    const source = ctx.createBufferSource();
+    source.buffer = render(ctx, pattern);
+    source.loop = true;
+    const gain = ctx.createGain();
+    gain.gain.value = pattern.gain * Number(AV.state.settings["sounds.volume"]) / 100;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    source.start();
+    playing = {
+      kind,
+      stop() {
+        gain.gain.setTargetAtTime(0, ctx.currentTime, 0.008);
+        source.stop(ctx.currentTime + 0.04);
+      },
+    };
+  }
+
+  function playSong() {
+    if (!song) {
+      song = new Audio(SONG);
+      song.loop = true;
+      song.preload = "auto";
+    }
+    const settings = AV.state.settings;
+    if (song.setSinkId) song.setSinkId(settings["audio.output"] || "").catch(() => {});
+    song.volume = Number(settings["sounds.volume"]) / 100;
+    song.currentTime = 0;
+    song.play().catch((e) => {
+      // Answering at once pauses the song before it starts, and that is not a failure.
+      if (e.name !== "AbortError") console.warn("ringtone not played", e);
+    });
+    playing = {
+      kind: "incoming",
+      stop() {
+        song.pause();
+      },
+    };
+  }
+
+  function play(kind) {
+    if (kind === "incoming") playSong();
+    else playPattern(kind);
+  }
+
+  function stop(kind) {
+    if (!playing || (kind && playing.kind !== kind)) return;
+    const current = playing;
+    playing = null;
+    current.stop();
+  }
+
+  function start(kind) {
+    if (playing && playing.kind === kind) return;
+    stop();
+    if (AV.state.settings["sounds.ring"] === "true") play(kind);
+  }
+
+  function preview() {
+    stop();
+    play("incoming");
+    setTimeout(() => stop("incoming"), PREVIEW_MS);
+  }
+
+  return { start, stop, preview, active: () => (playing ? playing.kind : null) };
+})();
+
 /* Short interface cues, synthesised so nothing is downloaded or cached. */
 AV.sound = (function () {
-  let ctx = null;
   const CUES = {
     mute: [[740, 0, 0.07], [494, 0.08, 0.1]],
     unmute: [[494, 0, 0.07], [740, 0.08, 0.1]],
@@ -176,9 +304,7 @@ AV.sound = (function () {
   return function (name) {
     const s = AV.state && AV.state.settings;
     if (!s || s["sounds.enabled"] !== "true" || !CUES[name]) return;
-    if (!ctx) ctx = new AudioContext();
-    if (ctx.state === "suspended") ctx.resume();
-    if (ctx.setSinkId) ctx.setSinkId(s["audio.output"] || "").catch(() => {});
+    const ctx = AV.cueContext();
     const volume = 0.22 * Number(s["sounds.volume"]) / 100;
     const now = ctx.currentTime + 0.01;
     for (const [freq, at, length] of CUES[name]) {

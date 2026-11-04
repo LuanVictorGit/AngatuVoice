@@ -1,7 +1,9 @@
 package br.com.angatusistemas.voice.services;
 
+import br.com.angatusistemas.lib.console.Console;
 import br.com.angatusistemas.voice.utils.AppDirs;
 import com.sun.jna.platform.win32.Advapi32Util;
+import com.sun.jna.platform.win32.Win32Exception;
 import com.sun.jna.platform.win32.WinReg;
 import java.nio.file.Path;
 
@@ -30,10 +32,15 @@ public final class AutostartService {
         if (!available()) {
             return;
         }
-        if (enable) {
-            Advapi32Util.registrySetStringValue(WinReg.HKEY_CURRENT_USER, KEY, NAME, "\"" + executable() + "\" --autostart");
-        } else if (enabled()) {
-            Advapi32Util.registryDeleteValue(WinReg.HKEY_CURRENT_USER, KEY, NAME);
+        try {
+            if (enable) {
+                Advapi32Util.registrySetStringValue(WinReg.HKEY_CURRENT_USER, KEY, NAME, "\"" + executable() + "\" --autostart");
+            } else if (enabled()) {
+                Advapi32Util.registryDeleteValue(WinReg.HKEY_CURRENT_USER, KEY, NAME);
+            }
+        } catch (Win32Exception e) {
+            // A locked-down registry must not stop the app from opening; the setting simply has no effect.
+            Console.warn("Não foi possível alterar o início com o Windows: %s", e.getMessage());
         }
     }
 

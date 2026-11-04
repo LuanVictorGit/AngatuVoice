@@ -77,7 +77,7 @@ atribuição**, inclusive a que o próprio ambiente injeta sozinho. Conferir ant
 - Filtro de IP (R34): não se aplica ao servidor da interface (127.0.0.1); a rede entre usuários só aceita origem dentro da faixa do adaptador Radmin
 - Dockerfile/Coolify (R8, R7, `/health`): não se aplica — distribuição é instalador Windows; `/health` existe para diagnóstico local
 - Ofuscação de JS (R19): não aplicada nesta versão; o JS é servido de dentro do JAR, legível — pendente, ver "Pendências"
-- obsidian-skills em `.claude/skills/` (R42): _(pendente nesta máquina)_
+- obsidian-skills em `.claude/skills/` (R42): commit `3ccff53`
 - Cache (G3): não usar
 <!-- AngatuLibrariesSkill:end -->
 
@@ -127,8 +127,8 @@ Optimize all terminal commands for execution speed and minimal waiting.
 Java 25, AngatuLibraries `62d2678fcb52c2f3c3da46c9221eadbf8d683ec2` (https://github.com/LuanVictorGit/AngatuLibraries, commit mais novo de `main` em 03/11/2026), Javalin 7.2.3, SQLite/HikariCP/Gson, JCEF 152 (`jcefmaven`), JNA 5.19.1 (atalhos globais, foco da janela e registro do Windows), TwelveMonkeys imageio-webp 3.12.0 (validar e desenhar fotos de perfil), HTML/CSS/JS vanilla com Tailwind 4 local, jpackage + Inno Setup.
 
 ## Estrutura
-- `src/main/java/br/com/angatusistemas/voice/` — `Main`, `entities/` (Saveable), `services/` (regras, rede entre pares, sessão, migrações), `routes/` (HTTP/WS da interface), `desktop/` (JFrame, JCEF, bandeja, atalhos, instância única), `updater/` (atualização), `utils/`
-- `src/main/resources/public/` — SPA: `index.html` (shell), `app.html` (fragmento servido em `/app`), `scripts/{ui,live,rtc,settings,app}.js`, `styles/{ds.css,tailwind.css}`, `assets/`
+- `src/main/java/br/com/angatusistemas/voice/` — `Main`, `entities/` (Saveable), `services/` (regras, rede entre pares, presença, chamadas, sessão, migrações), `routes/` (HTTP/WS da interface), `desktop/` (JFrame, JCEF, bandeja, atalhos, instância única, aviso de chamada), `updater/` (atualização), `utils/`
+- `src/main/resources/public/` — SPA: `index.html` (shell), `app.html` (fragmento servido em `/app`), `scripts/{ui,live,rtc,settings,app}.js`, `styles/{ds.css,tailwind.css}`, `assets/` (inclui `ringtone.mp3`, a música de chamada escolhida pelo dono)
 - `src/main/resources/updater/apply-update.ps1` — troca de arquivos com rollback (parâmetros vêm do app, nunca de download)
 - `tools/` — `package.ps1` (app-image + zip), `Release.java` (manifesto assinado), `IconGen.java`, `tailwind/input.css`
 - `installer/angatu-voice.iss`, `.github/workflows/{ci,release}.yml`, `docs/`
@@ -137,18 +137,20 @@ Java 25, AngatuLibraries `62d2678fcb52c2f3c3da46c9221eadbf8d683ec2` (https://git
 ```
 mvn -B test
 mvn -q -B -DskipTests package
-java --enable-native-access=ALL-UNNAMED -jar target/angatu-voice-1.3.0.jar
+java --enable-native-access=ALL-UNNAMED -jar target/angatu-voice-1.4.0.jar
 ```
+`JAVA_HOME` precisa apontar para o JDK 25: nesta máquina o padrão é o 21 e o `mvn` falha com `release version 25 not supported`. `PeerClusterTest` sobe vários nós em JVMs próprias e leva alguns minutos; ao mexer em outra coisa, rode só os testes da classe tocada.
 Dados em `%APPDATA%\AngatuVoice` (`-Dangatu.data=` muda); caches e JCEF em `%LOCALAPPDATA%\AngatuVoice`. Tailwind: `tools\bin\tailwindcss.exe -i tools\tailwind\input.css -o src\main\resources\public\styles\tailwind.css --minify` (arquivo gerado é versionado). Distribuição: `tools\package.ps1`, depois `ISCC installer\angatu-voice.iss /DAppVersion=X.Y.Z`.
-Propriedades de desenvolvimento: `angatu.radmin.ip`/`angatu.radmin.alias` (simula o adaptador), `angatu.peer.port`, `angatu.debug.port` (depuração do Chromium em loopback, só para teste).
+Propriedades de desenvolvimento: `angatu.radmin.ip`/`angatu.radmin.alias` (simula o adaptador), `angatu.peer.port`, `angatu.debug.port` (depuração do Chromium em loopback, só para teste), `angatu.debug.chromium` (flags extras do Chromium, como microfone falso). Para vários nós na mesma máquina: IPs `127.0.0.x`, `angatu.peer.port` distinto em cada um (o UDP é curinga), `angatu.data` distinto e `angatu.local` apontando para uma cópia de `jcef-152.0.6`, com `-Djdk.net.unixdomain.tmpdir` num caminho curto quando o `%TEMP%` for longo.
 
 ## Inicialização
-`Main`: logs em arquivo → `angatu.db` → instância única → migrações → porta livre em loopback → `new AngatuLib("localhost", porta, false)` (host Jetty fixado em `127.0.0.1` no construtor de `BootRoute`) → `PeerNetwork.start()` → `UpdateService.start()` → autostart → JFrame/JCEF abre `/boot?t=<token de uso único>` → cookie `av_session` → `/app`.
+`Main`: logs em arquivo → `angatu.db` → instância única → migrações → porta livre em loopback → `new AngatuLib("localhost", porta, false)` (host Jetty fixado em `127.0.0.1` no construtor de `BootRoute`) → `PeerNetwork.start()` → `UpdateService.start()` → autostart → JFrame/JCEF abre `/boot?t=<token de uso único>` → cookie `av_session` → `/app`. A janela abre normalmente, inclusive pelo início com o Windows; só `startMinimized` a mantém escondida, com o Chromium já rodando (`addNotify` + `createImmediately`).
 
 ## Rotas / Entidades
-- Página: `/app` (HtmlRouteAPI). Rotas: `/health`, `/boot`, `GET /api/state`, `PUT /api/settings`, `PUT /api/me`, grupos (`/api/groups`, `/join`, `/{id}/invite`, `DELETE /{id}`), mensagens (`/api/messages`, `/read`, `DELETE /api/messages`), peers (`/api/peers`, `DELETE /{id}`), chamadas (`/api/call/state`, `/signal`), atualizador (`/api/update`, `/check`, `/install`, `/cancel`), `/api/system/{diagnostics,open}`, `/api/app/quit`, `PUT /api/me/avatar`, `GET /api/avatar/{id}`, `POST /api/overlay`, WS `/ws` (porta única, sessão checada em `LiveHub`)
+- Página: `/app` (HtmlRouteAPI). Rotas: `/health`, `/boot`, `GET /api/state`, `PUT /api/settings`, `PUT /api/me`, grupos (`/api/groups`, `/join`, `/{id}/invite`, `DELETE /{id}`), mensagens (`/api/messages`, `/read`, `DELETE /api/messages`), peers (`/api/peers`, `DELETE /{id}`), chamadas (`/api/call/state`, `/signal`, `/decline`), atualizador (`/api/update`, `/check`, `/install`, `/cancel`), `/api/system/{diagnostics,open}`, `/api/app/quit`, `PUT /api/me/avatar`, `GET /api/avatar/{id}`, `POST /api/overlay`, WS `/ws` (porta única, sessão checada em `LiveHub`)
 - Saveable: `Setting`, `Identity`, `Group`, `Peer`, `Message`, `UpdateRecord`, `SchemaState`
-- Eventos WS: `open`, `message`, `message.delivered`, `messages.cleared`, `peer.online/offline`, `peer.removed`, `net`, `group.changed`, `call.state`, `call.signal`, `update`, `hotkey`, `peer.profile`
+- Eventos WS: `open`, `message`, `message.delivered`, `messages.cleared`, `peer.online/offline`, `peer.changed`, `peer.relinked`, `peer.removed`, `net`, `net.latency`, `group.changed`, `call.state`, `call.signal`, `call.incoming`, `call.action`, `call.declined`, `call.missed`, `update`, `hotkey`, `peer.profile`
+- Quadros entre pares (`proto` 2, ver `docs/ARQUITETURA.md`): `auth`, `msg`, `ack`, `sync`, `call`, `rooms`, `decline`, `sig`, `profile`, `ping`, `pong`, `peers`, `bye`
 
 ## Env
 Nenhuma obrigatória. `ANGATU_UPDATE_TOKEN` (repositório privado). Segredo de CI: `UPDATE_SIGNING_KEY` (Ed25519 PKCS#8 Base64); a chave pública está em `updater.properties`.
@@ -157,13 +159,19 @@ Nenhuma obrigatória. `ANGATU_UPDATE_TOKEN` (repositório privado). Segredo de C
 Padrão Java da skill (`java-standard.md`); sem Javadoc em método; JSON só por `GsonAPI`; configurações só pelas chaves de `SettingsService` (strings validadas); `ds.css` única fonte visual, componentes em `@layer components`; texto visível em PT-BR; interface é SPA (nenhuma navegação além de `/boot` → `/app`).
 
 ## Versões
-Regra completa em `docs/VERSIONAMENTO.md`: toda release tem número novo e maior; `pom.xml`, `installer/angatu-voice.iss` e `CHANGELOG.md` mudam juntos; o workflow recusa a tag que não bater com o `pom.xml` e o `CHANGELOG.md`. Versão atual: 1.3.0. O `installer/angatu-voice.iss` fica só em ASCII: textos pelas mensagens `{cm:...}` do próprio Inno e acentos no `[Code]` como `#$E7`.
+Regra completa em `docs/VERSIONAMENTO.md`: toda release tem número novo e maior; `pom.xml`, `installer/angatu-voice.iss` e `CHANGELOG.md` mudam juntos; o workflow recusa a tag que não bater com o `pom.xml` e o `CHANGELOG.md`. Versão atual: 1.4.0. O `installer/angatu-voice.iss` fica só em ASCII: textos pelas mensagens `{cm:...}` do próprio Inno e acentos no `[Code]` como `#$E7`.
 
 ## Armadilhas já pagas
 - **Entrada no JCEF**: as janelas do Chromium pertencem à thread de eventos do Swing, que não lê mensagens do Windows; sem o laço de `PeekMessage` do `BrowserWindow.startMessagePump` a página renderiza e ignora mouse e teclado. Teste sempre com mouse e teclado reais (`mouse_event`/`SendKeys`), não só por CDP, e com a janela em primeiro plano.
 - `AttachThreadInput` só dentro de `Foreground.raise`, sempre com o desanexar no `finally`.
+- **Nunca `--use-fake-ui-for-media-stream`**: com ela, o áudio de `getDisplayMedia` é o microfone padrão com o nome "Fake audio": ele escapa do botão de silenciar e duplica a voz, que chega abafada. As capturas usam `--enable-media-stream`, e `buildShareAudio` só aceita `deviceId` que começa com `loopback`.
+- **A primeira captura da sessão falha** com `AbortError: Failed due to shutdown` quando a janela não está em primeiro plano, e o mesmo pedido passa logo depois. Toda captura passa por `AV.capture`, que repete.
+- **`getSettings()` de uma captura de tela mente**: informa o `maxHeight` pedido, não o tamanho dos quadros. Com ele, a escala sai errada e 1080p vira 360p. O tamanho vem de `videoHeight` (`watchShareSize`).
+- **`contentHint = "motion"` com VP8 transmite 1080p a 480×270** nos primeiros segundos. Medido em `docs/ARQUITETURA.md`; não voltar a esse par como padrão.
+- **`LINKS.remove(id, link)` falso significa socket substituído**: nenhum aviso, nenhuma saída de sala. Um socket antigo nunca recusa um novo depois da janela de cruzamento, ou a pessoa fica offline para um lado só.
+- **Chamada não cai com o TCP**: a mídia WebRTC é independente do link de sinalização. Quem some do link continua na sala durante a carência, e a página só fecha a conexão quando sai da lista de membros.
 
 ## Pendências conhecidas
 - Ofuscação/minificação do JS no build (R18/R19) ainda não implementada.
-- Seleção de monitor/janela no compartilhamento depende do `getDisplayMedia` do JCEF (tela inteira via flag); ver `docs/ARQUITETURA.md`.
+- O compartilhamento escolhe o monitor, mas não uma janela específica; a escolha de monitor só foi vista rodando com um monitor nesta máquina (com vários, ela cai no desktop inteiro se o índice falhar); ver `docs/ARQUITETURA.md`.
 - Instalador `.exe` e release só são gerados no GitHub Actions (Inno Setup não está instalado nesta máquina).

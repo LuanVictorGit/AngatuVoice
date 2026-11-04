@@ -4,6 +4,7 @@ import br.com.angatusistemas.lib.console.Console;
 import br.com.angatusistemas.lib.database.Saveable;
 import br.com.angatusistemas.lib.gson.GsonAPI;
 import br.com.angatusistemas.lib.task.Task;
+import br.com.angatusistemas.voice.desktop.AppShell;
 import br.com.angatusistemas.voice.entities.Setting;
 import br.com.angatusistemas.voice.entities.UpdateRecord;
 import br.com.angatusistemas.voice.services.CallService;
@@ -318,7 +319,7 @@ public final class UpdateService {
             PackageInstaller.launch(staging, manifest, Version.current().toString(), ProcessHandle.current().pid());
             Thread.sleep(800);
             PeerNetwork.stop();
-            System.exit(0);
+            AppShell.exit();
         } catch (IOException | RuntimeException e) {
             Console.error("update install failed", e);
             record(manifest.version(), "failed", e.getMessage());

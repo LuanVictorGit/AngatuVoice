@@ -4,6 +4,7 @@ import br.com.angatusistemas.lib.gson.GsonAPI;
 import br.com.angatusistemas.voice.utils.Crypto;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
+import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -13,20 +14,33 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.util.Set;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * One authenticated, encrypted connection to a peer: a signed X25519 handshake, then AES-GCM frames with strict counters.
+ * Outgoing frames wait in a queue drained by their own thread, so a stalled peer never blocks anyone else.
  *
  * @author Angatu Sistemas
  */
 final class PeerLink implements AutoCloseable {
 
     static final int MAX_FRAME = 256 * 1024;
+    static final int NO_RTT = -1;
     private static final int MAX_HELLO = 2048;
     private static final long CLOCK_SKEW_MS = 10 * 60_000L;
     private static final int KEY_BYTES = 44;
-    private static final int RATE_PER_SECOND = 120;
+    private static final double BUCKET_CAPACITY = 4_000;
+    private static final double BUCKET_REFILL_PER_MS = 0.4;
+    private static final long MAX_QUEUED_BYTES = 16L * 1024 * 1024;
+    private static final long RTT_STALE_MS = 9_000;
+    private static final long RTT_MAX_MS = 60_000;
+    private static final long FLUSH_WAIT_MS = 400;
+    private static final byte[] STOP = new byte[0];
 
     final Socket socket;
     final boolean initiator;
@@ -36,8 +50,14 @@ final class PeerLink implements AutoCloseable {
     final String peerAlias;
     final int peerPort;
     final byte[] transcript;
+    final long establishedAt = System.currentTimeMillis();
     final Set<String> groups = ConcurrentHashMap.newKeySet();
     volatile long lastRx = System.currentTimeMillis();
+    volatile long lastPing;
+    volatile long lastProbe;
+    volatile boolean legacy;
+    volatile boolean saidBye;
+    volatile boolean replacedPrevious;
 
     private final DataInputStream in;
     private final DataOutputStream out;
@@ -45,10 +65,16 @@ final class PeerLink implements AutoCloseable {
     private final byte[] recvKey;
     private final int sendDirection;
     private final int recvDirection;
+    private final BlockingQueue<byte[]> outbound = new LinkedBlockingQueue<>();
+    private final AtomicLong queuedBytes = new AtomicLong();
+    private final CountDownLatch drained = new CountDownLatch(1);
     private long sendCounter;
     private long recvCounter;
-    private long windowStart;
-    private int windowCount;
+    private double tokens = BUCKET_CAPACITY;
+    private long tokensAt = System.currentTimeMillis();
+    private volatile boolean closed;
+    private volatile int rtt = NO_RTT;
+    private volatile long rttAt;
 
     private PeerLink(Socket socket, boolean initiator, DataInputStream in, DataOutputStream out, Hello remote,
                      byte[] transcript, byte[] shared) {
@@ -73,7 +99,7 @@ final class PeerLink implements AutoCloseable {
     static PeerLink handshake(Socket socket, boolean initiator, IdentityService.Self self, String alias, int listenPort)
             throws IOException {
         DataInputStream in = new DataInputStream(socket.getInputStream());
-        DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+        DataOutputStream out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
         KeyPair eph = Crypto.newAgreementKeys();
         byte[] ephPublic = eph.getPublic().getEncoded();
         writeRaw(out, hello(self, alias, listenPort, ephPublic));
@@ -89,14 +115,24 @@ final class PeerLink implements AutoCloseable {
     }
 
     synchronized void send(JsonObject frame) throws IOException {
+        writeSealed(GsonAPI.get().toJson(frame).getBytes(StandardCharsets.UTF_8));
+    }
+
+    void startWriter() {
+        Thread.startVirtualThread(this::writeLoop);
+    }
+
+    boolean enqueue(JsonObject frame) {
         byte[] plain = GsonAPI.get().toJson(frame).getBytes(StandardCharsets.UTF_8);
-        if (plain.length > MAX_FRAME) {
-            throw new IOException("frame too large");
+        if (closed || plain.length > MAX_FRAME) {
+            return false;
         }
-        byte[] sealed = Crypto.seal(sendKey, nonce(sendDirection, sendCounter++), plain);
-        out.writeInt(sealed.length);
-        out.write(sealed);
-        out.flush();
+        // A peer that stopped reading must not grow the queue without bound: drop the link and let it resynchronise.
+        if (queuedBytes.addAndGet(plain.length) > MAX_QUEUED_BYTES) {
+            close();
+            return false;
+        }
+        return outbound.offer(plain);
     }
 
     JsonObject receive() throws IOException {
@@ -121,11 +157,13 @@ final class PeerLink implements AutoCloseable {
 
     boolean allow() {
         long now = System.currentTimeMillis();
-        if (now - windowStart >= 1000) {
-            windowStart = now;
-            windowCount = 0;
+        tokens = Math.min(BUCKET_CAPACITY, tokens + (now - tokensAt) * BUCKET_REFILL_PER_MS);
+        tokensAt = now;
+        if (tokens < 1) {
+            return false;
         }
-        return ++windowCount <= RATE_PER_SECOND;
+        tokens--;
+        return true;
     }
 
     byte[] memberTag(byte[] secret, String ownerId) {
@@ -133,13 +171,77 @@ final class PeerLink implements AutoCloseable {
         return Crypto.hmac(secret, data);
     }
 
+    void recordPong(long sentNanos) {
+        long sample = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - sentNanos);
+        if (sample < 0 || sample > RTT_MAX_MS) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        int previous = now - rttAt > RTT_STALE_MS ? NO_RTT : rtt;
+        rtt = previous == NO_RTT ? (int) sample : (int) ((previous * 2 + sample) / 3);
+        rttAt = now;
+    }
+
+    int rtt(long now) {
+        return now - rttAt > RTT_STALE_MS ? NO_RTT : rtt;
+    }
+
+    boolean isClosed() {
+        return closed || socket.isClosed();
+    }
+
+    void closeAfter(JsonObject lastFrame) {
+        enqueue(lastFrame);
+        outbound.offer(STOP);
+        try {
+            drained.await(FLUSH_WAIT_MS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        close();
+    }
+
     @Override
     public void close() {
+        closed = true;
+        outbound.offer(STOP);
         try {
             socket.close();
         } catch (IOException ignored) {
             // the peer may already have dropped the connection
         }
+    }
+
+    private void writeLoop() {
+        try {
+            while (true) {
+                byte[] plain = outbound.take();
+                if (plain == STOP) {
+                    return;
+                }
+                queuedBytes.addAndGet(-plain.length);
+                synchronized (this) {
+                    writeSealed(plain);
+                }
+            }
+        } catch (IOException e) {
+            closed = true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            drained.countDown();
+            close();
+        }
+    }
+
+    private void writeSealed(byte[] plain) throws IOException {
+        if (plain.length > MAX_FRAME) {
+            throw new IOException("frame too large");
+        }
+        byte[] sealed = Crypto.seal(sendKey, nonce(sendDirection, sendCounter++), plain);
+        out.writeInt(sealed.length);
+        out.write(sealed);
+        out.flush();
     }
 
     private static byte[] hello(IdentityService.Self self, String alias, int port, byte[] eph) {

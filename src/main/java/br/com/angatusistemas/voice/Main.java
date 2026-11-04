@@ -22,6 +22,7 @@ import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Map;
 import javax.swing.JOptionPane;
 
 /**
@@ -44,7 +45,6 @@ public final class Main {
         try {
             redirectLogs();
             System.setProperty("angatu.db", AppDirs.data().resolve("database.db").toString());
-            boolean fromAutostart = Arrays.asList(args).contains("--autostart");
             boolean postUpdate = Arrays.asList(args).contains("--post-update");
             if (!AppShell.claimInstance()) {
                 return;
@@ -58,7 +58,7 @@ public final class Main {
             UpdateService.start(postUpdate);
             syncAutostart();
             Console.log("Angatu Voice %s ouvindo em 127.0.0.1:%d", Version.current(), port);
-            AppShell.open(port, fromAutostart);
+            AppShell.open(port);
         } catch (Migrations.IncompatibleDataException e) {
             fatal("Os dados deste computador foram criados por uma versão mais nova do Angatu Voice. "
                     + "Instale a versão mais recente para continuar.");
@@ -81,7 +81,12 @@ public final class Main {
 
     private static void syncAutostart() {
         if (AutostartService.available()) {
-            AutostartService.apply(SettingsService.flag("autostart"));
+            // The installer asks about this first, so until the person changes it here the registry is the answer.
+            if (SettingsService.isStored("autostart")) {
+                AutostartService.apply(SettingsService.flag("autostart"));
+            } else {
+                SettingsService.update(Map.of("autostart", String.valueOf(AutostartService.enabled())));
+            }
         }
         SettingsService.listen(changes -> {
             if (changes.keySet().stream().anyMatch(k -> k.startsWith("overlay."))) {

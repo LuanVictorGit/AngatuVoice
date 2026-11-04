@@ -57,6 +57,10 @@ public final class SettingsService {
         return stored == null ? rule.defaultValue() : stored.getValue();
     }
 
+    public static boolean isStored(String key) {
+        return Saveable.findById(Setting.class, key) != null;
+    }
+
     public static boolean flag(String key) {
         return Boolean.parseBoolean(get(key));
     }
@@ -103,7 +107,7 @@ public final class SettingsService {
         Map<String, Rule> m = new LinkedHashMap<>();
         m.put("autostart", new Rule("true", BOOL));
         m.put("startMinimized", new Rule("false", BOOL));
-        m.put("minimizeToTray", new Rule("true", BOOL));
+        m.put("minimizeToTray", new Rule("false", BOOL));
         m.put("closeToTray", new Rule("true", BOOL));
         m.put("theme", new Rule("dark", oneOf("dark", "light")));
         m.put("notifications", new Rule("true", BOOL));
@@ -120,12 +124,14 @@ public final class SettingsService {
         m.put("audio.sensitivity", new Rule("50", range(0, 100)));
         m.put("audio.ptt", new Rule("false", BOOL));
         m.put("audio.peerVolumes", new Rule("{}", v -> v.length() <= 4000 && v.startsWith("{")));
+        m.put("audio.peerMutes", new Rule("[]", v -> v.length() <= 4000 && v.startsWith("[")));
         m.put("audio.echo", new Rule("true", BOOL));
         m.put("audio.noise", new Rule("true", BOOL));
         m.put("video.monitor", new Rule("0", range(0, 15)));
-        m.put("video.resolution", new Rule("1080", oneOf("720", "1080")));
+        m.put("video.resolution", new Rule("1440", oneOf("720", "1080", "1440", "native")));
         m.put("video.fps", new Rule("30", oneOf("30", "60")));
-        m.put("video.bitrate", new Rule("0", range(0, 20000)));
+        m.put("video.priority", new Rule("detail", oneOf("detail", "motion")));
+        m.put("video.bitrate", new Rule("0", range(0, 50000)));
         m.put("video.systemAudio", new Rule("false", BOOL));
         m.put("video.auto", new Rule("true", BOOL));
         m.put("hotkeys.ptt", new Rule("", HOTKEY.asMatchPredicate()));
@@ -140,7 +146,9 @@ public final class SettingsService {
         m.put("overlay.corner", new Rule("tr", oneOf("tl", "tr", "bl", "br")));
         m.put("sounds.enabled", new Rule("true", BOOL));
         m.put("sounds.volume", new Rule("60", range(0, 100)));
+        m.put("sounds.ring", new Rule("true", BOOL));
         m.put("ui.lastChat", new Rule("radmin", v -> v.length() <= 80));
+        m.put("ui.trayHintShown", new Rule("false", BOOL));
         return Collections.unmodifiableMap(m);
     }
 

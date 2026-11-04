@@ -7,6 +7,39 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.4.0] - 2026-11-03
+
+### Adicionado
+- Música e animação de chamada recebida, mostrando quem está chamando, com os botões Atender e Recusar. A música para na hora em que a chamada é atendida, recusada ou cancelada, e quem liga ouve um som de espera.
+- Aviso de chamada no canto da tela, com Atender e Recusar, quando o aplicativo está minimizado ou em segundo plano.
+- Aviso de chamada perdida.
+- Botão para silenciar cada pessoa só para você, com indicação na tela. O microfone dela e o que os outros ouvem não mudam, e a escolha fica salva.
+- Indicador de ping em milissegundos, com barras de qualidade, na barra inferior e ao lado de cada pessoa. Clique nele para ver a latência de todo mundo.
+- Quem está na chamada vê quando alguém desligou o microfone ou o áudio.
+- Faixa avisando quando há uma chamada em andamento em outra conversa, com botão para entrar.
+- Resoluções 1440p e original da tela, opção de prioridade entre nitidez e fluidez e escolha do monitor no compartilhamento.
+- Opção para ligar ou desligar a música de chamada, com botão para testar.
+
+### Alterado
+- Minimizar agora só minimiza: a janela continua na barra de tarefas e o aplicativo segue conectado. O botão de fechar esconde a janela na bandeja, e encerrar de verdade é só pela opção Sair.
+- Um clique no ícone da bandeja já abre a janela.
+- A janela volta do tamanho em que estava, em vez de sempre maximizada.
+- Ao iniciar com o Windows, o aplicativo abre com a janela principal e já se conecta à rede. A opção de iniciar escondido na bandeja continua nas configurações.
+- A transmissão de tela ocupa a área da conversa para aparecer maior, com um botão para mostrar as mensagens.
+- O indicador de quem está falando fica aceso por mais de meio segundo depois da fala e não pisca mais, e todos na chamada veem o mesmo.
+
+### Corrigido
+- Com o áudio do sistema ligado no compartilhamento, o microfone continuava aberto mesmo silenciado, porque o áudio da tela vinha do microfone. Agora é o som do computador de verdade, e o microfone obedece sempre ao botão de silenciar.
+- A voz saía abafada durante o compartilhamento de tela, porque chegava duas vezes aos outros, pelo microfone e pelo áudio da tela. Agora vai uma vez só, com a mesma clareza de quando não há compartilhamento.
+- Imagem borrada e pixelada no compartilhamento de tela. A transmissão agora mantém a resolução da tela, com a proporção original, e textos legíveis desde os primeiros segundos. Se a rede de alguém não acompanhar, a qualidade cai só para essa pessoa e volta sozinha.
+- A imagem da transmissão piscava a cada mudança na chamada.
+- Pessoas saindo e entrando da rede sem parar, ou aparecendo como desconectadas para só um dos lados. Oscilações curtas não derrubam mais nada, e a conexão volta sozinha sem avisos falsos.
+- Uma oscilação na rede não derruba mais a chamada.
+- Demora para aparecer a chamada e os participantes para quem acabou de entrar na rede.
+- Redes com mais de oito pessoas deixavam de conectar alguns participantes.
+- Aberto escondido na bandeja, o aplicativo só começava a receber chamadas depois de a janela ser aberta.
+- O aplicativo em segundo plano deixava de acompanhar a fala e os avisos no tempo certo.
+
 ## [1.3.0] - 2026-11-03
 
 ### Adicionado

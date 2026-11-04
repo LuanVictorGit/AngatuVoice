@@ -1,7 +1,6 @@
 package br.com.angatusistemas.voice.desktop;
 
 import br.com.angatusistemas.voice.utils.AppDirs;
-import br.com.angatusistemas.voice.utils.Crypto;
 import com.sun.jna.platform.win32.Kernel32;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinDef.HWND;
@@ -16,7 +15,6 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HexFormat;
 
 /**
  * Keeps one instance per user and data folder. A named Windows mutex decides who is first; a second launch asks the
@@ -36,8 +34,7 @@ final class SingleInstance {
 
     static boolean acquire(Runnable onShow) throws IOException {
         Path portFile = AppDirs.data().resolve("instance.port");
-        String name = "Local\\AngatuVoice." + HexFormat.of().formatHex(Crypto.sha256(
-                AppDirs.data().toAbsolutePath().toString().getBytes(StandardCharsets.UTF_8)), 0, 8);
+        String name = "Local\\AngatuVoice." + AppDirs.instanceKey();
         HANDLE created = Kernel32.INSTANCE.CreateMutex(null, true, name);
         boolean taken = created == null || Kernel32.INSTANCE.GetLastError() == WinError.ERROR_ALREADY_EXISTS;
         if (taken) {

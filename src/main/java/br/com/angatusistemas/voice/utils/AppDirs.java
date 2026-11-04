@@ -3,7 +3,9 @@ package br.com.angatusistemas.voice.utils;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.HexFormat;
 import java.util.Optional;
 
 /**
@@ -25,6 +27,14 @@ public final class AppDirs {
 
     public static Path local() {
         return LOCAL;
+    }
+
+    public static String instanceKey() {
+        return HexFormat.of().formatHex(Crypto.sha256(DATA.toAbsolutePath().toString().getBytes(StandardCharsets.UTF_8)), 0, 8);
+    }
+
+    public static Path chromiumProfile() {
+        return LOCAL.resolve("chromium-" + instanceKey());
     }
 
     public static Path updates() {

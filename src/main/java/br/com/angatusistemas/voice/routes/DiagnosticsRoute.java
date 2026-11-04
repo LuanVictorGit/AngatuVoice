@@ -31,6 +31,9 @@ public final class DiagnosticsRoute extends Route {
                 "version", Version.current().toString(),
                 "peersKnown", peers.size(),
                 "peersOnline", peers.stream().filter(PeerNetwork.PeerView::online).count(),
+                "listenPort", PeerNetwork.listenPort(),
+                "linksOpen", PeerNetwork.linkCount(),
+                "latencyMs", PeerNetwork.latency(),
                 "install", AppDirs.install().map(Object::toString).orElse(""),
                 "autostart", AutostartService.enabled(),
                 "java", System.getProperty("java.version"))));

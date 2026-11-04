@@ -6,7 +6,7 @@
 
   <groupId>br.com.angatusistemas</groupId>
   <artifactId>angatu-voice</artifactId>
-  <version>1.3.0</version>
+  <version>1.4.0</version>
   <name>Angatu Voice</name>
 
   <properties>
@@ -62,7 +62,7 @@
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.5.4</version>
         <configuration>
-          <argLine>--enable-native-access=ALL-UNNAMED "-Djdk.net.unixdomain.tmpdir=${project.build.directory}" "-Dangatu.db=${project.build.directory}/test.db"</argLine>
+          <argLine>--enable-native-access=ALL-UNNAMED "-Djdk.net.unixdomain.tmpdir=${project.build.directory}" "-Dangatu.db=${project.build.directory}/test.db" "-Dangatu.data=${project.build.directory}/test-data" "-Dangatu.local=${project.build.directory}/test-local"</argLine>
           <reuseForks>false</reuseForks>
         </configuration>
       </plugin>

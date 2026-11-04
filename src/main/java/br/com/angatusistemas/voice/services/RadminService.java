@@ -25,7 +25,9 @@ public final class RadminService {
     private static final String SERVICE = "RvControlSvc";
     private static final String REGISTRY_KEY = "HKLM\\SOFTWARE\\WOW6432Node\\Famatech\\RadminVPN\\1.0";
     private static final Pattern ALIAS = Pattern.compile("(?m)^\\s*Alias\\s+REG_SZ\\s+(.+?)\\s*$");
+    private static final int MISSES_TO_DISCONNECT = 2;
     private static final AtomicReference<Status> CURRENT = new AtomicReference<>(Status.EMPTY);
+    private static volatile int misses;
 
     private RadminService() {
     }
@@ -36,6 +38,12 @@ public final class RadminService {
 
     public static Status refresh() {
         Status next = probe();
+        Status previous = CURRENT.get();
+        // A single failed look at the adapter is usually a blink; only a repeated one is reported as a lost network.
+        if (!next.connected() && previous.connected() && ++misses < MISSES_TO_DISCONNECT) {
+            return previous;
+        }
+        misses = 0;
         CURRENT.set(next);
         return next;
     }

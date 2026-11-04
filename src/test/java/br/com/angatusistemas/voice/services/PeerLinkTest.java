@@ -79,6 +79,59 @@ class PeerLinkTest {
     }
 
     @Test
+    void queuedFramesKeepTheirOrderAndAreFlushedBeforeAnOrderlyClose() throws Exception {
+        Pair p = connect();
+        p.client.startWriter();
+        for (int n = 0; n < 50; n++) {
+            JsonObject frame = new JsonObject();
+            frame.addProperty("n", n);
+            assertTrue(p.client.enqueue(frame));
+        }
+        JsonObject bye = new JsonObject();
+        bye.addProperty("t", "bye");
+        p.client.closeAfter(bye);
+        for (int n = 0; n < 50; n++) {
+            assertEquals(n, p.server.receive().get("n").getAsInt());
+        }
+        assertEquals("bye", p.server.receive().get("t").getAsString());
+        assertThrows(IOException.class, p.server::receive);
+    }
+
+    @Test
+    void aFrameTooLargeIsDroppedWithoutHurtingTheLink() throws Exception {
+        Pair p = connect();
+        p.client.startWriter();
+        JsonObject huge = new JsonObject();
+        huge.addProperty("data", "x".repeat(PeerLink.MAX_FRAME + 1));
+        assertTrue(!p.client.enqueue(huge));
+        assertTrue(!p.client.isClosed());
+    }
+
+    @Test
+    void latencyComesFromThePongAndExpires() throws Exception {
+        Pair p = connect();
+        long now = System.currentTimeMillis();
+        assertEquals(PeerLink.NO_RTT, p.client.rtt(now), "nothing measured yet");
+        p.client.recordPong(System.nanoTime() - 40_000_000L);
+        int measured = p.client.rtt(System.currentTimeMillis());
+        assertTrue(measured >= 40 && measured < 200, "measured " + measured);
+        assertEquals(PeerLink.NO_RTT, p.client.rtt(System.currentTimeMillis() + 60_000), "a stale value is never shown");
+    }
+
+    @Test
+    void aBurstIsAcceptedButAFloodIsCut() throws Exception {
+        Pair p = connect();
+        for (int n = 0; n < 3_000; n++) {
+            assertTrue(p.server.allow(), "catching up after a reconnect sends a legitimate burst");
+        }
+        boolean cut = false;
+        for (int n = 0; n < 5_000 && !cut; n++) {
+            cut = !p.server.allow();
+        }
+        assertTrue(cut);
+    }
+
+    @Test
     void aTamperedFrameKillsTheLink() throws Exception {
         Pair p = connect();
         p.client.socket.getOutputStream().write(new byte[] {0, 0, 0, 20, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20});
