@@ -21,6 +21,11 @@
   const START_KBPS = 2500;
   const MIN_KBPS = 300;
   const LOWER_RUNGS = [1440, 1080, 720, 540, 360];
+  // Below this the picture stutters: under pressure the share gives up resolution, never frames.
+  const MIN_FPS = 30;
+  const FPS_SLACK = 0.85;
+  // A short receive buffer evens out frame arrival, so the picture plays at a steady rate instead of in bursts.
+  const VIDEO_JITTER_MS = 80;
   const FULL_DESKTOP = "screen:-1:0";
   const SETTLE_MS = 10000;
   const PRESSURE_TICKS = 3;
@@ -32,7 +37,7 @@
 
   const rtc = AV.rtc = {
     room: null, muted: false, deafened: false, muteAll: false, pttDown: false, calling: false,
-    localShare: null, speaking: {}, onchange: () => {}, onspeaking: () => {}, onstats: () => {},
+    localShare: null, watching: new Set(), selfPreview: false, speaking: {}, onchange: () => {}, onspeaking: () => {}, onstats: () => {},
   };
   let ctx = null;
   let master = null;
@@ -130,7 +135,7 @@
   }
 
   function shareGain(id) {
-    if (rtc.muteAll || rtc.isShareMuted(id)) return 0;
+    if (rtc.muteAll || rtc.isShareMuted(id) || !rtc.watching.has(id)) return 0;
     return rtc.shareVolume(id) / 100;
   }
 
@@ -382,7 +387,7 @@
     const pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: "max-bundle" });
     p = {
       id, pc, sid: crypto.randomUUID(), remoteSid: null, polite: myId() > id, makingOffer: false, ignoreOffer: false, pendingCandidates: [],
-      audios: new Map(), videos: new Map(), shareSenders: [], channel: null, state: null, voice: newMeter(), stats: null,
+      audios: new Map(), videos: new Map(), share: null, wantsShare: false, counters: null, channel: null, state: null, voice: newMeter(), stats: null,
       level: 0, levelAt: 0, pressure: 0, upHold: UP_HOLD_MS, calmSince: 0, troubleSince: 0, restartedAt: 0,
       resetAfter: RESET_AFTER_MS + Math.random() * RESET_JITTER_MS,
     };
@@ -412,15 +417,22 @@
     };
     pc.ontrack = (e) => {
       const stream = e.streams[0] || new MediaStream([e.track]);
+      // A share switched off leaves its tracks muted, not ended: only the stream says they are gone.
+      stream.onremovetrack = (ev) => dropTrack(peer, ev.track);
+      e.track.onended = () => dropTrack(peer, e.track);
       if (e.track.kind === "audio") attachAudio(peer, e.track, stream.getVideoTracks().length > 0);
-      else { preferCodecs(e.transceiver); attachVideo(peer, e.track, stream); }
+      else {
+        preferCodecs(e.transceiver);
+        if ("jitterBufferTarget" in e.receiver) e.receiver.jitterBufferTarget = VIDEO_JITTER_MS;
+        attachVideo(peer, e.track, stream);
+      }
     };
     peer.channel = pc.createDataChannel("av-state", { negotiated: true, id: STATE_CHANNEL_ID });
     peer.channel.onopen = () => sendState(peer);
     peer.channel.onmessage = (e) => onPeerState(peer, e.data);
     if (mic) pc.addTrack(mic.track, mic.stream);
     else pc.addTransceiver("audio", { direction: "recvonly" });
-    if (rtc.localShare) addShareTracks(peer);
+    if (rtc.localShare) openShareFor(peer);
     return p;
   }
 
@@ -428,14 +440,27 @@
     let o;
     try { o = JSON.parse(raw); } catch (e) { return; }
     const previous = p.state;
-    p.state = { speaking: o.s === 1, muted: o.m === 1, deafened: o.d === 1, at: performance.now() };
-    if (!previous || previous.muted !== p.state.muted || previous.deafened !== p.state.deafened) rtc.onchange();
+    const viewers = Array.isArray(o.vw) ? o.vw.filter((id) => typeof id === "string").slice(0, 64) : [];
+    p.state = { speaking: o.s === 1, muted: o.m === 1, deafened: o.d === 1, sharing: o.v === 1, viewers, at: performance.now() };
+    const wants = o.w === 1;
+    let changed = !previous || previous.muted !== p.state.muted || previous.deafened !== p.state.deafened
+      || previous.sharing !== p.state.sharing || previous.viewers.join() !== viewers.join();
+    if (previous && previous.sharing && !p.state.sharing) rtc.watching.delete(p.id);
+    if (previous && !previous.sharing && p.state.sharing) AV.sound("streamStart");
+    if (wants !== p.wantsShare) {
+      p.wantsShare = wants;
+      if (rtc.localShare) { feedShare(p); AV.sound(wants ? "peerJoin" : "peerLeave"); broadcastState(); }
+      changed = true;
+    }
+    if (changed) rtc.onchange();
   }
 
   function sendState(p) {
     if (!p.channel || p.channel.readyState !== "open") return;
     try {
-      p.channel.send(JSON.stringify({ s: rtc.speaking[myId()] ? 1 : 0, m: rtc.muted ? 1 : 0, d: rtc.deafened ? 1 : 0 }));
+      const o = { s: rtc.speaking[myId()] ? 1 : 0, m: rtc.muted ? 1 : 0, d: rtc.deafened ? 1 : 0, w: rtc.watching.has(p.id) ? 1 : 0 };
+      if (rtc.localShare) { o.v = 1; o.vw = rtc.viewers(); }
+      p.channel.send(JSON.stringify(o));
     } catch (e) {
       console.warn("state not sent", e);
     }
@@ -447,6 +472,8 @@
   }
 
   function attachAudio(p, track, share) {
+    // A share turned back on reuses its track: attaching it twice would play it twice.
+    if (p.audios.has(track.id)) return;
     const c = audioContext();
     const stream = new MediaStream([track]);
     const keepAlive = new Audio();
@@ -462,18 +489,17 @@
     gain.connect(master);
     source.connect(analyser);
     p.audios.set(track.id, { gain, analyser, buffer: new Float32Array(analyser.fftSize), share, keepAlive, source });
-    track.onended = () => {
-      const a = p.audios.get(track.id);
-      if (a) { a.source.disconnect(); a.keepAlive.srcObject = null; p.audios.delete(track.id); }
-    };
   }
 
   function attachVideo(p, track, stream) {
     p.videos.set(track.id, stream);
-    const drop = () => { p.videos.delete(track.id); rtc.onchange(); };
-    track.onended = drop;
-    stream.onremovetrack = drop;
     rtc.onchange();
+  }
+
+  function dropTrack(p, track) {
+    const a = p.audios.get(track.id);
+    if (a) { a.source.disconnect(); a.keepAlive.srcObject = null; p.audios.delete(track.id); }
+    if (p.videos.delete(track.id)) rtc.onchange();
   }
 
   function closePeer(id) {
@@ -482,6 +508,7 @@
     p.audios.forEach((a) => { a.source.disconnect(); a.keepAlive.srcObject = null; });
     p.pc.close();
     peers.delete(id);
+    rtc.watching.delete(id);
     setSpeaking(id, false);
     rtc.onchange();
   }
@@ -694,9 +721,11 @@
     const top = Math.min(source, setting === "native" ? source : Number(setting));
     const custom = num("video.bitrate");
     const heights = [top, ...LOWER_RUNGS.filter((h) => h < top)];
-    return heights.map((height) => {
-      const rate = height >= 720 ? fps : Math.min(fps, height >= 540 ? 24 : 15);
-      const scaled = custom > 0 ? Math.round(custom * (height / top) * (height / top)) : capKbps(height, rate);
+    // At 60 FPS the first step down halves the frames at full size; every other step keeps the frame rate and gives up pixels.
+    const rungs = heights.map((height) => ({ height, fps: Math.max(MIN_FPS, fps) }));
+    if (fps > MIN_FPS) rungs.splice(1, 0, { height: top, fps: MIN_FPS });
+    return rungs.map(({ height, fps: rate }) => {
+      const scaled = custom > 0 ? Math.round(custom * (height / top) * (height / top) * (rate / fps)) : capKbps(height, rate);
       return { height, fps: rate, scale: source / height, maxKbps: scaled, needKbps: Math.round(capKbps(height, rate) * 0.25) };
     });
   }
@@ -714,16 +743,80 @@
     return sender.setParameters(params).catch((e) => console.warn("sender parameters refused", e));
   }
 
-  function addShareTracks(p) {
-    rtc.localShare.getTracks().forEach((t) => {
-      const sender = p.pc.addTrack(t, rtc.localShare);
-      p.shareSenders.push(sender);
-      if (t.kind === "video") {
-        preferCodecs(p.pc.getTransceivers().find((x) => x.sender === sender));
-        configureSender(p, sender);
-      }
+  /*
+   * Each viewer costs a whole software encoder here, so the share is offered to everyone but only encoded for whoever opens it.
+   * The transceivers are made once per connection and reused across shares: no new m-lines piling up on every start and stop.
+   */
+  function openShareFor(p) {
+    const stream = rtc.localShare;
+    const audio = stream.getAudioTracks()[0];
+    if (!p.share) {
+      const video = p.pc.addTransceiver("video", { direction: "sendonly", streams: [stream] });
+      preferCodecs(video);
+      p.share = { video, audio: null };
+    } else {
+      p.share.video.direction = "sendonly";
+      if (p.share.video.sender.setStreams) p.share.video.sender.setStreams(stream);
+    }
+    if (audio && !p.share.audio) p.share.audio = p.pc.addTransceiver("audio", { direction: "sendonly", streams: [stream] });
+    else if (p.share.audio) {
+      p.share.audio.direction = audio ? "sendonly" : "inactive";
+      if (p.share.audio.sender.setStreams) p.share.audio.sender.setStreams(stream);
+    }
+    p.level = 0;
+    p.pressure = 0;
+    p.upHold = UP_HOLD_MS;
+    feedShare(p);
+  }
+
+  function feedShare(p) {
+    if (!p.share) return;
+    const stream = rtc.localShare;
+    const on = !!stream && p.wantsShare;
+    const video = on ? stream.getVideoTracks()[0] : null;
+    const audio = on ? stream.getAudioTracks()[0] || null : null;
+    if (p.share.video.sender.track !== video) {
+      p.share.video.sender.replaceTrack(video).catch((e) => console.warn("share video not switched", e));
+      if (video) { p.level = 0; reconfigure(p); }
+    }
+    if (p.share.audio && p.share.audio.sender.track !== audio) p.share.audio.sender.replaceTrack(audio).catch(() => {});
+  }
+
+  function closeShareFor(p) {
+    if (!p.share) return;
+    [p.share.video, p.share.audio].forEach((tx) => {
+      if (!tx) return;
+      tx.sender.replaceTrack(null).catch(() => {});
+      try { tx.direction = "inactive"; } catch (e) { /* connection already closed */ }
     });
   }
+
+  rtc.viewers = () => (rtc.localShare ? [...peers.values()].filter((p) => p.wantsShare).map((p) => p.id) : []);
+
+  rtc.watch = function (id, on) {
+    if (on) rtc.watching.add(id); else rtc.watching.delete(id);
+    const p = peers.get(id);
+    if (p) sendState(p);
+    applyOutput();
+    rtc.onchange();
+  };
+
+  rtc.isSharing = (id) => {
+    if (id === myId()) return !!rtc.localShare;
+    const p = peers.get(id);
+    return !!p && ((p.state && p.state.sharing && performance.now() - p.state.at < STATE_STALE_MS * 2) || p.videos.size > 0);
+  };
+
+  rtc.shareViewers = (id) => {
+    if (id === myId()) return rtc.viewers();
+    const p = peers.get(id);
+    return p && p.state ? p.state.viewers : [];
+  };
+
+  rtc.toggleSelfPreview = function () {
+    rtc.selfPreview = !rtc.selfPreview;
+    rtc.onchange();
+  };
 
   /* What the share picker offers: each monitor, then all of them together. */
   rtc.shareSources = function () {
@@ -761,20 +854,34 @@
     return "screen:" + chosen.id + ":0";
   }
 
-  function captureRequest(sourceId, withAudio) {
-    return {
-      video: { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: sourceId, maxWidth: 7680, maxHeight: 4320, maxFrameRate: num("video.fps") } },
-      audio: withAudio ? { mandatory: { chromeMediaSource: "desktop" } } : false,
-    };
+  /*
+   * A screen capture only delivers frames when something on screen changes, and a share whose source may idle at zero
+   * lets the encoder drop to a frame or two per second on still content: that is the rate swinging between 2 and 30.
+   * A minimum frame rate keeps the track repeating frames, so the encoder is fed at a steady pace.
+   */
+  function captureRequest(sourceId, withAudio, steady) {
+    const fps = Math.max(MIN_FPS, num("video.fps"));
+    const video = { chromeMediaSource: "desktop", chromeMediaSourceId: sourceId, maxWidth: 7680, maxHeight: 4320, maxFrameRate: fps };
+    if (steady) video.minFrameRate = MIN_FPS;
+    return { video: { mandatory: video }, audio: withAudio ? { mandatory: { chromeMediaSource: "desktop" } } : false };
+  }
+
+  async function captureSource(sourceId, withAudio) {
+    try {
+      return await AV.capture(captureRequest(sourceId, withAudio, true));
+    } catch (e) {
+      if (e && e.name === "NotAllowedError") throw e;
+      return AV.capture(captureRequest(sourceId, withAudio, false));
+    }
   }
 
   async function captureScreen(withAudio, picked) {
     const sourceId = picked || chosenSource();
     try {
-      return await AV.capture(captureRequest(sourceId, withAudio));
+      return await captureSource(sourceId, withAudio);
     } catch (e) {
       if (sourceId === FULL_DESKTOP) throw e;
-      return AV.capture(captureRequest(FULL_DESKTOP, withAudio));
+      return captureSource(FULL_DESKTOP, withAudio);
     }
   }
 
@@ -849,13 +956,8 @@
     await watchShareSize(video);
     shareAudio = system ? shareAudioFrom(system.player, system.stop, "isolated") : buildShareAudio(captured);
     rtc.localShare = new MediaStream(shareAudio ? [video, shareAudio.track] : [video]);
-    peers.forEach((p) => {
-      p.level = 0;
-      p.pressure = 0;
-      p.upHold = UP_HOLD_MS;
-      p.levelAt = performance.now();
-      addShareTracks(p);
-    });
+    peers.forEach(openShareFor);
+    broadcastState();
     rtc.onchange();
   };
 
@@ -863,13 +965,12 @@
     const stream = rtc.localShare;
     if (!stream) return;
     rtc.localShare = null;
-    peers.forEach((p) => {
-      p.shareSenders.forEach((s) => { try { p.pc.removeTrack(s); } catch (e) { /* connection already closed */ } });
-      p.shareSenders = [];
-    });
+    rtc.selfPreview = false;
+    peers.forEach(closeShareFor);
     stream.getVideoTracks().forEach((t) => t.stop());
     closeShareAudio();
     stopWatchingShareSize();
+    broadcastState();
     rtc.onchange();
   };
 
@@ -878,7 +979,7 @@
     if (!stream) return;
     const video = stream.getVideoTracks()[0];
     video.contentHint = cfg()["video.priority"] === "motion" ? "motion" : "detail";
-    video.applyConstraints({ frameRate: { max: num("video.fps") } }).catch(() => {});
+    video.applyConstraints({ frameRate: { max: Math.max(MIN_FPS, num("video.fps")) } }).catch(() => {});
     peers.forEach((p) => { p.level = 0; reconfigure(p); });
     rtc.onchange();
   };
@@ -886,17 +987,23 @@
   function reconfigure(p) {
     p.levelAt = performance.now();
     p.pressure = 0;
-    p.shareSenders.forEach((s) => { if (s.track && s.track.kind === "video") configureSender(p, s); });
+    const sender = p.share && p.share.video.sender;
+    if (sender && sender.track) configureSender(p, sender);
   }
 
-  /* Each viewer has its own encoder and its own path, so one weak connection never blurs the image for everyone else. */
+  /*
+   * Each viewer has its own encoder and its own path, so one weak connection never blurs the image for everyone else.
+   * A busy processor alone is no reason to step down: WebRTC already trims the size itself to hold the frame rate, and
+   * stepping down on top of that made the picture swing. Only frames actually lost below the target count.
+   */
   function adaptShare(p, now) {
-    if (!flag("video.auto") || !p.stats || !p.shareSenders.length || now - p.levelAt < SETTLE_MS) return;
+    if (!flag("video.auto") || !p.stats || !p.share || !p.share.video.sender.track || now - p.levelAt < SETTLE_MS) return;
     const steps = ladder();
     const step = steps[Math.min(p.level, steps.length - 1)];
     const s = p.stats;
     const starving = s.availKbps > 0 && s.availKbps < step.needKbps * 0.75;
-    const pressured = starving || s.limit === "cpu" || s.loss > 0.08;
+    const slow = s.outFps > 0 && s.outFps < step.fps * FPS_SLACK && (s.limit === "cpu" || s.limit === "bandwidth");
+    const pressured = starving || slow || s.loss > 0.08;
     p.pressure = pressured ? p.pressure + 1 : 0;
     if (pressured) p.calmSince = 0;
     else if (!p.calmSince) p.calmSince = now;
@@ -947,23 +1054,37 @@
       if (pair.currentRoundTripTime !== undefined) s.rtt = Math.round(pair.currentRoundTripTime * 1000);
       s.availKbps = Math.round((pair.availableOutgoingBitrate || 0) / 1000);
     }
+    // The frame rate comes from the counters over the whole interval: the instant value jumps with every late frame.
+    const before = p.counters;
+    const counters = { at: s.at, sent: 0, decoded: 0 };
     report.forEach((r) => {
       if (r.kind !== "video") return;
       if (r.type === "outbound-rtp" && r.frameHeight) {
+        counters.sent += r.framesSent || 0;
         s.outWidth = r.frameWidth;
         s.outHeight = r.frameHeight;
-        s.outFps = Math.round(r.framesPerSecond || 0);
         s.limit = r.qualityLimitationReason || "none";
         const codec = report.get(r.codecId);
         s.codec = codec ? codec.mimeType.replace("video/", "") : "";
       }
       if (r.type === "remote-inbound-rtp") s.loss = r.fractionLost || 0;
       if (r.type === "inbound-rtp" && r.frameHeight) {
+        counters.decoded += r.framesDecoded || 0;
         s.inWidth = r.frameWidth;
         s.inHeight = r.frameHeight;
-        s.inFps = Math.round(r.framesPerSecond || 0);
       }
     });
+    p.counters = counters;
+    if (before) {
+      const seconds = (counters.at - before.at) / 1000;
+      if (seconds > 0) {
+        s.outFps = Math.max(0, Math.round((counters.sent - before.sent) / seconds));
+        s.inFps = Math.max(0, Math.round((counters.decoded - before.decoded) / seconds));
+      }
+    }
+    // A paused sender keeps reporting its last size: without frames moving, nothing is on the way.
+    if (!s.outFps) { s.outWidth = 0; s.outHeight = 0; }
+    if (!s.inFps) { s.inWidth = 0; s.inHeight = 0; }
     return s;
   }
 
@@ -988,9 +1109,22 @@
     return { width: best.outWidth, height: best.outHeight, fps: best.outFps, codec: best.codec };
   };
 
+  /* One tile per person on air. It carries a picture only while it is open: your own preview, or a share you chose to watch. */
+  let previewStream = null;
   rtc.videoTiles = function () {
     const tiles = [];
-    peers.forEach((p) => p.videos.forEach((stream, key) => tiles.push({ id: p.id, key: p.id + ":" + key, local: false, stream })));
+    if (rtc.localShare) {
+      const video = rtc.localShare.getVideoTracks()[0];
+      if (!previewStream || previewStream.getVideoTracks()[0] !== video) previewStream = new MediaStream([video]);
+      tiles.push({ id: myId(), key: "self", local: true, stream: rtc.selfPreview ? previewStream : null });
+    } else {
+      previewStream = null;
+    }
+    peers.forEach((p) => {
+      if (!rtc.isSharing(p.id)) return;
+      const stream = rtc.watching.has(p.id) ? [...p.videos.values()][0] || null : null;
+      tiles.push({ id: p.id, key: "peer:" + p.id, local: false, stream });
+    });
     return tiles;
   };
 

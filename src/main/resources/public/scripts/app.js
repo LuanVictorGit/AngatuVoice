@@ -219,12 +219,14 @@
     return E("button", { id: "ping-chip", class: "ping-chip", title: ping.title, "aria-label": ping.title, onclick: latencyDialog }, AV.pingBadge(ping.ms, ping.text));
   }
 
-  /* Your own share is never shown back to you (it only cost decoding and a mirror of the screen); this says it is on air and how it leaves. */
+  /* Says your screen is on air, how it leaves and how many are watching; your own picture only shows when you open the preview. */
   function shareChip() {
     if (!AV.rtc.localShare) return E("span", { id: "share-chip", class: "hidden" });
     const info = AV.rtc.shareInfo();
+    const watching = AV.rtc.viewers().length;
     const detail = info ? " · " + info.width + "×" + info.height + " · " + info.fps + " FPS" : "";
-    return E("span", { id: "share-chip", class: "chip text-danger", title: "Sua tela está sendo transmitida" }, "Transmitindo" + detail);
+    return E("button", { id: "share-chip", class: "chip text-danger", title: "Sua tela está sendo transmitida. Clique para ver quem assiste.", onclick: () => viewersDialog(me().id) },
+      AV.icon("eye", "ic-sm"), String(watching), E("span", { class: "hidden lg:inline" }, "· Transmitindo" + detail));
   }
 
   function renderPing() {
@@ -385,38 +387,105 @@
     button.classList.toggle("btn-off", !!on);
   }
 
+  function setVideoStream(view, stream) {
+    if (view.video.srcObject === stream) return;
+    view.video.srcObject = stream;
+    view.root.classList.toggle("waiting", !!stream);
+  }
+
   /* Video nodes are created once and only ever updated: rebuilding them on every state change is what made the picture blink. */
   function videoTile(tile) {
     let view = callView.videos.get(tile.key);
     if (view) {
-      if (view.video.srcObject !== tile.stream) view.video.srcObject = tile.stream;
+      setVideoStream(view, tile.stream);
       return view;
     }
     // Every sound goes through Web Audio, where mute and volume apply; audio from this element would play on top of it.
     const video = E("video", { autoplay: true, playsinline: true, muted: true, "aria-label": "Tela de " + nameOf(tile.id) });
     video.muted = true;
-    video.srcObject = tile.stream;
     const title = E("div", { class: "tile-name truncate" });
     const info = E("span", { class: "mono flex-none text-muted" });
-    const sound = iconButton(() => AV.rtc.toggleShareMute(tile.id));
-    const volume = E("input", { type: "range", min: 0, max: 100, class: "w-24", value: AV.rtc.shareVolume(tile.id),
-      "aria-label": "Volume da transmissão", title: "Volume da transmissão",
-      onclick: (e) => e.stopPropagation(), ondblclick: (e) => e.stopPropagation(),
-      oninput: (e) => AV.rtc.setShareVolume(tile.id, Number(e.target.value)) });
-    const expand = iconButton(() => toggleFullscreen(tile.key));
+    const viewers = E("button", { class: "tile-viewers", onclick: (e) => { e.stopPropagation(); viewersDialog(tile.id); } });
+    const actions = E("div", { class: "flex flex-none items-center gap-1" });
+    const view0 = { video, title, info, viewers, actions };
+    if (tile.local) {
+      view0.preview = iconButton(() => AV.rtc.toggleSelfPreview());
+      view0.stop = iconButton(() => AV.rtc.stopShare());
+      actions.append(view0.preview, view0.stop);
+    } else {
+      view0.sound = iconButton(() => AV.rtc.toggleShareMute(tile.id));
+      view0.level = E("span", { class: "mono w-9 text-right text-xs text-muted" });
+      view0.volume = E("input", { type: "range", min: 0, max: 100, class: "w-24", value: AV.rtc.shareVolume(tile.id),
+        "aria-label": "Volume da transmissão",
+        onclick: (e) => e.stopPropagation(), ondblclick: (e) => e.stopPropagation(),
+        oninput: (e) => { AV.rtc.setShareVolume(tile.id, Number(e.target.value)); view0.level.textContent = e.target.value + "%"; } });
+      // The slider only opens over the speaker icon, on a solid card, so it never sits half-visible over the picture.
+      const volumeGroup = E("div", { class: "tile-volume" }, view0.sound,
+        E("div", { class: "tile-volume-pop" }, E("div", { class: "tile-volume-card" }, view0.volume, view0.level)));
+      view0.close = iconButton(() => AV.rtc.watch(tile.id, false));
+      actions.append(volumeGroup, view0.close);
+    }
+    view0.expand = iconButton(() => toggleFullscreen(tile.key));
+    actions.append(view0.expand);
     const header = E("div", { class: "tile-video-header" },
-      E("div", { class: "flex min-w-0 items-center gap-2" }, title, info),
-      E("div", { class: "flex flex-none items-center gap-1" }, volume, sound, expand));
+      E("div", { class: "flex min-w-0 items-center gap-2" }, E("span", { class: "live-badge" }, "Ao vivo"), title, info, viewers), actions);
+    view0.cover = E("div", { class: "tile-cover" });
+    view0.loading = E("div", { class: "tile-loading", role: "status" }, "Carregando transmissão…");
     const root = E("div", { class: "tile tile-video", dataset: { tile: tile.key }, tabindex: 0,
       onclick: () => { focusedTile = tile.key; renderCall(); },
-      ondblclick: () => toggleFullscreen(tile.key) }, header, video);
-    view = { root, video, title, info, sound, volume, expand };
+      ondblclick: () => { if (view0.video.srcObject) toggleFullscreen(tile.key); } }, header, video, view0.loading, view0.cover);
+    view = { root, ...view0 };
+    const shown = () => { if (video.videoWidth) root.classList.remove("waiting"); };
+    video.addEventListener("resize", shown);
+    video.addEventListener("playing", shown);
+    setVideoStream(view, tile.stream);
     callView.videos.set(tile.key, view);
     callView.stage.append(root);
     return view;
   }
 
+  function coverFor(tile) {
+    const name = nameOf(tile.id);
+    if (tile.local) {
+      return [AV.avatar(tile.id, name, "avatar-lg"), E("div", { class: "font-semibold" }, "Você está transmitindo"),
+        E("div", { class: "text-sm text-muted" }, "A prévia fica desligada para poupar o computador."),
+        E("div", { class: "flex flex-wrap justify-center gap-2" },
+          E("button", { class: "btn", onclick: (e) => { e.stopPropagation(); AV.rtc.toggleSelfPreview(); } }, AV.icon("eye", "ic-sm"), "Ver minha transmissão"),
+          E("button", { class: "btn btn-danger", onclick: (e) => { e.stopPropagation(); AV.rtc.stopShare(); } }, AV.icon("x", "ic-sm"), "Parar transmissão"))];
+    }
+    return [AV.avatar(tile.id, name, "avatar-lg"), E("div", { class: "font-semibold" }, name + " está transmitindo"),
+      E("button", { class: "btn btn-primary", onclick: (e) => { e.stopPropagation(); focusedTile = tile.key; AV.rtc.watch(tile.id, true); } }, AV.icon("eye", "ic-sm"), "Assistir transmissão")];
+  }
+
+  function viewersDialog(id) {
+    const ids = AV.rtc.shareViewers(id);
+    const title = id === me().id ? "Quem está assistindo você" : "Assistindo " + nameOf(id);
+    AV.modal(title, (body) => {
+      if (!ids.length) body.append(E("p", { class: "text-muted" }, "Ninguém está assistindo esta transmissão agora."));
+      ids.forEach((v) => body.append(E("div", { class: "flex items-center gap-3 py-2" }, AV.avatar(v, nameOf(v), "avatar-sm"),
+        E("span", { class: "truncate font-semibold" }, v === me().id ? "Você" : nameOf(v)))));
+    }, [{ label: "Fechar", run: (close) => close() }]);
+  }
+
+  function fillViewers(node, id) {
+    const ids = AV.rtc.shareViewers(id);
+    const key = ids.join(",");
+    if (node.dataset.key === key) return;
+    node.dataset.key = key;
+    const names = ids.map((v) => (v === me().id ? "Você" : nameOf(v)));
+    const label = ids.length ? (ids.length === 1 ? "1 pessoa assistindo: " : ids.length + " pessoas assistindo: ") + names.join(", ") : "Ninguém assistindo";
+    node.title = label;
+    node.setAttribute("aria-label", label);
+    AV.fill(node, AV.icon("eye", "ic-sm"), E("span", { class: "mono" }, String(ids.length)),
+      E("span", { class: "tile-viewer-faces" }, ids.slice(0, 3).map((v) => AV.avatar(v, nameOf(v), "avatar-xs"))));
+  }
+
   function videoInfo(tile) {
+    if (!tile.stream) return "";
+    if (tile.local) {
+      const info = AV.rtc.shareInfo();
+      return info ? info.width + "×" + info.height + " · " + info.fps + " FPS" : "";
+    }
     const data = AV.rtc.peerStats(tile.id);
     if (!data || !data.inHeight) return "";
     return data.inWidth + "×" + data.inHeight + " · " + data.inFps + " FPS";
@@ -437,14 +506,32 @@
     if (!keys.has(focusedTile)) focusedTile = tiles.length ? tiles[0].key : null;
     tiles.forEach((tile) => {
       const view = videoTile(tile);
+      if (!tile.stream && activeFullscreenTile === tile.key) {
+        activeFullscreenTile = null;
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      }
       const full = activeFullscreenTile === tile.key;
-      const muted = AV.rtc.isShareMuted(tile.id);
+      const open = !!tile.stream;
       view.root.classList.toggle("focused", tile.key === focusedTile);
       view.root.classList.toggle("fullscreen", full);
-      view.title.textContent = "Tela de " + nameOf(tile.id);
-      if (document.activeElement !== view.volume) view.volume.value = AV.rtc.shareVolume(tile.id);
+      view.root.classList.toggle("closed", !open);
+      view.title.textContent = tile.local ? "Sua tela" : "Tela de " + nameOf(tile.id);
       view.info.textContent = videoInfo(tile);
-      setIconButton(view.sound, muted ? "volume-x" : "volume", muted ? "Reativar som da transmissão" : "Silenciar som da transmissão", muted);
+      fillViewers(view.viewers, tile.id);
+      const coverKey = open ? "" : (tile.local ? "self" : "peer") + "|" + nameOf(tile.id) + "|" + AV.avatarVersion(tile.id);
+      if (view.coverKey !== coverKey) { view.coverKey = coverKey; AV.fill(view.cover, open ? [] : coverFor(tile)); }
+      view.expand.classList.toggle("hidden", !open);
+      if (tile.local) {
+        setIconButton(view.preview, AV.rtc.selfPreview ? "eye-off" : "eye", AV.rtc.selfPreview ? "Ocultar minha transmissão" : "Ver minha transmissão", false);
+        setIconButton(view.stop, "x", "Parar transmissão", true);
+      } else {
+        const muted = AV.rtc.isShareMuted(tile.id);
+        if (document.activeElement !== view.volume) view.volume.value = AV.rtc.shareVolume(tile.id);
+        view.level.textContent = view.volume.value + "%";
+        setIconButton(view.sound, muted ? "volume-x" : "volume", muted ? "Reativar som da transmissão" : "Silenciar som da transmissão", muted);
+        view.close.classList.toggle("hidden", !open);
+        setIconButton(view.close, "eye-off", "Fechar transmissão", false);
+      }
       setIconButton(view.expand, full ? "minimize" : "maximize", full ? "Sair da tela cheia (Esc)" : "Abrir em tela cheia", false);
     });
     callView.stage.classList.toggle("hidden", tiles.length === 0);
@@ -487,13 +574,14 @@
   function personFlags(id, self) {
     const rtc = AV.rtc;
     if (self) {
-      return [rtc.muted && flagIcon("mic-off", "Seu microfone está silenciado"), rtc.deafened && flagIcon("headphones-off", "Seu áudio está silenciado")];
+      return [rtc.localShare && E("span", { class: "live-badge" }, "Ao vivo"), rtc.muted && flagIcon("mic-off", "Seu microfone está silenciado"), rtc.deafened && flagIcon("headphones-off", "Seu áudio está silenciado")];
     }
     const state = rtc.peerState(id);
     const link = rtc.connectionState(id);
     return [
       state && state.muted && flagIcon("mic-off", "Microfone desligado"),
       state && state.deafened && flagIcon("headphones-off", "Áudio desligado"),
+      rtc.isSharing(id) && E("span", { class: "live-badge" }, "Ao vivo"),
       rtc.isPeerMuted(id) && E("span", { class: "chip !h-5 !px-2 text-danger" }, "Silenciado por você"),
       link !== "connected" && E("span", { class: "chip !h-5 !px-2" }, link === "failed" || link === "disconnected" ? "Reconectando…" : "Conectando…"),
     ];

@@ -302,6 +302,7 @@ AV.sound = (function () {
     peerJoin: [[660, 0, 0.12]],
     peerLeave: [[440, 0, 0.12]],
     message: [[880, 0, 0.05], [1175, 0.06, 0.08]],
+    streamStart: [[587, 0, 0.08], [880, 0.09, 0.08], [1175, 0.18, 0.14]],
   };
   return function (name) {
     const s = AV.state && AV.state.settings;

@@ -7,6 +7,21 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.4.7] - 2026-11-04
+
+### Adicionado
+- Transmissões como no Discord: quando alguém compartilha a tela, aparece um cartão "Ao vivo" e você escolhe se quer assistir. Dá para fechar a transmissão a qualquer momento e abrir de novo depois.
+- Lista de quem está assistindo em cada transmissão, com a contagem e as fotos de perfil; um clique mostra todos os nomes. Quem transmite vê o número de espectadores na barra inferior e ouve um aviso quando alguém entra ou sai.
+- Opção de ver a sua própria transmissão. A prévia começa desligada para poupar o computador.
+- Selo "Ao vivo" ao lado de quem está transmitindo na chamada.
+
+### Alterado
+- A tela só é codificada para quem está assistindo, o que alivia bastante o processador de quem transmite.
+- O volume da transmissão agora abre num cartão próprio, ao passar o mouse sobre o ícone de som, em vez de ficar semitransparente por cima da imagem.
+
+### Corrigido
+- FPS da transmissão oscilando muito. A captura agora entrega no mínimo 30 quadros por segundo mesmo com a tela parada, a qualidade automática reduz a resolução sem nunca baixar de 30 FPS, e o vídeo recebido passa por um pequeno buffer que deixa a reprodução constante. O FPS exibido passou a ser a média real do intervalo, sem saltos.
+
 ## [1.4.6] - 2026-11-03
 
 ### Adicionado
