@@ -137,7 +137,7 @@ Java 25, AngatuLibraries `62d2678fcb52c2f3c3da46c9221eadbf8d683ec2` (https://git
 ```
 mvn -B test
 mvn -q -B -DskipTests package
-java --enable-native-access=ALL-UNNAMED -jar target/angatu-voice-1.4.7.jar
+java --enable-native-access=ALL-UNNAMED -jar target/angatu-voice-1.5.0.jar
 ```
 `JAVA_HOME` precisa apontar para o JDK 25: nesta máquina o padrão é o 21 e o `mvn` falha com `release version 25 not supported`. `PeerClusterTest` sobe vários nós em JVMs próprias e leva alguns minutos; ao mexer em outra coisa, rode só os testes da classe tocada.
 Dados em `%APPDATA%\AngatuVoice` (`-Dangatu.data=` muda); caches e JCEF em `%LOCALAPPDATA%\AngatuVoice`. Tailwind: `tools\bin\tailwindcss.exe -i tools\tailwind\input.css -o src\main\resources\public\styles\tailwind.css --minify` (arquivo gerado é versionado). Distribuição: `tools\package.ps1`, depois `ISCC installer\angatu-voice.iss /DAppVersion=X.Y.Z`.
@@ -159,7 +159,7 @@ Nenhuma obrigatória. `ANGATU_UPDATE_TOKEN` (repositório privado). Segredo de C
 Padrão Java da skill (`java-standard.md`); sem Javadoc em método; JSON só por `GsonAPI`; configurações só pelas chaves de `SettingsService` (strings validadas); `ds.css` única fonte visual, componentes em `@layer components`; texto visível em PT-BR; interface é SPA (nenhuma navegação além de `/boot` → `/app`).
 
 ## Versões
-Regra completa em `docs/VERSIONAMENTO.md`: toda release tem número novo e maior; `pom.xml`, `installer/angatu-voice.iss` e `CHANGELOG.md` mudam juntos; o workflow recusa a tag que não bater com o `pom.xml` e o `CHANGELOG.md`. Versão atual: 1.4.7. **Toda atualização obriga, sem pedir: commit, push e release atualizada** (tag `vX.Y.Z` enviada, o workflow publica a release; conferir com `gh release list`). O `installer/angatu-voice.iss` fica só em ASCII: textos pelas mensagens `{cm:...}` do próprio Inno e acentos no `[Code]` como `#$E7`.
+Regra completa em `docs/VERSIONAMENTO.md`: toda release tem número novo e maior; `pom.xml`, `installer/angatu-voice.iss` e `CHANGELOG.md` mudam juntos; o workflow recusa a tag que não bater com o `pom.xml` e o `CHANGELOG.md`. Versão atual: 1.5.0. **Toda atualização obriga, sem pedir: commit, push e release atualizada sem exceção.** A cada versão lançada, é obrigatório criar e enviar a tag `vX.Y.Z` (`git tag vX.Y.Z && git push origin vX.Y.Z`), acompanhar o workflow `release` no GitHub Actions até a publicação dos binários (`.exe`, `.zip`, `manifest.json`, `manifest.json.sig`) e conferir o status com `gh release list`. Nenhuma versão está concluída enquanto a release pública não estiver publicada. O `installer/angatu-voice.iss` fica só em ASCII: textos pelas mensagens `{cm:...}` do próprio Inno e acentos no `[Code]` como `#$E7`.
 
 ## Armadilhas já pagas
 - **Entrada no JCEF**: as janelas do Chromium pertencem à thread de eventos do Swing, que não lê mensagens do Windows; sem o laço de `PeekMessage` do `BrowserWindow.startMessagePump` a página renderiza e ignora mouse e teclado. Teste sempre com mouse e teclado reais (`mouse_event`/`SendKeys`), não só por CDP, e com a janela em primeiro plano.
