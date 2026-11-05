@@ -31,6 +31,14 @@ O Radmin VPN **não tem API pública**. O que ele expõe localmente e o app usa:
 | IP privado, máscara, broadcast | adaptador "Famatech Radmin VPN Ethernet Adapter" (IPv4 `26.x.x.x/8`) |
 | Apelido do usuário | `HKLM\SOFTWARE\WOW6432Node\Famatech\RadminVPN\1.0\Alias` |
 
+### Automação de interface e gerenciamento de redes
+Para permitir a entrada e saída em redes sem intervenção manual do usuário:
+- **Automação via Windows UI Automation:** o executável Qt (`RvRvpnGui.exe`) é controlado através de script PowerShell dedicado (`radmin-automation.ps1`), executado com comutação explícita de desktop (`WinSta0\Default`) em thread STA dedicada. Os diálogos e ações de menu (`actionJoin_Existant`, `actionCreate_New`, `DlgJoinNetwork`, `DlgCreateNetwork`) são acionados diretamente pelos identificadores de automação.
+- **Rede padrão obrigatória:** a rede **AngatuVoice** (senha `senha123`) é permanente, protegida contra exclusão, saída ou renomeação, e conectada automaticamente ao inicializar o aplicativo.
+- **Mestre de inicialização (bootstrap):** caso a rede ainda não tenha sido criada no Radmin, instâncias iniciadas com a flag `-Dangatu.bootstrap.master=true` ou `ANGATU_BOOTSTRAP_MASTER=true` criam a rede na partida. Usuários normais aguardam a existência da rede e realizam tentativas de conexão com recuo exponencial e jitter.
+- **Persistência local:** a entidade `RadminNetwork` armazena as redes conhecidas no SQLite via Saveable, sincronizando seu status com o cliente gráfico do Radmin.
+- **Rotas REST protegidas:** `/api/networks` lista o estado da rede padrão e redes adicionais; `/api/networks/join` e `/api/networks/create` gerenciam redes adicionais; operações de saída (`/leave`) ou exclusão (`/delete`) contra a rede `AngatuVoice` são rejeitadas estritamente com código 403 Forbidden.
+
 **Redes e membros não ficam em nenhum lugar local** (ficam nos servidores do Radmin), então não há como listá-los oficialmente. Alternativa adotada: o "grupo" **Rede Radmin** corresponde a quem está no adaptador e roda o Angatu Voice; participantes são descobertos por beacons UDP assinados em broadcast (`26.255.255.255`, portas 47600 a 47609), por troca de pares e pelo botão "Conectar por IP". Grupos privados adicionais usam convite com segredo.
 
 ## Protocolo entre usuários
@@ -71,8 +79,8 @@ Microfone com cancelamento de eco, supressão de ruído, ganho de entrada, detec
 
 **Tela.** A captura vem de `getUserMedia` com `chromeMediaSource: desktop`, porque é o único caminho que aceita escolher o monitor (`screen:<índice>:0`, o mesmo índice de `EnumDisplayDevices`) e que entrega o áudio do sistema de verdade.
 
-- **Nitidez:** `contentHint = detail` e preferência AV1, VP9, VP8. O par VP8 com `motion` que se usava antes transmitia 1080p a 480×270 nos primeiros segundos; AV1 mantém 1920×1080 com metade da taxa de bits do VP9 e cerca de 10 ms por quadro numa CPU de 6 núcleos. Cada oferta e resposta leva `x-google-start-bitrate=2500`, para o codificador não começar perto de 300 kbps.
-- **Proporção:** o tamanho real vem dos quadros (`videoHeight` de um `<video>` fora da tela), porque `getSettings()` de uma captura informa o limite pedido, não o que chega. A redução é só `scaleResolutionDownBy`, e a tela usa `object-fit: contain`.
+- **Nitidez:** `contentHint = detail` (ou `motion`) e ordem de preferência VP9, VP8, AV1. Testes de desempenho empíricos no CEF revelaram que o VP9 (libvpx) codifica 1080p60 em apenas ~3,97 ms por quadro (6 núcleos de CPU), com cerca de 40% a menos de banda em relação ao VP8 (~7,48 ms por quadro). Cada oferta e resposta SDP leva `b=AS:16000`, `x-google-start-bitrate=6000` e `x-google-min-bitrate=1500` (para 60 FPS), evitando a restrição inicial do limitador WebRTC. A captura solicita `minFrameRate: 60` para manter cadência estável sem throttling em telas estáticas.
+- **Proporção e adaptação:** o tamanho real vem dos quadros (`videoHeight` de um `<video>` fora da tela), porque `getSettings()` de uma captura informa o limite pedido, não o que chega. A tela usa `object-fit: contain`. O modo "Nitidez" (`maintain-resolution`) reduz a taxa de quadros (60 para 30 FPS) antes de alterar a resolução, preservando a legibilidade de códigos e textos; o modo "Movimento" (`maintain-framerate`) prioriza os 60 FPS contínuos.
 - **Adaptação por pessoa:** a cada 2 s, cada conexão compara a banda disponível com o mínimo do degrau, a perda e a limitação por CPU. Três leituras ruins descem um degrau, e a volta espera 20 s estáveis, dobrando a cada queda até 2 minutos. Um espectador com rede ruim não afeta os outros.
 - **Áudio do sistema:** só entra faixa cujo `deviceId` começa com `loopback`, pois o microfone tem de passar sempre pelo silenciar. A captura também ouve a saída do próprio aplicativo (`restrictOwnAudio` e o cancelamento de eco não a removem no CEF), então, enquanto alguém fala, o som compartilhado baixa para 6% para a pessoa não ouvir a si mesma de volta.
 

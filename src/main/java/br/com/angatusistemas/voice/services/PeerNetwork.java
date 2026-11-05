@@ -305,6 +305,7 @@ public final class PeerNetwork {
     private static void probeNetwork() {
         try {
             RadminService.Status net = RadminService.refresh();
+            Thread.startVirtualThread(br.com.angatusistemas.voice.services.radmin.NetworkManager::tick);
             Endpoint current = endpoint;
             long now = System.currentTimeMillis();
             if (net.connected()) {

@@ -7,6 +7,29 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.5.0] - 2026-11-05
+
+### Adicionado
+- Gerenciador automático de redes Radmin VPN integrado diretamente na tela de Configurações > Rede.
+- Conexão automática e permanente à rede padrão "AngatuVoice" (senha123) ao abrir o aplicativo, sem exigir configuração manual do usuário no Radmin.
+- Painel visual de redes: cartão em destaque da rede padrão AngatuVoice com selo de proteção, status de conexão, IP virtual, contagem de participantes e botão de reconexão.
+- Ações para criar novas redes secundárias ou entrar em redes de terceiros diretamente pela interface do aplicativo.
+- Inicialização controlada da rede (modo mestre de inicialização) e recuperação contínua com intervalo exponencial e aleatoriedade contra oscilações de conexão.
+- Transmissão de tela em resolução real 1080p (Full HD) a 60 FPS com alta fluidez e nitidez para textos, códigos e janelas.
+- Seletor de prioridade de transmissão: "Nitidez" prioriza a resolução 1080p para leitura, reduzindo a taxa de quadros antes de diminuir a resolução; "Movimento" prioriza a fluidez a 60 FPS contínuos.
+- Exibição da taxa de bits real (Mbps/kbps) na barra inferior e no cabeçalho da transmissão.
+- Aceleração gráfica por GPU na renderização de tela e cópia direta de memória de vídeo no navegador integrado.
+
+### Alterado
+- O codec padrão de transmissão passa a ser o VP9, reduzindo o consumo de banda em cerca de 40% em relação ao VP8 com tempo de codificação de apenas ~4 ms por quadro.
+- A taxa de bits inicial sobe imediatamente para até 6 Mbps na partida, eliminando o período de baixa resolução ou borrado ao iniciar a transmissão.
+- Latência de reprodução de vídeo otimizada com buffer dinâmico de 60 ms para sincronia e estabilidade.
+
+### Corrigido
+- Quedas de taxa de quadros e lentidão causadas pelo limitador de largura de banda inicial do WebRTC.
+- Oscilações de conexão com recuperação automática por reinício de candidatos de rede (ICE restart).
+- Proteção nativa estrita impedindo qualquer tentativa de exclusão ou saída da rede padrão AngatuVoice.
+
 ## [1.4.7] - 2026-11-04
 
 ### Adicionado

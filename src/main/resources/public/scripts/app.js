@@ -224,7 +224,8 @@
     if (!AV.rtc.localShare) return E("span", { id: "share-chip", class: "hidden" });
     const info = AV.rtc.shareInfo();
     const watching = AV.rtc.viewers().length;
-    const detail = info ? " · " + info.width + "×" + info.height + " · " + info.fps + " FPS" : "";
+    const mbps = info && info.totalKbps ? (info.totalKbps >= 1000 ? " · " + (info.totalKbps / 1000).toFixed(1) + " Mbps" : " · " + info.totalKbps + " kbps") : "";
+    const detail = info ? " · " + info.width + "×" + info.height + " · " + info.fps + " FPS" + mbps : "";
     return E("button", { id: "share-chip", class: "chip text-danger", title: "Sua tela está sendo transmitida. Clique para ver quem assiste.", onclick: () => viewersDialog(me().id) },
       AV.icon("eye", "ic-sm"), String(watching), E("span", { class: "hidden lg:inline" }, "· Transmitindo" + detail));
   }
@@ -484,11 +485,14 @@
     if (!tile.stream) return "";
     if (tile.local) {
       const info = AV.rtc.shareInfo();
-      return info ? info.width + "×" + info.height + " · " + info.fps + " FPS" : "";
+      if (!info) return "";
+      const mbps = info.kbps >= 1000 ? (info.kbps / 1000).toFixed(1) + " Mbps" : (info.kbps ? info.kbps + " kbps" : "");
+      return info.width + "×" + info.height + " · " + info.fps + " FPS" + (mbps ? " · " + mbps : "") + (info.codec ? " · " + info.codec : "");
     }
     const data = AV.rtc.peerStats(tile.id);
     if (!data || !data.inHeight) return "";
-    return data.inWidth + "×" + data.inHeight + " · " + data.inFps + " FPS";
+    const mbps = data.inKbps >= 1000 ? (data.inKbps / 1000).toFixed(1) + " Mbps" : (data.inKbps ? data.inKbps + " kbps" : "");
+    return data.inWidth + "×" + data.inHeight + " · " + data.inFps + " FPS" + (mbps ? " · " + mbps : "") + (data.codec ? " · " + data.codec : "");
   }
 
   function syncVideos(tiles) {

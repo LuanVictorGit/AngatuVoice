@@ -129,8 +129,8 @@ public final class SettingsService {
         m.put("audio.echo", new Rule("true", BOOL));
         m.put("audio.noise", new Rule("true", BOOL));
         m.put("video.monitor", new Rule("0", range(0, 15)));
-        m.put("video.resolution", new Rule("1440", oneOf("720", "1080", "1440", "native")));
-        m.put("video.fps", new Rule("30", oneOf("30", "60")));
+        m.put("video.resolution", new Rule("1080", oneOf("720", "1080", "1440", "native")));
+        m.put("video.fps", new Rule("60", oneOf("30", "60")));
         m.put("video.priority", new Rule("detail", oneOf("detail", "motion")));
         m.put("video.bitrate", new Rule("0", range(0, 50000)));
         m.put("video.systemAudio", new Rule("false", BOOL));

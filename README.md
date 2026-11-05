@@ -26,7 +26,7 @@
 ## Como funciona
 
 1. **Instale e abra.** O instalador é por usuário, não pede administrador e já configura o início com o Windows (você pode desmarcar).
-2. **Entre na sua rede do Radmin VPN.** O Angatu Voice reconhece o Radmin sozinho, lê o seu apelido e começa a procurar quem mais está na rede.
+2. **Conexão automática.** O Angatu Voice conecta você automaticamente à rede padrão `AngatuVoice` no Radmin VPN, lê o seu apelido e encontra quem mais está na rede. Você também pode gerenciar outras redes adicionais pelas configurações.
 3. **Converse.** A *Rede Radmin* é o grupo de todo mundo da sua rede. Para um círculo menor, crie um grupo privado e mande o convite só para quem deve entrar.
 4. **Chame no voz.** Um clique em *Chamar* faz tocar para quem você chamou, com aviso de quem é mesmo com o aplicativo em segundo plano. Na chamada, você vê quem está falando, o ping de cada um e pode silenciar ou ajustar o volume de cada pessoa só para você.
 5. **Mostre a sua tela.** Até a resolução original, a 30 ou 60 quadros por segundo; se a rede de alguém não acompanhar, a qualidade desce só para essa pessoa e volta quando melhora.
@@ -53,6 +53,8 @@ Tudo trafega direto entre os computadores, dentro do Radmin VPN, com identidade 
 
 ## O que tem dentro
 
+- **Gerenciador de redes Radmin VPN integrado:** conexão automática à rede padrão protegida `AngatuVoice`, com gerenciador visual para criar, entrar e alternar redes diretamente pelo aplicativo.
+- **Compartilhamento de tela em 1080p a 60 FPS:** transmissão em tempo real com codec VP9, seletor de modo Nitidez vs Movimento, exibição de taxa de bits e aceleração por GPU.
 - **Grupos privados** com convite, conversas individuais, histórico salvo no seu computador e mensagens pendentes entregues quando a pessoa volta.
 - **Chamadas** individuais e em grupo, com baixa latência, cancelamento de eco e supressão de ruído.
 - **Atalhos globais** para apertar para falar, silenciar microfone ou áudio, entrar e sair da chamada.

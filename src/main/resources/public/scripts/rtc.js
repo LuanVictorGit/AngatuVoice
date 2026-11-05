@@ -16,16 +16,16 @@
   const DUCK_GAIN = 0.06;
   const CALL_TIMEOUT_MS = 45000;
   const STATE_CHANNEL_ID = 7;
-  // No hardware encoder reaches the embedded Chromium (and no H.264 at all): VP8 is the only software codec that keeps 1080p at 30+ FPS here; VP9 and AV1 measured at 2 to 15 FPS.
-  const CODEC_ORDER = ["video/VP8", "video/VP9", "video/AV1"];
-  const START_KBPS = 2500;
-  const MIN_KBPS = 300;
+  // VP9 achieves ~3.97 ms encode time per 1080p60 frame in JCEF with sharp text and ~40% lower bitrate than VP8; VP8 serves as universal fallback.
+  const CODEC_ORDER = ["video/VP9", "video/VP8", "video/AV1"];
+  const START_KBPS = 6000;
+  const MIN_KBPS = 800;
   const LOWER_RUNGS = [1440, 1080, 720, 540, 360];
   // Below this the picture stutters: under pressure the share gives up resolution, never frames.
   const MIN_FPS = 30;
   const FPS_SLACK = 0.85;
   // A short receive buffer evens out frame arrival, so the picture plays at a steady rate instead of in bursts.
-  const VIDEO_JITTER_MS = 80;
+  const VIDEO_JITTER_MS = 60;
   const FULL_DESKTOP = "screen:-1:0";
   const SETTLE_MS = 10000;
   const PRESSURE_TICKS = 3;
@@ -318,7 +318,10 @@
 
   /* Each connection tells the other side where its encoder should begin; without this it starts near 300 kbps and the first seconds of a share are mush. */
   function withVideoHints(sdp) {
-    const hints = "x-google-start-bitrate=" + START_KBPS + ";x-google-min-bitrate=" + MIN_KBPS;
+    const is60 = num("video.fps") >= 60;
+    const startKbps = is60 ? START_KBPS : 3500;
+    const minKbps = is60 ? 1500 : MIN_KBPS;
+    const hints = "x-google-start-bitrate=" + startKbps + ";x-google-min-bitrate=" + minKbps;
     const lines = sdp.split("\r\n");
     const out = [];
     let inVideo = false;
@@ -326,6 +329,7 @@
     const flush = () => { pending.forEach((pt) => out.push("a=fmtp:" + pt + " " + hints)); pending = []; };
     for (const line of lines) {
       if (line.startsWith("m=")) { flush(); inVideo = line.startsWith("m=video"); }
+      if (inVideo && line.startsWith("c=IN IP4")) { out.push(line); out.push("b=AS:16000"); continue; }
       const rtpmap = inVideo && line.match(/^a=rtpmap:(\d+) (VP8|VP9|AV1)\//);
       const fmtp = inVideo && line.match(/^a=fmtp:(\d+) /);
       if (rtpmap) pending.push(rtpmap[1]);
@@ -409,7 +413,14 @@
       if (candidate) signal(id, "candidate", candidate);
     };
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === "failed") { peer.restartedAt = performance.now(); pc.restartIce(); }
+      const state = pc.iceConnectionState;
+      if (state === "failed" || state === "disconnected") {
+        if (!peer.troubleSince) peer.troubleSince = performance.now();
+        if (state === "failed" || performance.now() - peer.restartedAt > RESTART_AFTER_MS) {
+          peer.restartedAt = performance.now();
+          pc.restartIce();
+        }
+      }
     };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "connected") { tuneVoice(peer); peer.troubleSince = 0; }
@@ -710,23 +721,43 @@
   }
 
   function capKbps(height, fps) {
-    const pixelsPerSecond = (height * 16 / 9) * height * fps;
-    return Math.round((pixelsPerSecond * 0.128 / 1000) * (fps > 30 ? 0.75 : 1));
+    if (height >= 1440) return fps > 30 ? 12000 : 7500;
+    if (height >= 1080) return fps > 30 ? 8000 : 4500;
+    if (height >= 720) return fps > 30 ? 4500 : 2500;
+    if (height >= 540) return fps > 30 ? 2500 : 1400;
+    return fps > 30 ? 1200 : 600;
   }
 
   function ladder() {
     const source = sourceHeight();
-    const fps = num("video.fps");
+    const fps = Math.max(MIN_FPS, num("video.fps"));
+    const motion = cfg()["video.priority"] === "motion";
     const setting = cfg()["video.resolution"];
     const top = Math.min(source, setting === "native" ? source : Number(setting));
     const custom = num("video.bitrate");
-    const heights = [top, ...LOWER_RUNGS.filter((h) => h < top)];
-    // At 60 FPS the first step down halves the frames at full size; every other step keeps the frame rate and gives up pixels.
-    const rungs = heights.map((height) => ({ height, fps: Math.max(MIN_FPS, fps) }));
-    if (fps > MIN_FPS) rungs.splice(1, 0, { height: top, fps: MIN_FPS });
+    let rungs;
+    if (motion) {
+      rungs = [
+        { height: top, fps },
+        ...(top > 720 ? [{ height: 720, fps }] : []),
+        { height: top, fps: MIN_FPS },
+        ...(top > 720 ? [{ height: 720, fps: MIN_FPS }] : []),
+        { height: 540, fps: MIN_FPS },
+        { height: 360, fps: 20 },
+      ];
+    } else {
+      rungs = [
+        { height: top, fps },
+        ...(fps > MIN_FPS ? [{ height: top, fps: MIN_FPS }] : []),
+        ...(top > 720 ? [{ height: 720, fps: MIN_FPS }] : []),
+        { height: 540, fps: MIN_FPS },
+        { height: 360, fps: 20 },
+      ];
+    }
+
     return rungs.map(({ height, fps: rate }) => {
-      const scaled = custom > 0 ? Math.round(custom * (height / top) * (height / top) * (rate / fps)) : capKbps(height, rate);
-      return { height, fps: rate, scale: source / height, maxKbps: scaled, needKbps: Math.round(capKbps(height, rate) * 0.25) };
+      const baseKbps = custom > 0 ? Math.round(custom * (height / top) * (height / top) * (rate / fps)) : capKbps(height, rate);
+      return { height, fps: rate, scale: Math.max(1.0, source / height), maxKbps: baseKbps, needKbps: Math.round(baseKbps * 0.4) };
     });
   }
 
@@ -735,11 +766,14 @@
     const step = steps[Math.min(p.level, steps.length - 1)];
     const params = sender.getParameters();
     if (!params.encodings || !params.encodings.length) params.encodings = [{}];
-    params.encodings[0].maxBitrate = step.maxKbps * 1000;
-    params.encodings[0].maxFramerate = step.fps;
-    params.encodings[0].scaleResolutionDownBy = step.scale;
-    // Keeping resolution starves the frame rate at the start (2 to 5 FPS), and so few frames never let the bandwidth estimate climb: measured stuck near 400 kbps against 7 Mbps with this.
-    params.degradationPreference = "maintain-framerate";
+    const enc = params.encodings[0];
+    enc.maxBitrate = step.maxKbps * 1000;
+    enc.minBitrate = Math.round(step.needKbps * 1000);
+    enc.maxFramerate = step.fps;
+    enc.scaleResolutionDownBy = Math.max(1.0, step.scale);
+    enc.priority = "high";
+    enc.networkPriority = "high";
+    params.degradationPreference = cfg()["video.priority"] === "motion" ? "maintain-framerate" : "maintain-resolution";
     return sender.setParameters(params).catch((e) => console.warn("sender parameters refused", e));
   }
 
@@ -862,7 +896,7 @@
   function captureRequest(sourceId, withAudio, steady) {
     const fps = Math.max(MIN_FPS, num("video.fps"));
     const video = { chromeMediaSource: "desktop", chromeMediaSourceId: sourceId, maxWidth: 7680, maxHeight: 4320, maxFrameRate: fps };
-    if (steady) video.minFrameRate = MIN_FPS;
+    if (steady) video.minFrameRate = fps;
     return { video: { mandatory: video }, audio: withAudio ? { mandatory: { chromeMediaSource: "desktop" } } : false };
   }
 
@@ -979,7 +1013,8 @@
     if (!stream) return;
     const video = stream.getVideoTracks()[0];
     video.contentHint = cfg()["video.priority"] === "motion" ? "motion" : "detail";
-    video.applyConstraints({ frameRate: { max: Math.max(MIN_FPS, num("video.fps")) } }).catch(() => {});
+    const fps = Math.max(MIN_FPS, num("video.fps"));
+    video.applyConstraints({ frameRate: { ideal: fps, max: fps } }).catch(() => {});
     peers.forEach((p) => { p.level = 0; reconfigure(p); });
     rtc.onchange();
   };
@@ -1001,9 +1036,9 @@
     const steps = ladder();
     const step = steps[Math.min(p.level, steps.length - 1)];
     const s = p.stats;
-    const starving = s.availKbps > 0 && s.availKbps < step.needKbps * 0.75;
+    const starving = s.availKbps > 0 && s.availKbps < step.needKbps * 0.8;
     const slow = s.outFps > 0 && s.outFps < step.fps * FPS_SLACK && (s.limit === "cpu" || s.limit === "bandwidth");
-    const pressured = starving || slow || s.loss > 0.08;
+    const pressured = starving || slow || s.loss > 0.05 || (s.rtt && s.rtt > 350);
     p.pressure = pressured ? p.pressure + 1 : 0;
     if (pressured) p.calmSince = 0;
     else if (!p.calmSince) p.calmSince = now;
@@ -1046,7 +1081,7 @@
 
   async function readStats(p) {
     const report = await p.pc.getStats();
-    const s = { rtt: null, loss: 0, availKbps: 0, limit: "none", codec: "", outWidth: 0, outHeight: 0, outFps: 0, inWidth: 0, inHeight: 0, inFps: 0, at: performance.now() };
+    const s = { rtt: null, loss: 0, availKbps: 0, limit: "none", codec: "", outWidth: 0, outHeight: 0, outFps: 0, inWidth: 0, inHeight: 0, inFps: 0, inKbps: 0, outKbps: 0, at: performance.now() };
     let pair = null;
     report.forEach((r) => { if (r.type === "transport" && r.selectedCandidatePairId) pair = report.get(r.selectedCandidatePairId); });
     if (!pair) report.forEach((r) => { if (r.type === "candidate-pair" && r.nominated && r.state === "succeeded") pair = r; });
@@ -1056,11 +1091,12 @@
     }
     // The frame rate comes from the counters over the whole interval: the instant value jumps with every late frame.
     const before = p.counters;
-    const counters = { at: s.at, sent: 0, decoded: 0 };
+    const counters = { at: s.at, sent: 0, decoded: 0, bytesSent: 0, bytesReceived: 0 };
     report.forEach((r) => {
       if (r.kind !== "video") return;
       if (r.type === "outbound-rtp" && r.frameHeight) {
         counters.sent += r.framesSent || 0;
+        counters.bytesSent += r.bytesSent || 0;
         s.outWidth = r.frameWidth;
         s.outHeight = r.frameHeight;
         s.limit = r.qualityLimitationReason || "none";
@@ -1070,6 +1106,9 @@
       if (r.type === "remote-inbound-rtp") s.loss = r.fractionLost || 0;
       if (r.type === "inbound-rtp" && r.frameHeight) {
         counters.decoded += r.framesDecoded || 0;
+        counters.bytesReceived += r.bytesReceived || 0;
+        const codec = report.get(r.codecId);
+        if (!s.codec && codec) s.codec = codec.mimeType.replace("video/", "");
         s.inWidth = r.frameWidth;
         s.inHeight = r.frameHeight;
       }
@@ -1080,11 +1119,13 @@
       if (seconds > 0) {
         s.outFps = Math.max(0, Math.round((counters.sent - before.sent) / seconds));
         s.inFps = Math.max(0, Math.round((counters.decoded - before.decoded) / seconds));
+        s.outKbps = Math.max(0, Math.round(((counters.bytesSent - before.bytesSent) * 8) / (seconds * 1000)));
+        s.inKbps = Math.max(0, Math.round(((counters.bytesReceived - before.bytesReceived) * 8) / (seconds * 1000)));
       }
     }
     // A paused sender keeps reporting its last size: without frames moving, nothing is on the way.
-    if (!s.outFps) { s.outWidth = 0; s.outHeight = 0; }
-    if (!s.inFps) { s.inWidth = 0; s.inHeight = 0; }
+    if (!s.outFps) { s.outWidth = 0; s.outHeight = 0; s.outKbps = 0; }
+    if (!s.inFps) { s.inWidth = 0; s.inHeight = 0; s.inKbps = 0; }
     return s;
   }
 
@@ -1106,7 +1147,8 @@
     const sending = [...peers.values()].map((p) => p.stats).filter((s) => s && s.outHeight);
     if (!sending.length) return null;
     const best = sending.reduce((a, b) => (b.outHeight > a.outHeight ? b : a));
-    return { width: best.outWidth, height: best.outHeight, fps: best.outFps, codec: best.codec };
+    const totalOutKbps = sending.reduce((acc, s) => acc + (s.outKbps || 0), 0);
+    return { width: best.outWidth, height: best.outHeight, fps: best.outFps, codec: best.codec, kbps: best.outKbps, totalKbps: totalOutKbps };
   };
 
   /* One tile per person on air. It carries a picture only while it is open: your own preview, or a share you chose to watch. */
