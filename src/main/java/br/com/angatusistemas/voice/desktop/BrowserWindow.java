@@ -1,5 +1,7 @@
 package br.com.angatusistemas.voice.desktop;
 
+import br.com.angatusistemas.voice.utils.Version;
+
 import br.com.angatusistemas.lib.console.Console;
 import br.com.angatusistemas.voice.services.SessionService;
 import br.com.angatusistemas.voice.services.SettingsService;
@@ -61,7 +63,8 @@ final class BrowserWindow {
             "--disable-features=WebRtcHideLocalIpsWithMdns,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling",
     };
 
-    private final JFrame frame = new JFrame("Angatu Voice");
+    public static final String APP_TITLE = "Angatu Voice v" + Version.current();
+    private final JFrame frame = new JFrame(APP_TITLE);
     private final String origin;
     private CefApp cefApp;
     private CefClient client;

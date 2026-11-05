@@ -132,6 +132,7 @@ public final class NetworkManager {
     public static void delete(String name) {
         DefaultNetworkService.validateOperation(name);
         String clean = name.trim();
+        RadminAutomation.delete(clean);
         for (RadminNetwork net : Saveable.findAll(RadminNetwork.class)) {
             if (net.getName().equalsIgnoreCase(clean)) {
                 net.delete();

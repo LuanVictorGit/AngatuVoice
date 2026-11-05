@@ -89,6 +89,14 @@ public final class RadminAutomation {
         return parseResult(json, "Falha ao sair da rede");
     }
 
+    public static OperationResult delete(String name) {
+        if (System.getProperty("angatu.radmin.ip") != null) {
+            return new OperationResult(true, "Operação em ambiente de teste.");
+        }
+        String json = executeScript(12, "-Action", "delete", "-Name", name);
+        return parseResult(json, "Falha ao excluir rede do Radmin");
+    }
+
     public static void show() {
         executeScript(5, "-Action", "show");
     }

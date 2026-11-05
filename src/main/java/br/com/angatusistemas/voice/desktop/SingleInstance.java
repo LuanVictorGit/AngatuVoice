@@ -60,7 +60,10 @@ final class SingleInstance {
     }
 
     private static void raiseByTitle() {
-        HWND window = User32.INSTANCE.FindWindow(null, TITLE);
+        HWND window = User32.INSTANCE.FindWindow(null, BrowserWindow.APP_TITLE);
+        if (window == null) {
+            window = User32.INSTANCE.FindWindow(null, TITLE);
+        }
         if (window != null) {
             User32.INSTANCE.ShowWindow(window, SW_RESTORE);
             User32.INSTANCE.SetForegroundWindow(window);

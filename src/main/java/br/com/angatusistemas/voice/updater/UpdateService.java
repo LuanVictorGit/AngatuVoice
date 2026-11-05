@@ -101,7 +101,8 @@ public final class UpdateService {
             throw new IllegalStateException("no update is ready to install");
         }
         if (inCall()) {
-            throw new IllegalStateException("a call is in progress");
+            String me = PeerNetwork.me() == null ? "" : PeerNetwork.me().id();
+            CallService.dropPeer(me);
         }
         if (BUSY.compareAndSet(false, true)) {
             Task.runAsync(() -> runInstall(manifest, zip));

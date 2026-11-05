@@ -36,6 +36,7 @@ public final class AppShell {
         Notifications.bind(Tray::notify, AppShell::focused);
         Notifications.bindRinging(CallPopup::update);
         Hotkeys.start();
+        RadminToastWatch.start();
         BrowserWindow created = new BrowserWindow(port);
         window = created;
         created.open(SettingsService.flag("startMinimized"));

@@ -146,7 +146,7 @@ public final class SettingsService {
         m.put("overlay.transparent", new Rule("false", BOOL));
         m.put("overlay.corner", new Rule("tr", oneOf("tl", "tr", "bl", "br")));
         m.put("sounds.enabled", new Rule("true", BOOL));
-        m.put("sounds.volume", new Rule("60", range(0, 100)));
+        m.put("sounds.volume", new Rule("100", range(0, 100)));
         m.put("sounds.ring", new Rule("true", BOOL));
         m.put("ui.lastChat", new Rule("radmin", v -> v.length() <= 80));
         m.put("ui.trayHintShown", new Rule("false", BOOL));

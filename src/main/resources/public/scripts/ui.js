@@ -94,6 +94,7 @@ AV.toast = function (message, kind) {
 };
 
 AV.fail = function (error) {
+  if (AV.sound) AV.sound("error");
   AV.toast(error && error.message ? error.message : "Algo deu errado.", "error");
 };
 
@@ -194,52 +195,18 @@ AV.cueContext = (function () {
   };
 })();
 
-/* The sounds of a call: the ringtone is a song streamed by one audio element, and the softer signals are synthesised into a looping buffer. All stop the instant they are told to. */
+/* The sounds of a call: the incoming ringtone is the preserved song, and other call signals use contextual MP3 audio. */
 AV.ringtone = (function () {
   const SONG = "/assets/ringtone.mp3";
   const PREVIEW_MS = 6000;
-  const PATTERNS = {
-    waiting: { seconds: 4, gain: 0.45, notes: [[830.61, 0, 0.25], [987.77, 0.2, 0.35]] },
-    outgoing: { seconds: 3.4, gain: 0.5, notes: [[440, 0, 1.1], [554.37, 0, 1.1]] },
+  const TONES = {
+    waiting: "/assets/audio/calls/call-waiting.mp3",
+    outgoing: "/assets/audio/calls/call-waiting.mp3",
+    busy: "/assets/audio/calls/call-busy.mp3",
   };
   let playing = null;
   let song = null;
-
-  function render(ctx, pattern) {
-    const buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * pattern.seconds), ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (const [freq, at, length] of pattern.notes) {
-      const start = Math.floor(at * ctx.sampleRate);
-      const samples = Math.floor(length * ctx.sampleRate);
-      for (let i = 0; i < samples && start + i < data.length; i++) {
-        const t = i / ctx.sampleRate;
-        const envelope = Math.min(1, t / 0.012) * Math.exp(-3.2 * t / length);
-        const tone = 0.72 * Math.sin(2 * Math.PI * freq * t) + 0.2 * Math.sin(4 * Math.PI * freq * t) + 0.08 * Math.sin(6 * Math.PI * freq * t);
-        data[start + i] += 0.33 * envelope * tone;
-      }
-    }
-    return buffer;
-  }
-
-  function playPattern(kind) {
-    const ctx = AV.cueContext();
-    const pattern = PATTERNS[kind];
-    const source = ctx.createBufferSource();
-    source.buffer = render(ctx, pattern);
-    source.loop = true;
-    const gain = ctx.createGain();
-    gain.gain.value = pattern.gain * Number(AV.state.settings["sounds.volume"]) / 100;
-    source.connect(gain);
-    gain.connect(ctx.destination);
-    source.start();
-    playing = {
-      kind,
-      stop() {
-        gain.gain.setTargetAtTime(0, ctx.currentTime, 0.008);
-        source.stop(ctx.currentTime + 0.04);
-      },
-    };
-  }
+  let toneAudio = null;
 
   function playSong() {
     if (!song) {
@@ -247,12 +214,11 @@ AV.ringtone = (function () {
       song.loop = true;
       song.preload = "auto";
     }
-    const settings = AV.state.settings;
+    const settings = (AV.state && AV.state.settings) || {};
     if (song.setSinkId) song.setSinkId(settings["audio.output"] || "").catch(() => {});
-    song.volume = Number(settings["sounds.volume"]) / 100;
+    song.volume = Number(settings["sounds.volume"] ?? 100) / 100;
     song.currentTime = 0;
     song.play().catch((e) => {
-      // Answering at once pauses the song before it starts, and that is not a failure.
       if (e.name !== "AbortError") console.warn("ringtone not played", e);
     });
     playing = {
@@ -263,9 +229,31 @@ AV.ringtone = (function () {
     };
   }
 
+  function playTone(kind) {
+    const url = TONES[kind] || TONES.waiting;
+    if (!toneAudio) {
+      toneAudio = new Audio();
+    }
+    const settings = (AV.state && AV.state.settings) || {};
+    if (toneAudio.setSinkId) toneAudio.setSinkId(settings["audio.output"] || "").catch(() => {});
+    toneAudio.src = url;
+    toneAudio.loop = (kind !== "busy");
+    toneAudio.volume = 0.55 * (Number(settings["sounds.volume"] ?? 100) / 100);
+    toneAudio.currentTime = 0;
+    toneAudio.play().catch((e) => {
+      if (e.name !== "AbortError") console.warn("tone not played", e);
+    });
+    playing = {
+      kind,
+      stop() {
+        toneAudio.pause();
+      },
+    };
+  }
+
   function play(kind) {
     if (kind === "incoming") playSong();
-    else playPattern(kind);
+    else playTone(kind);
   }
 
   function stop(kind) {
@@ -278,7 +266,7 @@ AV.ringtone = (function () {
   function start(kind) {
     if (playing && playing.kind === kind) return;
     stop();
-    if (AV.state.settings["sounds.ring"] === "true") play(kind);
+    if (AV.state && AV.state.settings && AV.state.settings["sounds.ring"] === "true") play(kind);
   }
 
   function preview() {
@@ -290,38 +278,69 @@ AV.ringtone = (function () {
   return { start, stop, preview, active: () => (playing ? playing.kind : null) };
 })();
 
-/* Short interface cues, synthesised so nothing is downloaded or cached. */
+/* Standardized, discrete interface sound effects using CC0 audio files. */
 AV.sound = (function () {
-  const CUES = {
-    mute: [[740, 0, 0.07], [494, 0.08, 0.1]],
-    unmute: [[494, 0, 0.07], [740, 0.08, 0.1]],
-    deafen: [[587, 0, 0.08], [440, 0.09, 0.08], [330, 0.18, 0.12]],
-    undeafen: [[330, 0, 0.08], [440, 0.09, 0.08], [587, 0.18, 0.12]],
-    join: [[523, 0, 0.09], [784, 0.1, 0.16]],
-    leave: [[784, 0, 0.09], [523, 0.1, 0.16]],
-    peerJoin: [[660, 0, 0.12]],
-    peerLeave: [[440, 0, 0.12]],
-    message: [[880, 0, 0.05], [1175, 0.06, 0.08]],
-    streamStart: [[587, 0, 0.08], [880, 0.09, 0.08], [1175, 0.18, 0.14]],
+  const SOUND_FILES = {
+    mute: "/assets/audio/interface/mute.mp3",
+    unmute: "/assets/audio/interface/unmute.mp3",
+    deafen: "/assets/audio/interface/deafen.mp3",
+    undeafen: "/assets/audio/interface/undeafen.mp3",
+    error: "/assets/audio/interface/error.mp3",
+    join: "/assets/audio/calls/call-joined.mp3",
+    leave: "/assets/audio/calls/call-ended.mp3",
+    peerJoin: "/assets/audio/calls/peer-joined.mp3",
+    peerLeave: "/assets/audio/calls/peer-left.mp3",
+    message: "/assets/audio/notifications/message-received.mp3",
+    streamStart: "/assets/audio/notifications/stream-started.mp3",
   };
+
+  const bufferCache = new Map();
+
+  async function load(ctx, url) {
+    if (bufferCache.has(url)) return bufferCache.get(url);
+    try {
+      const resp = await fetch(url);
+      const data = await resp.arrayBuffer();
+      const decoded = await ctx.decodeAudioData(data);
+      bufferCache.set(url, decoded);
+      return decoded;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Preload sound files in the background once the page has loaded
+  window.addEventListener("DOMContentLoaded", () => {
+    setTimeout(() => {
+      try {
+        const ctx = AV.cueContext();
+        Object.values(SOUND_FILES).forEach((url) => load(ctx, url));
+      } catch (ignored) {}
+    }, 1500);
+  });
+
   return function (name) {
     const s = AV.state && AV.state.settings;
-    if (!s || s["sounds.enabled"] !== "true" || !CUES[name]) return;
+    if (!s || s["sounds.enabled"] !== "true" || !SOUND_FILES[name]) return;
     const ctx = AV.cueContext();
-    const volume = 0.22 * Number(s["sounds.volume"]) / 100;
-    const now = ctx.currentTime + 0.01;
-    for (const [freq, at, length] of CUES[name]) {
-      const osc = ctx.createOscillator();
+    const vol = (Number(s["sounds.volume"] ?? 100) / 100);
+    const url = SOUND_FILES[name];
+
+    const playBuf = (buf) => {
+      if (!buf) return;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
       const gain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0, now + at);
-      gain.gain.linearRampToValueAtTime(volume, now + at + 0.012);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + at + length);
-      osc.connect(gain);
+      gain.gain.value = vol;
+      src.connect(gain);
       gain.connect(ctx.destination);
-      osc.start(now + at);
-      osc.stop(now + at + length + 0.02);
+      src.start();
+    };
+
+    if (bufferCache.has(url)) {
+      playBuf(bufferCache.get(url));
+    } else {
+      load(ctx, url).then(playBuf);
     }
   };
 })();

@@ -393,11 +393,12 @@
                 }
               } }, "Sair") :
               E("button", { class: "btn btn-sm", onclick: () => openJoinModal(n.name) }, "Conectar"),
-            E("button", { class: "btn btn-sm btn-ghost text-red-500", "aria-label": "Remover do histórico", onclick: async () => {
-              if (await AV.confirm("Remover " + n.name + " do histórico?", "A rede será desvinculada do AngatuVoice.", "Remover")) {
+            E("button", { class: "btn btn-sm btn-ghost text-red-500", "aria-label": "Excluir rede", title: "Excluir rede", onclick: async () => {
+              if (await AV.confirm("Excluir rede " + n.name + "?", "A rede será excluída do Radmin VPN e removida do AngatuVoice.", "Excluir")) {
                 try {
+                  AV.toast("Excluindo rede…", "ok");
                   await AV.api("DELETE", "/api/networks/" + encodeURIComponent(n.name));
-                  AV.toast("Rede removida.", "ok");
+                  AV.toast("Rede excluída com sucesso.", "ok");
                   loadNetworks();
                 } catch (err) { AV.fail(err); }
               }

@@ -45,6 +45,9 @@ public final class RadminService {
         }
         misses = 0;
         CURRENT.set(next);
+        if (next.installed()) {
+            ensureNotificationsDisabled();
+        }
         return next;
     }
 
@@ -120,5 +123,15 @@ public final class RadminService {
     private record Adapter(String name, String ip, String broadcast, int prefix) {
 
         static final Adapter NONE = new Adapter("", null, "", 0);
+    }
+
+    public static void ensureNotificationsDisabled() {
+        Thread.ofVirtual().start(() -> {
+            try {
+                Processes.run(5, "reg", "add", "HKCU\\Software\\Famatech\\Radmin VPN\\ui\\Chat", "/v", "Notifications", "/t", "REG_SZ", "/d", "false", "/f");
+                Processes.run(5, "reg", "add", "HKCU\\Software\\Famatech\\Radmin VPN\\ui\\Chat", "/v", "NotificationSound", "/t", "REG_SZ", "/d", "false", "/f");
+            } catch (Exception ignored) {
+            }
+        });
     }
 }

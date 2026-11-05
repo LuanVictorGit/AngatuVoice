@@ -1,12 +1,12 @@
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet("list", "join", "create", "leave", "show")]
+    [ValidateSet("list", "join", "create", "leave", "delete", "show")]
     [string]$Action,
     [string]$Name = "",
     [string]$Password = ""
 )
 
-Add-Type -ReferencedAssemblies "UIAutomationClient", "UIAutomationTypes" @"
+Add-Type -ReferencedAssemblies "UIAutomationClient", "UIAutomationTypes", "WindowsBase" @"
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -20,6 +20,11 @@ public class RadminAutomationCore {
     [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr h);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, int dwExtraInfo);
+
+    private const int MOUSEEVENTF_RIGHTDOWN = 0x08;
+    private const int MOUSEEVENTF_RIGHTUP = 0x10;
 
     public class StatusInfo {
         public bool installed;
@@ -293,17 +298,18 @@ public class RadminAutomationCore {
         return res;
     }
 
-    public static ActionResult Leave(int pid, string name) {
+    public static ActionResult LeaveOrDelete(int pid, string name, bool isDelete) {
         var res = new ActionResult();
         IntPtr hDesk = OpenDesktop("Default", 0, false, 0x1FF);
         Thread t = new Thread(() => {
             SetThreadDesktop(hDesk);
+            AutomationElement root = AutomationElement.RootElement;
             AutomationElement w = FindMainWindow(pid);
             if (w == null) { res.ok = false; res.message = "Radmin não está aberto."; return; }
 
             ShowWindow((IntPtr)w.Current.NativeWindowHandle, 9);
             SetForegroundWindow((IntPtr)w.Current.NativeWindowHandle);
-            Thread.Sleep(200);
+            Thread.Sleep(300);
 
             AutomationElementCollection allDesc = w.FindAll(TreeScope.Descendants, Condition.TrueCondition);
             AutomationElement targetHeader = null;
@@ -321,36 +327,65 @@ public class RadminAutomationCore {
                 return;
             }
 
-            // Click AdvancedDots in same parent container
-            AutomationElement container = TreeWalker.RawViewWalker.GetParent(targetHeader);
-            if (container != null) {
-                AutomationElement dots = container.FindFirst(TreeScope.Children, 
-                    new PropertyCondition(AutomationElement.AutomationIdProperty, 
-                    "MainWindow.centralWidget.mainContentWidget.stackedWidget.pageNetworksTree.scrollArea.qt_scrollarea_viewport.scrollAreaWidgetContents.CNetworkWidget.NetworkWidget.AdvancedDots"));
-                if (dots != null) {
-                    ((InvokePattern)dots.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
-                    Thread.Sleep(300);
+            // Right-click targetHeader to open context menu
+            System.Windows.Rect rect = targetHeader.Current.BoundingRectangle;
+            int cx = (int)(rect.Left + rect.Width / 2);
+            int cy = (int)(rect.Top + rect.Height / 2);
+            SetCursorPos(cx, cy);
+            Thread.Sleep(60);
+            mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0);
+            Thread.Sleep(60);
+            mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0);
+            Thread.Sleep(400);
 
-                    // Look for context menu
-                    AutomationElement root = AutomationElement.RootElement;
-                    AutomationElementCollection menus = root.FindAll(TreeScope.Children, new PropertyCondition(AutomationElement.ProcessIdProperty, pid));
-                    foreach (AutomationElement m in menus) {
-                        if (m.Current.ClassName.Contains("Menu")) {
-                            AutomationElement leaveItem = m.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "Sair da rede"));
-                            if (leaveItem != null) {
-                                ((InvokePattern)leaveItem.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
-                                Thread.Sleep(500);
-                                res.ok = true;
-                                res.message = "Saída da rede solicitada com sucesso.";
-                                return;
+            AutomationElementCollection desktopWins = root.FindAll(TreeScope.Children, new PropertyCondition(AutomationElement.ProcessIdProperty, pid));
+            AutomationElement actionItem = null;
+            foreach (AutomationElement dw in desktopWins) {
+                if (dw.Current.ClassName.Contains("Menu")) {
+                    AutomationElementCollection items = dw.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.MenuItem));
+                    foreach (AutomationElement it in items) {
+                        string n = it.Current.Name.ToLower();
+                        if (isDelete) {
+                            if (n.Contains("excluir") || n.Contains("delete") || n.Contains("sair") || n.Contains("leave")) {
+                                actionItem = it;
+                                break;
+                            }
+                        } else {
+                            if (n.Contains("sair") || n.Contains("leave") || n.Contains("excluir") || n.Contains("delete")) {
+                                actionItem = it;
+                                break;
                             }
                         }
                     }
                 }
+                if (actionItem != null) break;
             }
 
-            res.ok = false;
-            res.message = "Não foi possível acionar a opção Sair da rede.";
+            if (actionItem != null) {
+                ((InvokePattern)actionItem.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+                Thread.Sleep(500);
+
+                // Handle any confirmation popup (QMessageBox)
+                AutomationElementCollection postWins = root.FindAll(TreeScope.Children, new PropertyCondition(AutomationElement.ProcessIdProperty, pid));
+                foreach (AutomationElement pw in postWins) {
+                    if (pw.Current.ClassName.Contains("Dialog") || pw.Current.ClassName.Contains("Message") || pw.Current.Name.Contains("Atenção") || pw.Current.Name.Contains("Confirm")) {
+                        AutomationElementCollection btns = pw.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button));
+                        foreach (AutomationElement b in btns) {
+                            string bn = b.Current.Name.ToLower();
+                            if (bn.Contains("sim") || bn.Contains("yes") || bn.Contains("ok") || bn.Contains("excluir")) {
+                                ((InvokePattern)b.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+                                Thread.Sleep(300);
+                                break;
+                            }
+                        }
+                    }
+                }
+                res.ok = true;
+                res.message = isDelete ? "Rede excluída com sucesso." : "Saída da rede concluída com sucesso.";
+            } else {
+                res.ok = false;
+                res.message = "Opção de menu para sair ou excluir a rede não encontrada.";
+            }
         });
         t.SetApartmentState(ApartmentState.STA);
         t.Start();
@@ -379,7 +414,6 @@ $proc = Get-RadminProcess
 switch ($Action) {
     "list" {
         if (-not $proc) {
-            # Try reading registry as fallback
             $known = @()
             Get-Item -Path "HKCU:\Software\Famatech\Radmin VPN\ui\networks\*" -ErrorAction SilentlyContinue | ForEach-Object { $known += $_.PSChildName }
             [PSCustomObject]@{
@@ -396,7 +430,6 @@ switch ($Action) {
         }
         $r = [RadminAutomationCore]::QueryStatus($proc.Id)
         if ($r.error -eq "MainWindow not found") {
-            # Window was minimized/hidden in tray before initialization. Bring it up and retry.
             $exePath = "C:\Program Files (x86)\Radmin VPN\RvRvpnGui.exe"
             if (Test-Path $exePath) {
                 Start-Process $exePath -ArgumentList "/show"
@@ -453,7 +486,15 @@ switch ($Action) {
             [PSCustomObject]@{ ok = $false; message = "Radmin VPN não está em execução." } | ConvertTo-Json -Compress
             exit 0
         }
-        $res = [RadminAutomationCore]::Leave($proc.Id, $Name)
+        $res = [RadminAutomationCore]::LeaveOrDelete($proc.Id, $Name, $false)
+        [PSCustomObject]@{ ok = $res.ok; message = $res.message } | ConvertTo-Json -Compress
+    }
+    "delete" {
+        if (-not $proc) {
+            [PSCustomObject]@{ ok = $false; message = "Radmin VPN não está em execução." } | ConvertTo-Json -Compress
+            exit 0
+        }
+        $res = [RadminAutomationCore]::LeaveOrDelete($proc.Id, $Name, $true)
         [PSCustomObject]@{ ok = $res.ok; message = $res.message } | ConvertTo-Json -Compress
     }
     "show" {

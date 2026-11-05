@@ -7,6 +7,19 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.5.2] - 2026-11-05
+
+### Adicionado
+- Substituição e padronização completa de todos os efeitos sonoros por arquivos MP3 livres sob licença CC0 1.0 Universal / Domínio Público, catalogados e documentados em `assets/audio/LICENSES.md`, preservando intacta a música de chamada principal.
+- Exibição da versão do sistema no título da janela principal (`Angatu Voice vX.Y.Z`).
+- Bloqueio estrito de interface e encerramento imediato de chamadas ativas em versões desatualizadas com atualização automática em segundo plano.
+- Monitor em segundo plano (`RadminToastWatch`) para fechar automaticamente notificações travadas do Radmin VPN (`CToastContainer` / popups Qt).
+
+### Corrigido
+- Ajuste do volume padrão dos sons e toque de chamada para iniciar em 100%.
+- Operações de criar, entrar, sair e excluir redes do Radmin VPN aprimoradas com automação nativa via menu de contexto do Windows e confirmações de diálogo.
+- Desativação proativa de notificações nativas de chat do Radmin VPN no registro do Windows para evitar popups indesejados.
+
 ## [1.5.1] - 2026-11-05
 
 ### Adicionado

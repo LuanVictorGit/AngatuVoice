@@ -925,11 +925,91 @@
     }
   }
 
+  function enforceUpdateStatus(u) {
+    if (!u) return;
+    const isOutdated = u.available && u.available !== u.current &&
+      (u.state === "available" || u.state === "downloading" || u.state === "ready" || u.state === "installing" || u.state === "restarting");
+
+    let blocker = document.getElementById("outdated-blocker");
+    if (!isOutdated) {
+      if (blocker) blocker.remove();
+      return;
+    }
+
+    // Drop from any ongoing call immediately
+    if (rtc && rtc.room) {
+      rtc.leave();
+    }
+    if (AV.ringtone) AV.ringtone.stop();
+
+    if (!blocker) {
+      blocker = document.createElement("div");
+      blocker.id = "outdated-blocker";
+      blocker.className = "fixed inset-0 z-[999999] bg-[#0f0e0d]/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center select-none";
+      document.body.appendChild(blocker);
+    }
+
+    const isReady = u.state === "ready" || u.canInstall;
+    const isDownloading = u.state === "downloading";
+    const progress = Math.round((u.progress || 0) * 100);
+
+    blocker.innerHTML = `
+      <div class="max-w-md w-full bg-[#181614] border border-[#2e2a25] rounded-2xl p-8 shadow-2xl flex flex-col items-center">
+        <div class="w-16 h-16 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center mb-4">
+          <svg class="w-8 h-8 animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        </div>
+        <h2 class="text-xl font-bold text-[#ece7e0] mb-2">Atualização Obrigatória</h2>
+        <p class="text-sm text-[#a29a90] mb-6">
+          Sua versão do Angatu Voice está desatualizada (<strong>v${u.current}</strong>). Para garantir a compatibilidade e a comunicação com todos os participantes, a atualização para a <strong>v${u.available}</strong> é obrigatória.
+        </p>
+        ${isDownloading ? `
+          <div class="w-full mb-4">
+            <div class="flex justify-between text-xs text-[#a29a90] mb-1">
+              <span>Baixando atualização…</span>
+              <span>${progress}%</span>
+            </div>
+            <div class="w-full bg-[#26231f] rounded-full h-2 overflow-hidden">
+              <div class="bg-amber-500 h-2 rounded-full transition-all duration-300" style="width: ${progress}%"></div>
+            </div>
+          </div>
+        ` : ''}
+        ${isReady ? `
+          <p class="text-xs text-emerald-400 font-semibold mb-4">Atualização pronta para instalação!</p>
+          <button id="btn-force-restart" class="w-full py-3 px-4 rounded-xl font-semibold bg-amber-500 hover:bg-amber-400 text-black shadow-lg transition cursor-pointer">
+            Reiniciar agora para atualizar
+          </button>
+        ` : `
+          <div class="flex items-center gap-2 text-xs text-[#a29a90]">
+            <svg class="w-4 h-4 animate-spin text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10" stroke-width="4" stroke="currentColor" stroke-opacity="0.2"></circle><path d="M12 2a10 10 0 0 1 10 10" stroke-width="4"></path></svg>
+            <span>Atualizando automaticamente em segundo plano…</span>
+          </div>
+        `}
+      </div>
+    `;
+
+    const restartBtn = blocker.querySelector("#btn-force-restart");
+    if (restartBtn) {
+      restartBtn.onclick = () => {
+        restartBtn.disabled = true;
+        restartBtn.innerText = "Reiniciando…";
+        AV.api("POST", "/api/update/install").catch(AV.fail);
+      };
+    }
+
+    if (isReady && !blocker.dataset.autoRestartTriggered) {
+      blocker.dataset.autoRestartTriggered = "true";
+      setTimeout(() => {
+        AV.api("POST", "/api/update/install").catch(() => {});
+      }, 2500);
+    }
+  }
+
   function onUpdate(update) {
     const sameState = lastUpdateState === update.state;
     lastUpdateState = update.state;
     AV.state.update = update;
     renderBanners();
+    enforceUpdateStatus(update);
     if (sameState && update.state === "downloading") {
       const bar = document.querySelector(".progress > i");
       if (bar) bar.style.width = Math.round(update.progress * 100) + "%";
@@ -989,8 +1069,12 @@
   async function init() {
     try {
       await AV.refresh();
+      if (AV.state && AV.state.version) {
+        document.title = "Angatu Voice v" + AV.state.version;
+      }
       wire();
       lastUpdateState = AV.state.update.state;
+      enforceUpdateStatus(AV.state.update);
       const last = setting("ui.lastChat");
       const valid = last === "radmin" || groupOf(last) || (isDm(last) && peerOf(last.slice(3)));
       await selectChat(valid ? last : "radmin");
