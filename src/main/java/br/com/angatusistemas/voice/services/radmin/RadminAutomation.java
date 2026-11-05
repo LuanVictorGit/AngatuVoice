@@ -30,6 +30,11 @@ public final class RadminAutomation {
     }
 
     public static RadminStatus query() {
+        if (System.getProperty("angatu.radmin.ip") != null) {
+            String testIp = System.getProperty("angatu.radmin.ip");
+            return new RadminStatus(true, true, "node", testIp, "Connected", Collections.singletonList(NetworkDefaults.DEFAULT_NETWORK_NAME), Collections.emptyList(), null);
+        }
+
         String json = executeScript(10, "-Action", "list");
         if (json.isBlank()) {
             return new RadminStatus(false, false, "", "", "Offline", Collections.emptyList(), Collections.emptyList(), "Script execution failed");
@@ -61,16 +66,25 @@ public final class RadminAutomation {
     }
 
     public static OperationResult join(String name, String password) {
+        if (System.getProperty("angatu.radmin.ip") != null) {
+            return new OperationResult(true, "Operação em ambiente de teste.");
+        }
         String json = executeScript(15, "-Action", "join", "-Name", name, "-Password", password);
         return parseResult(json, "Falha ao entrar na rede");
     }
 
     public static OperationResult create(String name, String password) {
+        if (System.getProperty("angatu.radmin.ip") != null) {
+            return new OperationResult(true, "Operação em ambiente de teste.");
+        }
         String json = executeScript(15, "-Action", "create", "-Name", name, "-Password", password);
         return parseResult(json, "Falha ao criar rede");
     }
 
     public static OperationResult leave(String name) {
+        if (System.getProperty("angatu.radmin.ip") != null) {
+            return new OperationResult(true, "Operação em ambiente de teste.");
+        }
         String json = executeScript(12, "-Action", "leave", "-Name", name);
         return parseResult(json, "Falha ao sair da rede");
     }
@@ -97,8 +111,10 @@ public final class RadminAutomation {
         if (cachedScriptPath != null && Files.exists(cachedScriptPath)) {
             return cachedScriptPath;
         }
-        Path dir = AppDirs.data().resolve("scripts");
-        AppDirs.ensure(dir);
+        Path dir = Path.of(System.getProperty("java.io.tmpdir"), "angatu-radmin-scripts");
+        try {
+            Files.createDirectories(dir);
+        } catch (IOException ignored) {}
         Path scriptFile = dir.resolve(SCRIPT_NAME);
 
         try (InputStream in = RadminAutomation.class.getResourceAsStream("/scripts/" + SCRIPT_NAME)) {

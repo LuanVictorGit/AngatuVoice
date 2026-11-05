@@ -90,6 +90,11 @@ public final class DefaultNetworkService {
     }
 
     public static synchronized void tick() {
+        if (System.getProperty("angatu.radmin.ip") != null) {
+            transition(State.CONNECTED, "Conectado (ambiente de teste).");
+            return;
+        }
+
         RadminService.Status radminStatus = RadminService.current();
         if (!radminStatus.installed()) {
             transition(State.NOT_INSTALLED, "O Radmin VPN não está instalado no sistema.");
