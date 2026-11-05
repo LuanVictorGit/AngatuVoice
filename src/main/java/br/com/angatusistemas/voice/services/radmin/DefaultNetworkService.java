@@ -5,15 +5,14 @@ import br.com.angatusistemas.lib.database.Saveable;
 import br.com.angatusistemas.voice.entities.RadminNetwork;
 import br.com.angatusistemas.voice.services.LiveHub;
 import br.com.angatusistemas.voice.services.RadminService;
-import br.com.angatusistemas.voice.services.SettingsService;
 import java.time.Instant;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Manages the mandatory default network "AngatuVoice", guaranteeing automatic connection,
- * controlled bootstrap, auto-recovery on network drops, and protection against removal.
+ * Manages the mandatory default network "AngatuVoice", guaranteeing universal automatic creation
+ * and joining for all participants, auto-recovery on network drops, and protection against removal.
  *
  * @author Angatu Sistemas
  */
@@ -65,10 +64,6 @@ public final class DefaultNetworkService {
         return CURRENT_STATE.get() == State.CONNECTED;
     }
 
-    public static boolean isBootstrapMaster() {
-        return Boolean.getBoolean("angatu.bootstrap.master") || SettingsService.flag("radmin.bootstrap.master");
-    }
-
     public static void ensureRecord() {
         if (!Saveable.exists(RadminNetwork.class, ID)) {
             RadminNetwork def = new RadminNetwork();
@@ -83,13 +78,21 @@ public final class DefaultNetworkService {
         }
     }
 
-    public static synchronized void reconnect() {
+    public static void reconnect() {
         nextAttemptTime = 0;
         RETRY_COUNT.set(0);
-        tick();
+        Thread.startVirtualThread(DefaultNetworkService::tick);
     }
 
     public static synchronized void tick() {
+        try {
+            tickInternal();
+        } catch (Throwable t) {
+            Console.warn("Erro ao atualizar status da rede padrão: %s", t.getMessage());
+        }
+    }
+
+    private static void tickInternal() {
         if (System.getProperty("angatu.radmin.ip") != null) {
             transition(State.CONNECTED, "Conectado (ambiente de teste).");
             return;
@@ -124,29 +127,32 @@ public final class DefaultNetworkService {
         State nextState = previous == State.CONNECTED ? State.RECONNECTING : State.CONNECTING;
         transition(nextState, "Tentando conectar à rede " + NetworkDefaults.DEFAULT_NETWORK_NAME + "…");
 
-        boolean master = isBootstrapMaster();
-        if (master) {
-            Console.log("Máquina autorizada para bootstrap: criando ou ingressando na rede %s", NetworkDefaults.DEFAULT_NETWORK_NAME);
-            RadminAutomation.OperationResult createRes = RadminAutomation.create(
-                    NetworkDefaults.DEFAULT_NETWORK_NAME,
-                    NetworkDefaults.DEFAULT_NETWORK_PASSWORD);
+        // Universal Join-or-Create:
+        // 1. Try to join
+        RadminAutomation.OperationResult joinRes = RadminAutomation.join(
+                NetworkDefaults.DEFAULT_NETWORK_NAME,
+                NetworkDefaults.DEFAULT_NETWORK_PASSWORD);
 
-            if (!createRes.ok()) {
-                // If it already exists, join it
-                RadminAutomation.join(NetworkDefaults.DEFAULT_NETWORK_NAME, NetworkDefaults.DEFAULT_NETWORK_PASSWORD);
-            }
-        } else {
-            RadminAutomation.OperationResult joinRes = RadminAutomation.join(
-                    NetworkDefaults.DEFAULT_NETWORK_NAME,
-                    NetworkDefaults.DEFAULT_NETWORK_PASSWORD);
+        if (!joinRes.ok()) {
+            String joinMsg = joinRes.message().toLowerCase();
+            Console.log("Tentativa de ingresso na rede padrão retornou: %s", joinRes.message());
+            // If the network does not exist or was not found, attempt automatic creation
+            if (joinMsg.contains("não encontrad") || joinMsg.contains("not found")
+                    || joinMsg.contains("inválid") || joinMsg.contains("tempo limite")
+                    || joinMsg.contains("incorret")) {
+                Console.log("Rede padrão não encontrada ou inacessível. Criando rede automaticamente: %s", NetworkDefaults.DEFAULT_NETWORK_NAME);
+                RadminAutomation.OperationResult createRes = RadminAutomation.create(
+                        NetworkDefaults.DEFAULT_NETWORK_NAME,
+                        NetworkDefaults.DEFAULT_NETWORK_PASSWORD);
 
-            if (!joinRes.ok()) {
-                String msg = joinRes.message().toLowerCase();
-                if (msg.contains("não encontrad") || msg.contains("not found")) {
-                    transition(State.AWAITING_BOOTSTRAP, "Rede AngatuVoice ainda não inicializada pela máquina administradora.");
-                    scheduleRetry();
-                    updateRecord("awaiting_bootstrap");
-                    return;
+                if (!createRes.ok()) {
+                    String createMsg = createRes.message().toLowerCase();
+                    if (createMsg.contains("já existe") || createMsg.contains("already exists")) {
+                        // Concurrent creation by another peer, join immediately
+                        RadminAutomation.join(
+                                NetworkDefaults.DEFAULT_NETWORK_NAME,
+                                NetworkDefaults.DEFAULT_NETWORK_PASSWORD);
+                    }
                 }
             }
         }

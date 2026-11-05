@@ -28,9 +28,6 @@ public final class JoinNetworkRoute extends Route {
             throw new BadRequestResponse("Nome da rede obrigatório.");
         }
         RadminAutomation.OperationResult res = NetworkManager.join(body.name(), body.password());
-        if (!res.ok()) {
-            ctx.status(StatusCode.BAD_REQUEST.code());
-        }
         ctx.json(GsonAPI.get().toJson(Map.of("ok", res.ok(), "message", res.message())));
     }
 

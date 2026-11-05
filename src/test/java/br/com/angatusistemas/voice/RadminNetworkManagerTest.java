@@ -160,4 +160,12 @@ class RadminNetworkManagerTest {
 
         assertEquals(400, invalidCreate.statusCode());
     }
+
+    @Test
+    void defaultNetworkAutoConnectAndTickNeverThrow() {
+        // Must never throw IllegalArgumentException or unhandled exceptions
+        DefaultNetworkService.reconnect();
+        DefaultNetworkService.tick();
+        assertTrue(DefaultNetworkService.isConnected());
+    }
 }

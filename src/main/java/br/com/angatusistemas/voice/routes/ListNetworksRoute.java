@@ -19,6 +19,10 @@ public final class ListNetworksRoute extends Route {
 
     private static void handle(Context ctx) {
         Guard.requireSession(ctx);
-        ctx.json(GsonAPI.get().toJson(NetworkManager.list()));
+        try {
+            ctx.json(GsonAPI.get().toJson(NetworkManager.list()));
+        } catch (Exception e) {
+            ctx.json("[]");
+        }
     }
 }

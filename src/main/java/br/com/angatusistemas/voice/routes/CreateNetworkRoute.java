@@ -32,12 +32,9 @@ public final class CreateNetworkRoute extends Route {
         }
         try {
             RadminAutomation.OperationResult res = NetworkManager.create(body.name(), body.password());
-            if (!res.ok()) {
-                ctx.status(StatusCode.BAD_REQUEST.code());
-            }
             ctx.json(GsonAPI.get().toJson(Map.of("ok", res.ok(), "message", res.message())));
         } catch (UnsupportedOperationException e) {
-            throw new BadRequestResponse(e.getMessage());
+            ctx.json(GsonAPI.get().toJson(Map.of("ok", false, "message", e.getMessage())));
         }
     }
 

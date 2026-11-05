@@ -103,10 +103,8 @@ public final class NetworkManager {
         }
         String cleanName = name.trim();
         if (NetworkDefaults.isProtected(cleanName)) {
-            if (!DefaultNetworkService.isBootstrapMaster()) {
-                throw new UnsupportedOperationException("A criação da rede padrão AngatuVoice é reservada à máquina administradora.");
-            }
-            return RadminAutomation.create(cleanName, password);
+            DefaultNetworkService.reconnect();
+            return new RadminAutomation.OperationResult(true, "A rede AngatuVoice é gerenciada automaticamente pelo sistema.");
         }
 
         if (password == null || password.length() < 6) {

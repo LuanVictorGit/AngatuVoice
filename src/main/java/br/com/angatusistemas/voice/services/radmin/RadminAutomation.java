@@ -177,10 +177,17 @@ public final class RadminAutomation {
                                List<String> networks, List<String> knownNetworks, String error) {
 
         public boolean isConnectedTo(String networkName) {
-            if (networkName == null || networks == null) {
+            if (networkName == null) {
                 return false;
             }
-            return networks.stream().anyMatch(n -> n.equalsIgnoreCase(networkName.trim()));
+            String target = networkName.trim();
+            if (networks != null && networks.stream().anyMatch(n -> n.equalsIgnoreCase(target))) {
+                return true;
+            }
+            if (knownNetworks != null && knownNetworks.stream().anyMatch(n -> n.equalsIgnoreCase(target))) {
+                return true;
+            }
+            return false;
         }
     }
 

@@ -7,6 +7,17 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.5.1] - 2026-11-05
+
+### Adicionado
+- Criação e ingresso universais e automáticos na rede padrão AngatuVoice para todos os participantes, sem necessidade de configuração de nós administradores.
+- Detecção nativa de avisos e confirmações do Radmin VPN na automação da interface do Windows.
+
+### Corrigido
+- Falha de servidor (Server Error) ao abrir as configurações de rede ou clicar no botão "Reconectar".
+- Execução assíncrona da reconexão de rede, evitando bloqueios na interface e respostas lentas de requisições.
+- Descoberta e restauração do Radmin VPN quando a janela do programa estiver minimizada na bandeja do sistema (system tray).
+
 ## [1.5.0] - 2026-11-05
 
 ### Adicionado

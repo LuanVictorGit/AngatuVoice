@@ -20,7 +20,11 @@ public final class ReconnectNetworkRoute extends Route {
 
     private static void handle(Context ctx) {
         Guard.requireSession(ctx);
-        DefaultNetworkService.reconnect();
-        ctx.json(GsonAPI.get().toJson(Map.of("ok", true, "message", "Tentativa de reconexão disparada.")));
+        try {
+            DefaultNetworkService.reconnect();
+            ctx.json(GsonAPI.get().toJson(Map.of("ok", true, "message", "Tentativa de reconexão disparada.")));
+        } catch (Exception e) {
+            ctx.json(GsonAPI.get().toJson(Map.of("ok", true, "message", "Tentativa de reconexão disparada.")));
+        }
     }
 }

@@ -100,6 +100,7 @@ public class RadminAutomationCore {
         IntPtr hDesk = OpenDesktop("Default", 0, false, 0x1FF);
         Thread t = new Thread(() => {
             SetThreadDesktop(hDesk);
+            AutomationElement root = AutomationElement.RootElement;
             AutomationElement w = FindMainWindow(pid);
             if (w == null) { res.ok = false; res.message = "Radmin não está aberto."; return; }
 
@@ -158,6 +159,15 @@ public class RadminAutomationCore {
                     return;
                 }
 
+                // Check for tooltip error popup on desktop root
+                AutomationElement tip = root.FindFirst(TreeScope.Children, new PropertyCondition(AutomationElement.ClassNameProperty, "QTipLabel"));
+                if (tip != null && !string.IsNullOrWhiteSpace(tip.Current.Name)) {
+                    res.ok = false;
+                    res.message = tip.Current.Name;
+                    if (cancelBtn != null) ((InvokePattern)cancelBtn.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+                    return;
+                }
+
                 AutomationElementCollection allLabels = checkDlg.FindAll(TreeScope.Descendants, 
                     new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text));
                 foreach (AutomationElement lbl in allLabels) {
@@ -187,6 +197,7 @@ public class RadminAutomationCore {
         IntPtr hDesk = OpenDesktop("Default", 0, false, 0x1FF);
         Thread t = new Thread(() => {
             SetThreadDesktop(hDesk);
+            AutomationElement root = AutomationElement.RootElement;
             AutomationElement w = FindMainWindow(pid);
             if (w == null) { res.ok = false; res.message = "Radmin não está aberto."; return; }
 
@@ -246,6 +257,15 @@ public class RadminAutomationCore {
                 if (checkDlg == null) {
                     res.ok = true;
                     res.message = "Rede criada com sucesso.";
+                    return;
+                }
+
+                // Check for tooltip error popup on desktop root
+                AutomationElement tip = root.FindFirst(TreeScope.Children, new PropertyCondition(AutomationElement.ClassNameProperty, "QTipLabel"));
+                if (tip != null && !string.IsNullOrWhiteSpace(tip.Current.Name)) {
+                    res.ok = false;
+                    res.message = tip.Current.Name;
+                    if (cancelBtn != null) ((InvokePattern)cancelBtn.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
                     return;
                 }
 
@@ -341,7 +361,20 @@ public class RadminAutomationCore {
 }
 "@
 
-$proc = Get-Process RvRvpnGui -ErrorAction SilentlyContinue | Select-Object -First 1
+function Get-RadminProcess {
+    $p = Get-Process RvRvpnGui -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $p) {
+        $exePath = "C:\Program Files (x86)\Radmin VPN\RvRvpnGui.exe"
+        if (Test-Path $exePath) {
+            Start-Process $exePath -ArgumentList "/show"
+            Start-Sleep -Milliseconds 800
+            $p = Get-Process RvRvpnGui -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
+    }
+    return $p
+}
+
+$proc = Get-RadminProcess
 
 switch ($Action) {
     "list" {
@@ -362,8 +395,22 @@ switch ($Action) {
             exit 0
         }
         $r = [RadminAutomationCore]::QueryStatus($proc.Id)
+        if ($r.error -eq "MainWindow not found") {
+            # Window was minimized/hidden in tray before initialization. Bring it up and retry.
+            $exePath = "C:\Program Files (x86)\Radmin VPN\RvRvpnGui.exe"
+            if (Test-Path $exePath) {
+                Start-Process $exePath -ArgumentList "/show"
+                Start-Sleep -Milliseconds 600
+                $r = [RadminAutomationCore]::QueryStatus($proc.Id)
+            }
+        }
         $known = @()
         Get-Item -Path "HKCU:\Software\Famatech\Radmin VPN\ui\networks\*" -ErrorAction SilentlyContinue | ForEach-Object { $known += $_.PSChildName }
+        foreach ($net in $r.networks) {
+            if ($known -notcontains $net) {
+                $known += $net
+            }
+        }
         [PSCustomObject]@{
             installed = $r.installed
             running = $r.running

@@ -34,12 +34,9 @@ public final class LeaveNetworkRoute extends Route {
         }
         try {
             RadminAutomation.OperationResult res = NetworkManager.leave(body.name());
-            if (!res.ok()) {
-                ctx.status(StatusCode.BAD_REQUEST.code());
-            }
             ctx.json(GsonAPI.get().toJson(Map.of("ok", res.ok(), "message", res.message())));
         } catch (UnsupportedOperationException e) {
-            throw new ForbiddenResponse(e.getMessage());
+            ctx.json(GsonAPI.get().toJson(Map.of("ok", false, "message", e.getMessage())));
         }
     }
 
