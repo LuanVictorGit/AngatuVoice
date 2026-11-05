@@ -363,6 +363,7 @@
         E("div", { class: "mt-4 flex gap-2" },
           E("button", { class: "btn btn-sm btn-primary", onclick: async () => {
             try {
+              if (AV.resetAutoJoinNotice) AV.resetAutoJoinNotice();
               await AV.api("POST", "/api/networks/reconnect");
               AV.toast("Reconexão iniciada…", "ok");
               setTimeout(loadNetworks, 1000);

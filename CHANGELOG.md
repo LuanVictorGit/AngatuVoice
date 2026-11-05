@@ -7,6 +7,13 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.5.3] - 2026-11-05
+
+### Adicionado
+- Mensagem visual e aviso sonoro ao entrar automaticamente na rede AngatuVoice via automação do Radmin VPN, orientando o usuário que pode fechar a janela do Radmin e utilizar o Voice.
+- Minimização automática da janela do Radmin VPN para a bandeja do sistema após conclusão do ingresso ou criação de rede por automação.
+- Notificação em tempo real via WebSocket (`net.autojoined`) e leitura no estado inicial do aplicativo.
+
 ## [1.5.2] - 2026-11-05
 
 ### Adicionado

@@ -32,8 +32,38 @@
   const chatOfRoom = (room) => (room.startsWith("dm:") ? "dm:" + room.slice(3).split("+").find((id) => id !== me().id) : room);
   const nameOf = (id) => (id === me().id ? me().name : (peerOf(id) || { name: "Participante" }).name);
 
+  let autoJoinedShown = false;
+  function showAutoJoinedModal() {
+    if (autoJoinedShown) return;
+    autoJoinedShown = true;
+    if (AV.sound) AV.sound("connected");
+    AV.toast("Você entrou na rede AngatuVoice automaticamente. Pode fechar o Radmin e usar o Voice <3", "ok");
+    AV.modal("Rede AngatuVoice conectada", (body) => {
+      body.append(
+        E("div", { class: "flex items-start gap-4 py-2" },
+          E("div", { class: "w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0" },
+            AV.icon("network", "ic-lg")),
+          E("div", { class: "space-y-1.5" },
+            E("h3", { class: "font-bold text-base text-zinc-100" }, "Você entrou na rede AngatuVoice automaticamente!"),
+            E("p", { class: "text-sm text-zinc-300" }, "Pode fechar a janela do Radmin VPN e usar o Voice ", E("span", { class: "text-rose-400 font-bold" }, "<3")),
+            E("p", { class: "text-xs text-muted" }, "Todos os participantes da rede AngatuVoice já estão acessíveis para voz, chat e compartilhamento de tela.")
+          )
+        )
+      );
+    }, [
+      { label: "Entendido", primary: true, run: (close) => close() }
+    ]);
+  }
+
+  AV.resetAutoJoinNotice = function () {
+    autoJoinedShown = false;
+  };
+
   AV.refresh = async function () {
     AV.state = await AV.api("GET", "/api/state");
+    if (AV.state && AV.state.autoJoined) {
+      showAutoJoinedModal();
+    }
     AV.latency = { peers: Object.fromEntries(AV.state.peers.map((p) => [p.id, p.rtt])), at: Date.now() };
     document.documentElement.dataset.theme = setting("theme");
     renderAll();
@@ -1029,6 +1059,7 @@
     AV.on("peer.changed", () => refreshSoon());
     AV.on("peer.relinked", ({ id }) => { AV.rtc.resync(id); refreshSoon(); });
     AV.on("net.latency", ({ peers }) => { AV.latency = { peers, at: Date.now() }; renderPing(); });
+    AV.on("net.autojoined", () => showAutoJoinedModal());
     AV.on("net", () => refreshSoon());
     AV.on("group.changed", () => refreshSoon());
     AV.on("peer.profile", () => refreshSoon());

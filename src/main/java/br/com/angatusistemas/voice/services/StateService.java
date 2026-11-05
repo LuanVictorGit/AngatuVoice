@@ -1,5 +1,6 @@
 package br.com.angatusistemas.voice.services;
 
+import br.com.angatusistemas.voice.services.radmin.DefaultNetworkService;
 import br.com.angatusistemas.voice.updater.UpdateService;
 import br.com.angatusistemas.voice.utils.Version;
 import java.util.List;
@@ -25,9 +26,10 @@ public final class StateService {
         List<PeerNetwork.PeerView> peers = PeerNetwork.peers();
         Map<String, Integer> directUnread = unread.entrySet().stream().filter(e -> e.getKey().startsWith("dm:"))
                 .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        boolean autoJoined = DefaultNetworkService.checkAndClearAutoJoinNotice();
         return new State(new Me(me.id(), me.name(), radmin.alias(), AvatarService.version(AvatarService.own().orElse(null))), radmin, radmin.issues(), Version.current().toString(),
                 groups, peers, directUnread, CallService.snapshot(), SettingsService.all(), UpdateService.status(),
-                AutostartService.available(), DisplayService.monitors(), CallService.ringing());
+                AutostartService.available(), DisplayService.monitors(), CallService.ringing(), autoJoined);
     }
 
     public record Me(String id, String name, String alias, String avatar) {
@@ -40,6 +42,6 @@ public final class StateService {
                         List<PeerNetwork.PeerView> peers, Map<String, Integer> directUnread,
                         Map<String, List<String>> calls, Map<String, String> settings, UpdateService.Status update,
                         boolean autostartAvailable, List<DisplayService.Monitor> monitors,
-                        List<CallService.Incoming> incoming) {
+                        List<CallService.Incoming> incoming, boolean autoJoined) {
     }
 }

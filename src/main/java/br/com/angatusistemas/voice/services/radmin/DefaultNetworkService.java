@@ -6,7 +6,9 @@ import br.com.angatusistemas.voice.entities.RadminNetwork;
 import br.com.angatusistemas.voice.services.LiveHub;
 import br.com.angatusistemas.voice.services.RadminService;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -47,6 +49,8 @@ public final class DefaultNetworkService {
     private static final AtomicReference<State> CURRENT_STATE = new AtomicReference<>(State.DISCONNECTED);
     private static final AtomicReference<String> LAST_MESSAGE = new AtomicReference<>("");
     private static final AtomicInteger RETRY_COUNT = new AtomicInteger(0);
+    private static final AtomicBoolean PENDING_AUTOJOIN_NOTICE = new AtomicBoolean(false);
+    private static final AtomicBoolean FORCE_NOTIFY_ON_NEXT_CONNECT = new AtomicBoolean(false);
     private static volatile long nextAttemptTime = 0;
 
     private DefaultNetworkService() {
@@ -62,6 +66,18 @@ public final class DefaultNetworkService {
 
     public static boolean isConnected() {
         return CURRENT_STATE.get() == State.CONNECTED;
+    }
+
+    public static boolean checkAndClearAutoJoinNotice() {
+        return PENDING_AUTOJOIN_NOTICE.getAndSet(false);
+    }
+
+    public static void notifyAutoJoined() {
+        PENDING_AUTOJOIN_NOTICE.set(true);
+        LiveHub.emit("net.autojoined", Map.of(
+                "network", NetworkDefaults.DEFAULT_NETWORK_NAME,
+                "message", "Você entrou na rede AngatuVoice automaticamente. Pode fechar o Radmin e usar o Voice <3"
+        ));
     }
 
     public static void ensureRecord() {
@@ -81,6 +97,7 @@ public final class DefaultNetworkService {
     public static void reconnect() {
         nextAttemptTime = 0;
         RETRY_COUNT.set(0);
+        FORCE_NOTIFY_ON_NEXT_CONNECT.set(true);
         Thread.startVirtualThread(DefaultNetworkService::tick);
     }
 
@@ -95,6 +112,9 @@ public final class DefaultNetworkService {
     private static void tickInternal() {
         if (System.getProperty("angatu.radmin.ip") != null) {
             transition(State.CONNECTED, "Conectado (ambiente de teste).");
+            if (FORCE_NOTIFY_ON_NEXT_CONNECT.getAndSet(false)) {
+                notifyAutoJoined();
+            }
             return;
         }
 
@@ -115,6 +135,9 @@ public final class DefaultNetworkService {
             RETRY_COUNT.set(0);
             nextAttemptTime = 0;
             updateRecord("connected");
+            if (FORCE_NOTIFY_ON_NEXT_CONNECT.getAndSet(false)) {
+                notifyAutoJoined();
+            }
             return;
         }
 
@@ -164,6 +187,8 @@ public final class DefaultNetworkService {
             RETRY_COUNT.set(0);
             nextAttemptTime = 0;
             updateRecord("connected");
+            FORCE_NOTIFY_ON_NEXT_CONNECT.set(false);
+            notifyAutoJoined();
         } else {
             transition(State.DISCONNECTED, "Não foi possível conectar à rede padrão no momento.");
             scheduleRetry();

@@ -161,6 +161,7 @@ public class RadminAutomationCore {
                 if (checkDlg == null) {
                     res.ok = true;
                     res.message = "Entrada na rede concluída com sucesso.";
+                    try { ShowWindow((IntPtr)w.Current.NativeWindowHandle, 6); } catch {}
                     return;
                 }
 
@@ -262,6 +263,7 @@ public class RadminAutomationCore {
                 if (checkDlg == null) {
                     res.ok = true;
                     res.message = "Rede criada com sucesso.";
+                    try { ShowWindow((IntPtr)w.Current.NativeWindowHandle, 6); } catch {}
                     return;
                 }
 
