@@ -130,14 +130,14 @@ Java 25, AngatuLibraries `62d2678fcb52c2f3c3da46c9221eadbf8d683ec2` (https://git
 - `src/main/java/br/com/angatusistemas/voice/` — `Main`, `entities/` (Saveable), `services/` (regras, rede entre pares, presença, chamadas, sessão, migrações), `routes/` (HTTP/WS da interface), `desktop/` (JFrame, JCEF, bandeja, atalhos, instância única, aviso de chamada), `updater/` (atualização), `utils/`
 - `src/main/resources/public/` — SPA: `index.html` (shell), `app.html` (fragmento servido em `/app`), `scripts/{ui,live,rtc,settings,app,system-audio-worklet}.js`, `styles/{ds.css,tailwind.css}`, `assets/` (inclui `ringtone.mp3`, a música de chamada escolhida pelo dono)
 - `src/main/resources/updater/apply-update.ps1` — troca de arquivos com rollback (parâmetros vêm do app, nunca de download)
-- `tools/` — `package.ps1` (app-image + zip), `Release.java` (manifesto assinado), `IconGen.java`, `tailwind/input.css`
+- `tools/` — `package.ps1` (app-image + zip), `Release.java` (manifesto assinado), `IconGen.java`, `SoundGen.java` (gera todos os sons de `assets/audio/`, as regras estão em `assets/audio/LICENSES.md`), `tailwind/input.css`
 - `installer/angatu-voice.iss`, `.github/workflows/{ci,release}.yml`, `docs/`
 
 ## Como rodar
 ```
 mvn -B test
 mvn -q -B -DskipTests package
-java --enable-native-access=ALL-UNNAMED -jar target/angatu-voice-1.5.3.jar
+java --enable-native-access=ALL-UNNAMED -jar target/angatu-voice-1.6.0.jar
 ```
 `JAVA_HOME` precisa apontar para o JDK 25: nesta máquina o padrão é o 21 e o `mvn` falha com `release version 25 not supported`. `PeerClusterTest` sobe vários nós em JVMs próprias e leva alguns minutos; ao mexer em outra coisa, rode só os testes da classe tocada.
 Dados em `%APPDATA%\AngatuVoice` (`-Dangatu.data=` muda); caches e JCEF em `%LOCALAPPDATA%\AngatuVoice`. Tailwind: `tools\bin\tailwindcss.exe -i tools\tailwind\input.css -o src\main\resources\public\styles\tailwind.css --minify` (arquivo gerado é versionado). Distribuição: `tools\package.ps1`, depois `ISCC installer\angatu-voice.iss /DAppVersion=X.Y.Z`.
@@ -159,7 +159,7 @@ Nenhuma obrigatória. `ANGATU_UPDATE_TOKEN` (repositório privado). Segredo de C
 Padrão Java da skill (`java-standard.md`); sem Javadoc em método; JSON só por `GsonAPI`; configurações só pelas chaves de `SettingsService` (strings validadas); `ds.css` única fonte visual, componentes em `@layer components`; texto visível em PT-BR; interface é SPA (nenhuma navegação além de `/boot` → `/app`).
 
 ## Versões
-Regra completa em `docs/VERSIONAMENTO.md`: toda release tem número novo e maior; `pom.xml`, `installer/angatu-voice.iss` e `CHANGELOG.md` mudam juntos; o workflow recusa a tag que não bater com o `pom.xml` e o `CHANGELOG.md`. Versão atual: 1.5.3. **Toda atualização obriga, sem pedir: commit, push e release atualizada sem exceção.** A cada versão lançada, é obrigatório criar e enviar a tag `vX.Y.Z` (`git tag vX.Y.Z && git push origin vX.Y.Z`), acompanhar o workflow `release` no GitHub Actions até a publicação dos binários (`.exe`, `.zip`, `manifest.json`, `manifest.json.sig`) e conferir o status com `gh release list`. Nenhuma versão está concluída enquanto a release pública não estiver publicada. O `installer/angatu-voice.iss` fica só em ASCII: textos pelas mensagens `{cm:...}` do próprio Inno e acentos no `[Code]` como `#$E7`.
+Regra completa em `docs/VERSIONAMENTO.md`: toda release tem número novo e maior; `pom.xml`, `installer/angatu-voice.iss` e `CHANGELOG.md` mudam juntos; o workflow recusa a tag que não bater com o `pom.xml` e o `CHANGELOG.md`. Versão atual: 1.6.0. **Toda atualização obriga, sem pedir: commit, push e release atualizada sem exceção.** A cada versão lançada, é obrigatório criar e enviar a tag `vX.Y.Z` (`git tag vX.Y.Z && git push origin vX.Y.Z`), acompanhar o workflow `release` no GitHub Actions até a publicação dos binários (`.exe`, `.zip`, `manifest.json`, `manifest.json.sig`) e conferir o status com `gh release list`. Nenhuma versão está concluída enquanto a release pública não estiver publicada. O `installer/angatu-voice.iss` fica só em ASCII: textos pelas mensagens `{cm:...}` do próprio Inno e acentos no `[Code]` como `#$E7`.
 
 ## Armadilhas já pagas
 - **Entrada no JCEF**: as janelas do Chromium pertencem à thread de eventos do Swing, que não lê mensagens do Windows; sem o laço de `PeekMessage` do `BrowserWindow.startMessagePump` a página renderiza e ignora mouse e teclado. Teste sempre com mouse e teclado reais (`mouse_event`/`SendKeys`), não só por CDP, e com a janela em primeiro plano.
@@ -175,6 +175,7 @@ Regra completa em `docs/VERSIONAMENTO.md`: toda release tem número novo e maior
 - **`LINKS.remove(id, link)` falso significa socket substituído**: nenhum aviso, nenhuma saída de sala. Um socket antigo nunca recusa um novo depois da janela de cruzamento, ou a pessoa fica offline para um lado só.
 - **O Chromium não enxerga o adaptador do Radmin** (é virtual): sem ajuda, o único candidato IPv4 é o da rota padrão e a chamada fica em "Conectando…" para sempre. Por isso `--force-webrtc-ip-handling-policy=default_public_and_private_interfaces` (porta ligada em 0.0.0.0) e `radminCandidate` troca o endereço anunciado pelo IP do Radmin. Medido: sem isso nenhum candidato 26.x; com isso conecta por 26.x com áudio.
 - **Chamada não cai com o TCP**: a mídia WebRTC é independente do link de sinalização. Quem some do link continua na sala durante a carência, e a página só fecha a conexão quando sai da lista de membros.
+- **Nome de som sem arquivo não dá erro**: `AV.sound("connected")` ficou mudo na 1.5.3 por isso. `SoundCatalogTest` confere nomes, catálogo, arquivos e a lista de teste das configurações. Som novo nasce em `tools/SoundGen.java`, seguindo as regras de `assets/audio/LICENSES.md`.
 
 ## Pendências conhecidas
 - Ofuscação/minificação do JS no build (R18/R19) ainda não implementada.

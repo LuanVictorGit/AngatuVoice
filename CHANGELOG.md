@@ -7,6 +7,23 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.6.0] - 2026-11-05
+
+### Adicionado
+- Todos os avisos sonoros foram refeitos com uma regra só: subir é ligar, entrar ou começar, e descer é desligar, sair ou terminar. O timbre mostra de quem é o assunto, então seu microfone, outra pessoa, uma transmissão e uma mensagem não se confundem mais.
+- Em Configurações > Áudio, "Testar os sons" toca qualquer som do aplicativo, com o nome do que ele significa.
+- Novos sons para transmissão encerrada, para quem começa ou para de assistir à sua tela, para chamada recusada e para chamada perdida.
+
+### Corrigido
+- O som de desligar o microfone era mais agudo que o de ligar, e os de entrada e saída de outra pessoa eram quase iguais.
+- O aviso de entrada automática na rede AngatuVoice não tocava som nenhum.
+- Silenciar outra pessoa não usa mais o som do seu microfone, que dava a entender que você mesmo tinha sido silenciado.
+- Alguém assistir à sua tela não soa mais como alguém entrando na chamada.
+- Enquanto você espera ser atendido, toca o tom de chamada brasileiro, sem um aviso por cima no início.
+- Chamada recebida durante uma conversa agora toca dois bipes discretos, em vez do tom de chamada por cima das vozes. Quando ela some, o tom de chamada de quem ainda espera ser atendido volta.
+- Ensurdecido, você não ouve mais os avisos sobre outras pessoas nem as mensagens.
+- Várias mensagens seguidas tocam um aviso só, e os sons não saem mais tão altos sobre as vozes.
+
 ## [1.5.3] - 2026-11-05
 
 ### Adicionado

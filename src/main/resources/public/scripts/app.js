@@ -36,7 +36,7 @@
   function showAutoJoinedModal() {
     if (autoJoinedShown) return;
     autoJoinedShown = true;
-    if (AV.sound) AV.sound("connected");
+    AV.sound("connected");
     AV.toast("Você entrou na rede AngatuVoice automaticamente. Pode fechar o Radmin e usar o Voice <3", "ok");
     AV.modal("Rede AngatuVoice conectada", (body) => {
       body.append(
@@ -298,7 +298,8 @@
 
   function syncRingtone() {
     if ((AV.state.incoming || []).length) AV.ringtone.start(AV.rtc.room ? "waiting" : "incoming");
-    else if (AV.ringtone.active() !== "outgoing") AV.ringtone.stop();
+    else if (AV.rtc.calling) AV.ringtone.start("outgoing");
+    else AV.ringtone.stop();
   }
 
   function renderIncoming() {
@@ -1069,7 +1070,7 @@
     AV.on("call.incoming", ({ calls }) => { AV.state.incoming = calls; renderIncoming(); });
     AV.on("call.action", onCallAction);
     AV.on("call.declined", (d) => AV.rtc.onDeclined(d));
-    AV.on("call.missed", ({ name }) => AV.toast("Chamada perdida de " + name + "."));
+    AV.on("call.missed", ({ name }) => { AV.sound("missed"); AV.toast("Chamada perdida de " + name + "."); });
     AV.on("call.signal", (d) => AV.rtc.handleSignal(d));
     AV.on("update", onUpdate);
     AV.on("hotkey", onHotkey);

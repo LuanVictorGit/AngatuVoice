@@ -59,6 +59,53 @@
     return row(title, desc, node);
   }
 
+  /* Every sound the app can make, named by what it means, so each one can be heard without staging a call. */
+  const SOUND_TESTS = [
+    ["Chamadas", [
+      ["ring:incoming", "Alguém está chamando você"],
+      ["ring:outgoing", "Aguardando ser atendido"],
+      ["ring:waiting", "Outra chamada durante a conversa"],
+      ["sound:join", "Você entrou na chamada"],
+      ["sound:leave", "Chamada encerrada"],
+      ["sound:busy", "Chamada recusada"],
+      ["sound:missed", "Chamada perdida"],
+      ["sound:peerJoin", "Alguém entrou na chamada"],
+      ["sound:peerLeave", "Alguém saiu da chamada"],
+    ]],
+    ["Microfone e fone", [
+      ["sound:mute", "Microfone desligado"],
+      ["sound:unmute", "Microfone ligado"],
+      ["sound:deafen", "Fone desligado (ensurdecido)"],
+      ["sound:undeafen", "Fone ligado"],
+      ["sound:peerMuted", "Você silenciou alguém"],
+      ["sound:peerUnmuted", "Você voltou a ouvir alguém"],
+    ]],
+    ["Transmissão de tela", [
+      ["sound:streamStart", "Transmissão iniciada"],
+      ["sound:streamStop", "Transmissão encerrada"],
+      ["sound:viewerJoin", "Alguém começou a assistir você"],
+      ["sound:viewerLeave", "Alguém parou de assistir você"],
+    ]],
+    ["Avisos", [
+      ["sound:message", "Mensagem recebida"],
+      ["sound:connected", "Conectado à rede AngatuVoice"],
+      ["sound:error", "Erro"],
+    ]],
+  ];
+
+  function soundTest() {
+    const picker = E("select", { class: "input w-56", "aria-label": "Som a testar" },
+      SOUND_TESTS.map(([group, options]) => E("optgroup", { label: group }, options.map(([v, label]) => E("option", { value: v }, label)))));
+    const play = () => {
+      const [kind, name] = picker.value.split(":");
+      AV.ringtone.stop();
+      if (kind === "ring") AV.ringtone.preview(name);
+      else AV.sound.preview(name);
+    };
+    return row("Testar os sons", "Toca o som escolhido com o volume acima, mesmo com os sons desligados.",
+      E("div", { class: "flex items-center gap-2" }, picker, E("button", { class: "btn", onclick: play }, "Tocar")));
+  }
+
   function range(key, title, desc, min, max, unit) {
     const out = E("span", { class: "mono w-14 text-right" }, value(key) + unit);
     const input = E("input", { type: "range", min, max, step: 1, class: "w-44", "aria-label": title,
@@ -123,10 +170,10 @@
       E("p", { class: "py-3 text-sm text-muted" }, "As teclas de apertar para falar ficam na aba Atalhos."),
       toggle("audio.echo", "Cancelamento de eco", "Evita que sua voz volte pelas caixas de som."),
       toggle("audio.noise", "Supressão de ruído", "Reduz ruídos constantes, como ventilador e teclado."),
-      toggle("sounds.enabled", "Sons do aplicativo", "Sons curtos ao silenciar, entrar e sair de chamadas e receber mensagens."),
-      toggle("sounds.ring", "Toque de chamada", "Toca a música de chamada enquanto alguém chama você, e um som de espera enquanto você aguarda ser atendido."),
-      range("sounds.volume", "Volume dos sons", "Vale também para o toque de chamada.", 0, 100, "%"),
-      row("Testar o toque", "Toca alguns segundos da música, com o volume escolhido.", E("button", { class: "btn", onclick: () => AV.ringtone.preview() }, "Tocar")),
+      toggle("sounds.enabled", "Sons do aplicativo", "Avisos curtos de microfone, fone, chamadas, transmissões, mensagens e erros. Ensurdecido, você não ouve os avisos sobre outras pessoas nem as mensagens."),
+      toggle("sounds.ring", "Toque de chamada", "A música quando alguém chama você, o tom de chamada enquanto você espera ser atendido e dois bipes discretos quando outra chamada chega durante uma conversa."),
+      range("sounds.volume", "Volume dos sons", "Vale para todos os avisos e para o toque de chamada.", 0, 100, "%"),
+      soundTest(),
       micTest());
   }
 

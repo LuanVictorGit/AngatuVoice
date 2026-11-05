@@ -110,7 +110,7 @@
     cfg()["audio.peerMutes"] = JSON.stringify(next);
     applyOutput();
     persistMutes();
-    AV.sound(next.includes(id) ? "mute" : "unmute");
+    AV.sound(next.includes(id) ? "peerMuted" : "peerUnmuted");
     rtc.onchange();
   };
   const persistMutes = AV.debounce(() => {
@@ -456,11 +456,11 @@
     const wants = o.w === 1;
     let changed = !previous || previous.muted !== p.state.muted || previous.deafened !== p.state.deafened
       || previous.sharing !== p.state.sharing || previous.viewers.join() !== viewers.join();
-    if (previous && previous.sharing && !p.state.sharing) rtc.watching.delete(p.id);
+    if (previous && previous.sharing && !p.state.sharing) { rtc.watching.delete(p.id); AV.sound("streamStop"); }
     if (previous && !previous.sharing && p.state.sharing) AV.sound("streamStart");
     if (wants !== p.wantsShare) {
       p.wantsShare = wants;
-      if (rtc.localShare) { feedShare(p); AV.sound(wants ? "peerJoin" : "peerLeave"); broadcastState(); }
+      if (rtc.localShare) { feedShare(p); AV.sound(wants ? "viewerJoin" : "viewerLeave"); broadcastState(); }
       changed = true;
     }
     if (changed) rtc.onchange();
@@ -620,8 +620,8 @@
   rtc.onDeclined = function ({ room, name }) {
     if (room !== rtc.room) return;
     AV.toast(name + " recusou a chamada.");
-    if (room.startsWith("dm:")) rtc.leave();
-    else if (!(AV.state.calls[room] || []).some((id) => id !== myId())) stopCalling();
+    if (room.startsWith("dm:")) rtc.leave("busy");
+    else if (!(AV.state.calls[room] || []).some((id) => id !== myId())) { stopCalling(); AV.sound("busy"); }
   };
 
   rtc.join = async function (room) {
@@ -640,16 +640,17 @@
     others.forEach(ensurePeer);
     vadTimer = setInterval(vadLoop, VAD_TICK_MS);
     statsTimer = setInterval(statsTick, STATS_TICK_MS);
-    AV.sound("join");
+    // Calling an empty room is announced by the ringback itself; a chime on top of it would only blur the first ring.
+    if (others.length || cfg()["sounds.ring"] !== "true") AV.sound("join");
     if (!others.length) startCalling();
     rtc.onchange();
   };
 
-  rtc.leave = async function () {
+  rtc.leave = async function (endCue = "leave") {
     const room = rtc.room;
     if (!room) return;
     stopCalling();
-    if (rtc.localShare) rtc.stopShare();
+    if (rtc.localShare) rtc.stopShare(true);
     peers.forEach((p, id) => { signal(id, "bye", {}); });
     [...peers.keys()].forEach(closePeer);
     clearInterval(vadTimer);
@@ -657,7 +658,7 @@
     closeMic();
     rtc.room = null;
     rtc.pttDown = false;
-    AV.sound("leave");
+    AV.sound(endCue);
     setSpeaking(myId(), false);
     try { await AV.api("POST", "/api/call/state", { room, joined: false }); } catch (e) { AV.fail(e); }
     rtc.onchange();
@@ -677,7 +678,7 @@
     broadcastState();
     rtc.onchange();
   };
-  rtc.toggleMuteAll = function () { rtc.muteAll = !rtc.muteAll; applyOutput(); rtc.onchange(); };
+  rtc.toggleMuteAll = function () { rtc.muteAll = !rtc.muteAll; applyOutput(); AV.sound(rtc.muteAll ? "peerMuted" : "peerUnmuted"); rtc.onchange(); };
   rtc.setPtt = function (down) { rtc.pttDown = down; updateGate(); };
   rtc.hasMic = () => !!mic;
   rtc.peerState = (id) => { const p = peers.get(id); return p && p.state ? p.state : null; };
@@ -992,10 +993,11 @@
     rtc.localShare = new MediaStream(shareAudio ? [video, shareAudio.track] : [video]);
     peers.forEach(openShareFor);
     broadcastState();
+    AV.sound("streamStart");
     rtc.onchange();
   };
 
-  rtc.stopShare = function () {
+  rtc.stopShare = function (quiet) {
     const stream = rtc.localShare;
     if (!stream) return;
     rtc.localShare = null;
@@ -1005,6 +1007,7 @@
     closeShareAudio();
     stopWatchingShareSize();
     broadcastState();
+    if (!quiet) AV.sound("streamStop");
     rtc.onchange();
   };
 
