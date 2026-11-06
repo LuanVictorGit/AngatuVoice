@@ -1,5 +1,6 @@
 package br.com.angatusistemas.voicerelay.services;
 
+import br.com.angatusistemas.lib.console.Console;
 import br.com.angatusistemas.lib.database.Saveable;
 import br.com.angatusistemas.lib.gson.GsonAPI;
 import br.com.angatusistemas.voicerelay.entities.GroupRecord;
@@ -163,6 +164,7 @@ public final class NetHub {
             }
         }
         ctx.send(welcome(session).toString());
+        Console.log("%s connected, version %s, %d online", id.substring(0, 8), clean(string(frame, "version")), ONLINE.size());
         if (wasGone) {
             broadcastPresence(session);
         } else {
