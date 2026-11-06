@@ -393,12 +393,9 @@
         u.state === "downloading" && E("div", { class: "mt-3" }, E("div", { class: "progress" }, bar), E("small", { class: "text-muted" }, AV.bytes(u.received) + " de " + AV.bytes(u.size))),
         u.notes && E("pre", { class: "selectable mt-3 whitespace-pre-wrap text-sm text-muted" }, u.notes),
         E("div", { class: "mt-4 flex flex-wrap gap-2" },
-          E("button", { class: "btn", disabled: busy, onclick: () => AV.api("POST", "/api/update/check").catch(AV.fail) }, AV.icon("refresh", "ic-sm"), "Verificar atualizações"),
-          u.canInstall && E("button", { class: "btn btn-primary", onclick: () => AV.api("POST", "/api/update/install").catch(AV.fail) }, AV.icon("download", "ic-sm"), "Instalar e reiniciar"),
-          u.state === "downloading" && E("button", { class: "btn", onclick: () => AV.api("POST", "/api/update/cancel").catch(AV.fail) }, "Cancelar download")),
+          E("button", { class: "btn", disabled: busy, onclick: () => AV.api("POST", "/api/update/check").catch(AV.fail) }, AV.icon("refresh", "ic-sm"), "Verificar atualizações")),
         E("small", { class: "mt-3 block text-faint" }, "Última verificação: " + last)),
-      toggle("update.auto", "Atualizar automaticamente", "Baixa novas versões e instala quando você não estiver em uma chamada."),
-      select("update.intervalMinutes", "Verificar a cada", "", [["15", "15 minutos"], ["30", "30 minutos"], ["60", "1 hora"], ["360", "6 horas"], ["1440", "24 horas"]]),
+      E("p", { class: "mt-2 text-sm text-muted" }, "Toda nova versão é instalada sozinha assim que sai, mesmo durante uma chamada, para ninguém ficar em uma versão antiga."),
       row("Canal de atualização", "O canal Beta recebe versões em teste, que podem ter falhas.",
         E("select", { class: "input w-56", "aria-label": "Canal", onchange: async (e) => {
           if (e.target.value === "beta" && !(await AV.confirm("Entrar no canal Beta?", "Versões beta ainda estão em teste e podem ter falhas.", "Entrar no Beta"))) { e.target.value = "stable"; return; }

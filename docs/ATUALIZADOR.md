@@ -28,10 +28,10 @@ O workflow `release.yml` ajusta a versão pela tag, roda `mvn test`, empacota, e
 Validado antes de qualquer uso: assinatura Ed25519 sobre os bytes exatos; `app`, `os`, `arch`, canal e `minVersion`; URL `https` em host permitido; tamanho de até 700 MB; SHA-256 de 64 hex; versão igual à da tag. Se `minVersion` for maior que a instalada, o app avisa que precisa do instalador completo.
 
 ## Como o app instalado recebe a versão
-1. Na abertura (após 15 s), a cada N horas (padrão 6) e no botão "Verificar", consulta as releases com `ETag` (resposta 304 não gasta cota) e escolhe a maior versão do canal; o estável ignora betas e rascunhos.
+1. Na abertura, a cada 2 minutos e no botão "Verificar", consulta as releases com `ETag` (resposta 304 não gasta cota) e escolhe a maior versão do canal; o estável ignora betas e rascunhos.
 2. Baixa `manifest.json` e `.sig`, valida, e só aceita versão **maior** que a instalada (sem downgrade).
-3. Baixa o pacote em segundo plano, com progresso, cancelamento e **retomada** (`Range`); confere tamanho e SHA-256 e recusa se não bater.
-4. Com "atualizar automaticamente" (ou atualização obrigatória) instala quando não há chamada em andamento; senão aparece "Reiniciar para atualizar".
+3. Baixa o pacote em segundo plano, com progresso e **retomada** (`Range`); confere tamanho e SHA-256 e recusa se não bater.
+4. **Toda atualização é obrigatória:** a interface trava numa tela de aviso, sai da chamada se houver uma, e o app instala e reinicia sozinho, sem opção de adiar. Uma versão que não abriu duas vezes neste computador é deixada de lado até sair a próxima, para não reiniciar a pessoa sem fim.
 5. Extrai com proteção contra zip-slip, confere o layout (`app\angatu-voice-<versão>.jar`: interface e backend vêm juntos no mesmo JAR, sem versões misturadas) e dispara `apply-update.ps1`, que sobrevive ao app.
 
 ## Rollback

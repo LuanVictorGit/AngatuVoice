@@ -316,7 +316,7 @@ AV.sound = (function () {
   async function load(ctx, url) {
     if (bufferCache.has(url)) return bufferCache.get(url);
     try {
-      const resp = await fetch(url);
+      const resp = await fetch(url, { cache: "no-store" });
       const data = await resp.arrayBuffer();
       const decoded = await ctx.decodeAudioData(data);
       bufferCache.set(url, decoded);

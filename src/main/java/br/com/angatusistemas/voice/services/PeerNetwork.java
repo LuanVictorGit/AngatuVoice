@@ -8,6 +8,7 @@ import br.com.angatusistemas.voice.entities.Message;
 import br.com.angatusistemas.voice.entities.Peer;
 import br.com.angatusistemas.voice.entities.Setting;
 import br.com.angatusistemas.voice.utils.Crypto;
+import br.com.angatusistemas.voice.utils.Version;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -231,6 +232,7 @@ public final class PeerNetwork {
         JsonObject hello = new JsonObject();
         hello.addProperty("pub", Crypto.b64(me.publicKey()));
         hello.addProperty("name", me.name());
+        hello.addProperty("version", Version.current().toString());
         hello.add("groups", groupProofs());
         return hello;
     }

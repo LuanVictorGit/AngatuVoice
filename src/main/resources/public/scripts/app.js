@@ -176,11 +176,6 @@
       E("button", { class: "btn", onclick: () => selectChat(chatOfRoom(room)) }, "Ver"),
       E("button", { class: "btn btn-primary", onclick: () => startCall(chatOfRoom(room)) }, "Entrar"))));
     const u = AV.state.update;
-    if (u.state === "available") banners.push(E("div", { class: "banner info" }, AV.icon("download"), E("div", { class: "flex-1" }, "A versão " + u.available + " está disponível."), E("button", { class: "btn", onclick: () => AV.openSettings("update") }, "Ver detalhes")));
-    if (u.state === "ready") banners.push(E("div", { class: "banner info" }, AV.icon("download"), E("div", { class: "flex-1" }, "A versão " + u.available + " está pronta."),
-      E("button", { class: "btn btn-primary", onclick: () => AV.api("POST", "/api/update/install").catch(AV.fail) }, "Reiniciar para atualizar")));
-    if (u.state === "downloading") banners.push(E("div", { class: "banner info" }, AV.icon("download"), "Baixando a versão " + u.available + " — " + Math.round(u.progress * 100) + "%"));
-    if (u.state === "restarting" || u.state === "installing") banners.push(E("div", { class: "banner info" }, AV.icon("refresh"), "Atualizando o Angatu Voice. O aplicativo vai reiniciar sozinho."));
     if (u.state === "rolledback") banners.push(E("div", { class: "banner error" }, AV.icon("alert"), u.message));
     AV.fill($("banners"), ...banners);
   }
@@ -929,83 +924,28 @@
     }
   }
 
+  /* Every update is mandatory and Java drives it. This only leaves the call on time and says what is happening; there is nothing to choose. */
   function enforceUpdateStatus(u) {
     if (!u) return;
-    const isOutdated = u.available && u.available !== u.current &&
-      (u.state === "available" || u.state === "downloading" || u.state === "ready" || u.state === "installing" || u.state === "restarting");
-
-    let blocker = document.getElementById("outdated-blocker");
-    if (!isOutdated) {
-      if (blocker) blocker.remove();
+    const updating = u.available && u.available !== u.current && ["available", "downloading", "validating", "ready", "installing", "restarting"].includes(u.state);
+    let lock = document.getElementById("update-lock");
+    if (!updating) {
+      if (lock) lock.remove();
       return;
     }
-
-    // Drop from any ongoing call immediately
-    if (rtc && rtc.room) {
-      rtc.leave();
-    }
+    if (AV.rtc.room) AV.rtc.leave();
     if (AV.ringtone) AV.ringtone.stop();
-
-    if (!blocker) {
-      blocker = document.createElement("div");
-      blocker.id = "outdated-blocker";
-      blocker.className = "fixed inset-0 z-[999999] bg-[#0f0e0d]/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center select-none";
-      document.body.appendChild(blocker);
+    if (!lock) {
+      lock = E("div", { id: "update-lock", class: "overlay update-lock", role: "status" });
+      document.body.append(lock);
     }
-
-    const isReady = u.state === "ready" || u.canInstall;
-    const isDownloading = u.state === "downloading";
     const progress = Math.round((u.progress || 0) * 100);
-
-    blocker.innerHTML = `
-      <div class="max-w-md w-full bg-[#181614] border border-[#2e2a25] rounded-2xl p-8 shadow-2xl flex flex-col items-center">
-        <div class="w-16 h-16 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center mb-4">
-          <svg class="w-8 h-8 animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-        </div>
-        <h2 class="text-xl font-bold text-[#ece7e0] mb-2">Atualização Obrigatória</h2>
-        <p class="text-sm text-[#a29a90] mb-6">
-          Sua versão do Angatu Voice está desatualizada (<strong>v${u.current}</strong>). Para garantir a compatibilidade e a comunicação com todos os participantes, a atualização para a <strong>v${u.available}</strong> é obrigatória.
-        </p>
-        ${isDownloading ? `
-          <div class="w-full mb-4">
-            <div class="flex justify-between text-xs text-[#a29a90] mb-1">
-              <span>Baixando atualização…</span>
-              <span>${progress}%</span>
-            </div>
-            <div class="w-full bg-[#26231f] rounded-full h-2 overflow-hidden">
-              <div class="bg-amber-500 h-2 rounded-full transition-all duration-300" style="width: ${progress}%"></div>
-            </div>
-          </div>
-        ` : ''}
-        ${isReady ? `
-          <p class="text-xs text-emerald-400 font-semibold mb-4">Atualização pronta para instalação!</p>
-          <button id="btn-force-restart" class="w-full py-3 px-4 rounded-xl font-semibold bg-amber-500 hover:bg-amber-400 text-black shadow-lg transition cursor-pointer">
-            Reiniciar agora para atualizar
-          </button>
-        ` : `
-          <div class="flex items-center gap-2 text-xs text-[#a29a90]">
-            <svg class="w-4 h-4 animate-spin text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10" stroke-width="4" stroke="currentColor" stroke-opacity="0.2"></circle><path d="M12 2a10 10 0 0 1 10 10" stroke-width="4"></path></svg>
-            <span>Atualizando automaticamente em segundo plano…</span>
-          </div>
-        `}
-      </div>
-    `;
-
-    const restartBtn = blocker.querySelector("#btn-force-restart");
-    if (restartBtn) {
-      restartBtn.onclick = () => {
-        restartBtn.disabled = true;
-        restartBtn.innerText = "Reiniciando…";
-        AV.api("POST", "/api/update/install").catch(AV.fail);
-      };
-    }
-
-    if (isReady && !blocker.dataset.autoRestartTriggered) {
-      blocker.dataset.autoRestartTriggered = "true";
-      setTimeout(() => {
-        AV.api("POST", "/api/update/install").catch(() => {});
-      }, 2500);
-    }
+    const bar = E("i");
+    bar.style.width = progress + "%";
+    AV.fill(lock, E("div", { class: "card max-w-md p-6 text-center" },
+      E("div", { class: "text-lg font-bold" }, "Atualizando para a versão " + u.available),
+      E("p", { class: "mt-2 text-sm text-muted" }, "Todos precisam estar na mesma versão. O Angatu Voice reinicia sozinho em instantes."),
+      u.state === "downloading" && E("div", { class: "mt-4" }, E("div", { class: "progress" }, bar), E("small", { class: "text-muted" }, progress + "%"))));
   }
 
   function onUpdate(update) {

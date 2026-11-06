@@ -260,6 +260,7 @@ button.chip:hover { background: var(--av-bg2); }
 
 .brand-mark { opacity: 0.82; transition: opacity var(--av-fast) var(--av-ease); text-decoration: none; }
 .brand-mark:hover { opacity: 1; }
+.update-lock { z-index: 10000; }
 .brand-logo { width: 76px; height: 26px; flex: none; }
 .brand-label { font-size: 13px; color: var(--av-faint); white-space: nowrap; }
 [data-theme="light"] .brand-on-dark { display: none !important; }

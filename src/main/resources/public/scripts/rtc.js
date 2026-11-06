@@ -530,10 +530,12 @@
     p.cardReceiver = receiver;
     p.cardFrames = 0;
     p.cardFramesAt = performance.now();
+    if (!p.cardFirstOpenAt) p.cardFirstOpenAt = p.cardFramesAt;
     rtc.onchange();
   }
 
   function closeCardReceiver(p) {
+    if (!rtc.watching.has(p.id)) { p.cardFirstOpenAt = 0; p.cardEverShown = false; }
     if (!p.cardReceiver) return;
     p.cardReceiver.close();
     p.cardReceiver = null;
@@ -555,15 +557,17 @@
     if (decoded !== p.cardFrames) {
       p.cardFrames = decoded;
       p.cardFramesAt = now;
-      p.cardRetries = 0;
+      p.cardEverShown = true;
       return;
     }
+    // Counted from the first attempt: every new subscription restarts the other clock, and this one must not, or it would never give up.
+    const waited = now - p.cardFirstOpenAt;
     const silent = now - p.cardFramesAt;
-    if (decoded === 0 && silent >= HW_FIRST_FRAME_MS && (p.cardRetries || 0) >= 1) {
-      console.warn("no picture from the server, falling back to WebRTC");
+    if (!p.cardEverShown && waited >= HW_FIRST_FRAME_MS) {
+      console.warn("no picture from the server, falling back to WebRTC: received " + receiver.counters.received + " frames, " + receiver.counters.keys + " keyframes, decoded " + decoded);
       giveUpOnCardDecoding(p);
     } else if (silent >= PICTURE_STALLED_MS) {
-      p.cardRetries = (p.cardRetries || 0) + 1;
+      console.warn("picture stalled, subscribing again: received " + receiver.counters.received + " frames, " + receiver.counters.keys + " keyframes, decoded " + decoded);
       closeCardReceiver(p);
       openCardReceiver(p);
     } else {

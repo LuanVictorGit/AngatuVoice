@@ -7,6 +7,19 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [2.1.0] - 2026-11-06
+
+### Mudou
+- Toda atualização agora é obrigatória. Em até 2 minutos depois de sair, o aplicativo trava numa tela de aviso, sai da chamada se você estiver em uma, atualiza e reinicia sozinho, sem opção de adiar.
+- Saíram das configurações as opções "Atualizar automaticamente" e "Verificar a cada", e o botão de cancelar o download.
+- Se uma versão não abrir duas vezes no seu computador, o aplicativo volta para a anterior e espera a próxima, em vez de reiniciar sem parar.
+
+### Corrigido
+- Transmissão presa em "Carregando transmissão…" para quem entra depois de ela começar: algumas placas só enviam os parâmetros da imagem no primeiro quadro, e agora eles acompanham todo quadro-chave.
+- Sem nenhuma imagem em 15 segundos, a transmissão agora passa de verdade para o outro caminho. Antes, o aplicativo tentava de novo para sempre.
+- Placas que ignoram o pedido de quadro-chave têm o codificador reiniciado.
+- O aplicativo limpa o cache da interface a cada nova versão, e os sons sempre vêm da versão instalada.
+
 ## [2.0.2] - 2026-11-06
 
 ### Corrigido

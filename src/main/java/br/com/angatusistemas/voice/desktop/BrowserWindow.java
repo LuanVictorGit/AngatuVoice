@@ -1,5 +1,9 @@
 package br.com.angatusistemas.voice.desktop;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.stream.Stream;
 import java.util.ArrayList;
 import java.util.List;
 import br.com.angatusistemas.voice.utils.Version;
@@ -169,6 +173,7 @@ final class BrowserWindow {
                 case LOCATING, EXTRACTING, INSTALL -> "Preparando o aplicativo pela primeira vez…";
                 default -> "Iniciando a interface…";
             }));
+            clearCacheOfOlderVersion();
             builder.getCefSettings().root_cache_path = AppDirs.ensure(AppDirs.chromiumProfile()).toString();
             builder.getCefSettings().log_severity = org.cef.CefSettings.LogSeverity.LOGSEVERITY_ERROR;
             builder.getCefSettings().log_file = AppDirs.ensure(AppDirs.logs()).resolve("chromium.log").toString();
@@ -195,6 +200,32 @@ final class BrowserWindow {
             splash.failed("Não foi possível iniciar a interface. Feche e abra o Angatu Voice de novo.");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    /* Screens, scripts and sounds come from inside the jar: anything Chromium kept from another version is simply wrong. */
+    private static void clearCacheOfOlderVersion() {
+        Path profile = AppDirs.chromiumProfile();
+        Path marker = profile.resolve("app-version");
+        String current = Version.current().toString();
+        try {
+            if (Files.exists(marker) && current.equals(Files.readString(marker).strip())) {
+                return;
+            }
+            for (String folder : List.of("Default/Cache", "Default/Code Cache", "Default/DawnGraphiteCache", "Default/GPUCache")) {
+                Path root = profile.resolve(folder);
+                if (Files.isDirectory(root)) {
+                    try (Stream<Path> walk = Files.walk(root)) {
+                        for (Path p : walk.sorted(Comparator.reverseOrder()).toList()) {
+                            Files.deleteIfExists(p);
+                        }
+                    }
+                }
+            }
+            Files.createDirectories(profile);
+            Files.writeString(marker, current);
+        } catch (IOException e) {
+            Console.warn("Could not clear the old interface cache: %s", e.getMessage());
         }
     }
 

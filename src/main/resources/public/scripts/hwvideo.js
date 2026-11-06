@@ -99,7 +99,7 @@
     const generator = new MediaStreamTrackGenerator({ kind: "video" });
     const writable = generator.writable;
     const worker = new Worker(WORKER);
-    const counters = { decoded: 0, bytes: 0, width: 0, height: 0 };
+    const counters = { decoded: 0, bytes: 0, width: 0, height: 0, received: 0, keys: 0 };
     let closed = false;
 
     function fail(reason) {

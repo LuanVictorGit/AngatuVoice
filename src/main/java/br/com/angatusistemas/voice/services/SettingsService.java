@@ -112,9 +112,7 @@ public final class SettingsService {
         m.put("theme", new Rule("dark", oneOf("dark", "light")));
         m.put("notifications", new Rule("true", BOOL));
         m.put("privacy.preview", new Rule("true", BOOL));
-        m.put("update.auto", new Rule("true", BOOL));
         m.put("update.channel", new Rule("stable", oneOf("stable", "beta")));
-        m.put("update.intervalMinutes", new Rule("15", range(5, 10080)));
         m.put("update.token", new Rule("", v -> v.length() <= 200));
         m.put("audio.input", new Rule("", DEVICE.asMatchPredicate()));
         m.put("audio.output", new Rule("", DEVICE.asMatchPredicate()));

@@ -42,12 +42,15 @@ public final class UpdateService {
 
     private static final int MAX_JSON_BYTES = 2 * 1024 * 1024;
     private static final long PROGRESS_EVERY_MS = 250;
+    // Nobody may stay on an old version. A check answered with 304 does not spend the GitHub quota.
+    private static final long CHECK_EVERY_MS = 120_000;
+    private static final long TICK_MS = 15_000;
+    private static final int MAX_ROLLBACKS = 2;
     private static final String ETAG_KEY = "_updater.etag";
     private static final String BODY_KEY = "_updater.body";
     private static final String CHECKED_KEY = "_updater.lastCheck";
 
     private static final AtomicBoolean BUSY = new AtomicBoolean();
-    private static final AtomicBoolean CANCEL = new AtomicBoolean();
     private static volatile Status status = Status.idle();
     private static volatile Manifest pending;
     private static volatile Path stagedZip;
@@ -67,9 +70,8 @@ public final class UpdateService {
             PackageInstaller.recoverInterrupted();
         }
         PackageInstaller.takeResult().ifPresent(UpdateService::recordResult);
-        // Every launch checks at once, whatever the interval says; the timer covers the hours the app stays open.
         check();
-        Task.runTimerWithFixedDelay(UpdateService::tick, 60_000, 60_000);
+        Task.runTimerWithFixedDelay(UpdateService::tick, TICK_MS, TICK_MS);
     }
 
     public static void confirmStartup() {
@@ -93,43 +95,37 @@ public final class UpdateService {
         }
     }
 
-    public static void cancel() {
-        CANCEL.set(true);
-    }
-
     public static void install() {
         Manifest manifest = pending;
         Path zip = stagedZip;
         if (!"ready".equals(status.state()) || manifest == null || zip == null || AppDirs.install().isEmpty()) {
             throw new IllegalStateException("no update is ready to install");
         }
-        if (inCall()) {
-            String me = PeerNetwork.me() == null ? "" : PeerNetwork.me().id();
-            CallService.dropPeer(me);
-        }
+        leaveCalls();
         if (BUSY.compareAndSet(false, true)) {
             Task.runAsync(() -> runInstall(manifest, zip));
         }
     }
 
+    /* Every update is mandatory and takes effect at once, whatever the person is doing: a call is left, not waited for. */
     private static void tick() {
         try {
             if (BUSY.get()) {
                 return;
             }
-            boolean automatic = SettingsService.flag("update.auto") || (pending != null && pending.mandatory());
-            if ("ready".equals(status.state()) && automatic && !inCall() && AppDirs.install().isPresent()) {
+            if ("ready".equals(status.state()) && AppDirs.install().isPresent()) {
                 install();
-                return;
-            }
-            long intervalMs = SettingsService.number("update.intervalMinutes") * 60_000L;
-            if (!"available".equals(status.state()) && !"ready".equals(status.state())
-                    && System.currentTimeMillis() - lastCheck() >= intervalMs) {
+            } else if (System.currentTimeMillis() - lastCheck() >= CHECK_EVERY_MS) {
                 check();
             }
         } catch (RuntimeException e) {
             Console.error("update tick failed", e);
         }
+    }
+
+    /* A version that keeps failing to open must not restart everyone for ever: after two rollbacks, this computer waits for the next one. */
+    static boolean gaveUpOn(String version, List<UpdateRecord> history) {
+        return history.stream().filter(r -> version.equals(r.getVersion()) && "rolled_back".equals(r.getOutcome())).count() >= MAX_ROLLBACKS;
     }
 
     private static void runCheck() {
@@ -144,7 +140,16 @@ public final class UpdateService {
                 publish(status.with("current", null));
                 return;
             }
+            // A copy running outside an installation has nothing to swap, and blocking it would only stop development.
+            if (AppDirs.install().isEmpty()) {
+                publish(status.with("current", null));
+                return;
+            }
             Manifest manifest = loadManifest(latest.get(), channel);
+            if (gaveUpOn(manifest.version(), history())) {
+                publish(status.with("failed", "A versão " + manifest.version() + " não abriu neste computador. O aplicativo aguarda a próxima."));
+                return;
+            }
             if (manifest.needsFullInstaller(current)) {
                 publish(status.about(manifest).with("installer-required",
                         "Esta versão exige um instalador completo. Baixe-o na página do Angatu Voice."));
@@ -153,12 +158,11 @@ public final class UpdateService {
             pending = manifest;
             pendingAssets = latest.get().assets;
             publish(status.about(manifest).with("available", null));
-            if (SettingsService.flag("update.auto") || manifest.mandatory()) {
-                download(manifest);
-                Path zip = stagedZip;
-                if ("ready".equals(status.state()) && zip != null && !inCall() && AppDirs.install().isPresent()) {
-                    runInstall(manifest, zip);
-                }
+            download(manifest);
+            Path zip = stagedZip;
+            if ("ready".equals(status.state()) && zip != null) {
+                leaveCalls();
+                runInstall(manifest, zip);
             }
         } catch (SecurityException e) {
             Console.warn("Update refused: %s", e.getMessage());
@@ -272,13 +276,8 @@ public final class UpdateService {
         Path dir = AppDirs.ensure(AppDirs.updates().resolve(manifest.version()));
         Path part = dir.resolve(name + ".part");
         Path zip = dir.resolve(name);
-        CANCEL.set(false);
         if (!Files.exists(zip)) {
             streamPackage(pendingAssets.getOrDefault(name, url), size, part);
-            if (CANCEL.get()) {
-                publish(status.with("available", null));
-                return;
-            }
             Files.move(part, zip);
         }
         publish(status.with("validating", null));
@@ -313,7 +312,7 @@ public final class UpdateService {
                 StandardOpenOption.CREATE, have > 0 ? StandardOpenOption.APPEND : StandardOpenOption.TRUNCATE_EXISTING,
                 StandardOpenOption.WRITE)) {
             byte[] buffer = new byte[64 * 1024];
-            for (int n = in.read(buffer); n >= 0 && !CANCEL.get(); n = in.read(buffer)) {
+            for (int n = in.read(buffer); n >= 0; n = in.read(buffer)) {
                 received += n;
                 if (received > total) {
                     throw new SecurityException("package is larger than announced");
@@ -326,7 +325,7 @@ public final class UpdateService {
                 }
             }
         }
-        if (!CANCEL.get() && received != total) {
+        if (received != total) {
             throw new IOException("download ended early: " + received + " of " + total);
         }
     }
@@ -385,9 +384,9 @@ public final class UpdateService {
                 + " ORDER BY json_extract(data,'$.at') DESC LIMIT 20");
     }
 
-    private static boolean inCall() {
+    private static void leaveCalls() {
         String me = PeerNetwork.me() == null ? "" : PeerNetwork.me().id();
-        return CallService.snapshot().values().stream().anyMatch(members -> members.contains(me));
+        CallService.dropPeer(me);
     }
 
     private static String token() {

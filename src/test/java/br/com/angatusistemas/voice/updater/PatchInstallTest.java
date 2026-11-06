@@ -96,6 +96,16 @@ class PatchInstallTest {
     }
 
     @Test
+    void aVersionThatKeepsFailingIsLeftAlone() {
+        br.com.angatusistemas.voice.entities.UpdateRecord failed = new br.com.angatusistemas.voice.entities.UpdateRecord();
+        failed.setVersion("2.0.0");
+        failed.setOutcome("rolled_back");
+        assertTrue(!UpdateService.gaveUpOn("2.0.0", java.util.List.of(failed)), "one failure deserves another try");
+        assertTrue(UpdateService.gaveUpOn("2.0.0", java.util.List.of(failed, failed)));
+        assertTrue(!UpdateService.gaveUpOn("2.0.1", java.util.List.of(failed, failed)), "the next version starts over");
+    }
+
+    @Test
     void aPatchFromAnotherHostIsRefused() {
         Manifest.Patch patch = new Manifest.Patch("app.zip", "https://evil.example/app.zip", 10, SHA, SHA);
         assertThrows(IllegalArgumentException.class, () -> manifest(patch).validate(java.util.Set.of("github.com")));
