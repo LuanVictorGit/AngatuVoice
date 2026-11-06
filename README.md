@@ -1,82 +1,103 @@
 <p align="center">
-  <img src="src/main/resources/public/assets/icon-256.png" width="112" alt="Angatu Voice">
+  <img src="src/main/resources/public/assets/icon-256.png" width="104" alt="Angatu Voice">
 </p>
 
 <h1 align="center">Angatu Voice</h1>
 
 <p align="center">
-  Voz, texto e compartilhamento de tela, sem configurar nada.<br>
-  Instalou e abriu, está conectado.
+  <b>Voz, mensagens e compartilhamento de tela para Windows, sem nada para configurar.</b>
 </p>
+
+<br>
 
 <p align="center">
   <a href="https://github.com/LuanVictorGit/AngatuVoice/releases/latest/download/AngatuVoice-Setup.exe">
-    <img src="https://img.shields.io/badge/Baixar%20para%20Windows-Angatu%20Voice-f2a33a?style=for-the-badge&logo=windows&logoColor=1a1206&labelColor=1a1206" alt="Baixar o instalador para Windows">
+    <img height="72" src="https://img.shields.io/badge/BAIXAR_PARA_WINDOWS-f2a33a?style=for-the-badge&logo=windows&logoColor=1a1206" alt="Baixar o Angatu Voice para Windows">
   </a>
 </p>
 
 <p align="center">
-  <sub>Windows 10 ou 11 (64 bits) · o Java já vem dentro do instalador</sub>
+  <a href="https://github.com/LuanVictorGit/AngatuVoice/releases/latest"><img src="https://img.shields.io/github/v/release/LuanVictorGit/AngatuVoice?label=vers%C3%A3o&color=2b2723" alt="Versão mais recente"></a>
+  <img src="https://img.shields.io/badge/Windows-10%20e%2011%20(64%20bits)-2b2723" alt="Windows 10 e 11, 64 bits">
+  <img src="https://img.shields.io/badge/licen%C3%A7a-propriet%C3%A1ria-b5473c" alt="Licença proprietária">
 </p>
 
 <p align="center">
-  <img src="docs/img/chat-escuro.png" alt="Conversa em grupo no Angatu Voice, tema escuro">
+  <sub>O uso depende de licença da Angatu Sistemas. Consulte <a href="#licença">Licença</a> antes de instalar.</sub>
 </p>
 
-## Como funciona
+<br>
 
-1. **Instale e abra.** O instalador é por usuário, não pede administrador e já configura o início com o Windows (você pode desmarcar).
-2. **Conexão automática.** O Angatu Voice se conecta sozinho ao servidor e mostra quem está online. Não há conta, senha nem VPN: a sua identidade é uma chave criada no seu computador.
-3. **Converse.** A conversa *Geral* é de todo mundo. Para um círculo menor, crie um grupo privado e mande o convite só para quem deve entrar.
-4. **Chame no voz.** Um clique em *Chamar* faz tocar para quem você chamou, com aviso de quem é mesmo com o aplicativo em segundo plano. Na chamada, você vê quem está falando, o ping de cada um e pode silenciar ou ajustar o volume de cada pessoa só para você.
-5. **Mostre a sua tela.** A placa de vídeo codifica a imagem, até a resolução original e 60 quadros por segundo, e o servidor entrega a quem escolher assistir.
+<p align="center">
+  <img src="docs/img/chat-escuro.png" alt="Conversa em grupo no Angatu Voice, com a lista de participantes ao lado">
+</p>
 
-Tudo passa por um servidor só, com conexão cifrada e mensagens assinadas por quem escreveu. O servidor guarda mensagens para quem está offline e apaga as antigas sozinho.
+## Recursos
 
-## Um olhar por dentro
+| | |
+|---|---|
+| **Chamadas de voz** | Individuais e em grupo, com cancelamento de eco, supressão de ruído e volume ajustável para cada pessoa. |
+| **Tela compartilhada** | Codificada pela placa de vídeo quando ela oferece suporte. Cada pessoa escolhe se quer assistir. |
+| **Mensagens** | Conversa geral, grupos privados com convite e conversas individuais. Quem está offline recebe ao voltar. |
+| **Atalhos globais** | Apertar para falar, silenciar o microfone e o áudio, entrar e sair da chamada, de dentro de qualquer programa. |
+| **Sempre na mesma versão** | Toda atualização é instalada sozinha, com assinatura digital verificada e retorno à versão anterior se a nova não abrir. |
+
+## Como começar
+
+1. **Baixe e instale.** O instalador não pede permissão de administrador e já traz tudo o que o aplicativo precisa.
+2. **Abra.** A conexão é automática, sem conta nem senha. Sua identidade é uma chave criada no seu computador.
+3. **Converse.** Use a conversa *Geral* ou crie um grupo privado e envie o convite só para quem deve entrar.
+
+## Telas
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/img/chat-claro.png" alt="Tema claro"><br><sub><b>Tema claro e escuro.</b> Grupos, conversas privadas e participantes na mesma tela.</sub></td>
-    <td width="50%"><img src="docs/img/configuracoes-audio.png" alt="Configurações de áudio"><br><sub><b>Áudio sob controle.</b> Microfone, saída, sensibilidade, cancelamento de eco, supressão de ruído e teste.</sub></td>
+    <td width="50%"><img src="docs/img/chat-claro.png" alt="Conversa em grupo no tema claro"><br><sub><b>Tema claro e escuro.</b> Grupos, conversas e participantes na mesma tela.</sub></td>
+    <td width="50%"><img src="docs/img/configuracoes-audio.png" alt="Configurações de áudio"><br><sub><b>Áudio.</b> Microfone, saída, sensibilidade, cancelamento de eco e supressão de ruído.</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/img/configuracoes-rede.png" alt="Configurações de rede"><br><sub><b>Rede.</b> Conexão com o servidor e participantes.</sub></td>
-    <td width="50%"><img src="docs/img/atualizacoes.png" alt="Atualizações"><br><sub><b>Sempre atualizado.</b> Novas versões chegam sozinhas, verificadas e com volta automática se algo falhar.</sub></td>
+    <td width="50%"><img src="docs/img/atualizacoes.png" alt="Tela de atualizações"><br><sub><b>Atualizações.</b> Versão instalada e histórico.</sub></td>
   </tr>
 </table>
 
-<p align="center">
-  <img src="docs/img/mobile.png" width="260" alt="Layout compacto em janela estreita"><br>
-  <sub>A interface se adapta a janelas estreitas.</sub>
-</p>
+## Privacidade
 
-## O que tem dentro
+Mensagens, voz e tela passam pelo servidor da Angatu Sistemas, em conexão cifrada. As mensagens ficam guardadas lá para entrega a quem está offline, por até 30 dias e no limite das 1.000 mais recentes de cada conversa, e não têm criptografia de ponta a ponta. A assinatura digital de cada mensagem impede que alguém escreva em nome de outra pessoa. O histórico fica também no seu computador.
 
-- **Sem VPN e sem configuração:** o aplicativo se conecta sozinho e reconecta sozinho se a internet oscilar.
-- **Tela pela placa de vídeo:** H.264 por hardware em NVIDIA, Intel e AMD, em linhas de execução próprias. Quem assiste abre quando quer, e a imagem não trava a interface.
-- **Grupos privados** com convite, conversas individuais, histórico salvo no seu computador e mensagens pendentes entregues quando a pessoa volta.
-- **Chamadas** individuais e em grupo, com baixa latência, cancelamento de eco e supressão de ruído.
-- **Atalhos globais** para apertar para falar, silenciar microfone ou áudio, entrar e sair da chamada.
-- **Bandeja do sistema**, notificações e início automático com o Windows, sempre sob o seu controle. Minimizar ou fechar a janela não derruba a conexão; encerrar é só pela opção Sair.
-- **Conexão que aguenta oscilação:** quedas curtas na rede são recuperadas sozinhas, sem derrubar a chamada e sem avisos falsos de que alguém saiu.
-- **Atualização automática** pelas versões publicadas neste repositório, com assinatura digital, verificação de integridade e volta para a versão anterior se a nova não abrir.
+## Licença
 
-## Para quem desenvolve
+**Software proprietário. © Angatu Sistemas. Todos os direitos reservados.**
 
-```powershell
-mvn -B test
-mvn -q -B -DskipTests package
-java --enable-native-access=ALL-UNNAMED -jar target\angatu-voice-2.0.0.jar
-```
+O Angatu Voice só pode ser usado com licença concedida pela Angatu Sistemas. Sem ela, não é permitido usar, instalar, copiar, modificar, distribuir ou comercializar este software nem seu código-fonte, no todo ou em parte. O código estar visível neste repositório não concede nenhum desses direitos.
 
-Requisitos: JDK 25 (com `jpackage`), Maven 3.9+ e o binário do [Tailwind](https://github.com/tailwindlabs/tailwindcss/releases) em `tools\bin\`. O pacote e o instalador saem de `tools\package.ps1` e `installer\angatu-voice.iss`; o GitHub Actions faz tudo isso ao publicar uma tag `vX.Y.Z`.
+Para obter uma licença, fale com a [Angatu Sistemas](https://angatusistemas.com.br).
 
-- [Arquitetura, servidor, protocolo e segurança](docs/ARQUITETURA.md)
-- [Atualizador, manifesto e rollback](docs/ATUALIZADOR.md)
-- [Versionamento e como publicar uma atualização](docs/VERSIONAMENTO.md)
+## Documentação técnica
+
+Para quem tem autorização para trabalhar no projeto:
+
+- [Arquitetura, servidor e segurança](docs/ARQUITETURA.md)
+- [Atualizador](docs/ATUALIZADOR.md)
+- [Como publicar uma versão](docs/VERSIONAMENTO.md)
 - [Histórico de versões](CHANGELOG.md)
 
----
+<br>
 
-<p align="center"><sub>Desenvolvido por <b>Angatu Sistemas</b></sub></p>
+<p align="center">
+  <a href="https://github.com/LuanVictorGit/AngatuVoice/releases/latest/download/AngatuVoice-Setup.exe">
+    <img height="56" src="https://img.shields.io/badge/BAIXAR_PARA_WINDOWS-f2a33a?style=for-the-badge&logo=windows&logoColor=1a1206" alt="Baixar o Angatu Voice para Windows">
+  </a>
+</p>
+
+<br>
+
+<p align="center">
+  <sub>Desenvolvido por</sub><br>
+  <a href="https://angatusistemas.com.br">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="src/main/resources/public/assets/angatu-sistemas.png">
+      <img src="src/main/resources/public/assets/angatu-sistemas-escuro.png" width="110" alt="Angatu Sistemas">
+    </picture>
+  </a>
+</p>
