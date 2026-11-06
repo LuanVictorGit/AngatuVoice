@@ -1,6 +1,5 @@
 package br.com.angatusistemas.voice.desktop;
 
-import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.List;
 import br.com.angatusistemas.voice.utils.Version;
@@ -10,6 +9,8 @@ import br.com.angatusistemas.voice.services.SessionService;
 import br.com.angatusistemas.voice.services.SettingsService;
 import br.com.angatusistemas.voice.updater.UpdateService;
 import br.com.angatusistemas.voice.utils.AppDirs;
+import com.sun.jna.platform.win32.Kernel32;
+import com.sun.jna.platform.win32.WinBase;
 import com.sun.jna.platform.win32.User32;
 import com.sun.jna.platform.win32.WinUser;
 import java.awt.Dimension;
@@ -190,7 +191,8 @@ final class BrowserWindow {
             installHandlers();
             browser = client.createBrowser(bootUrl(), false, false);
             SwingUtilities.invokeLater(this::attachBrowser);
-        } catch (IOException | UnsupportedPlatformException | CefInitializationException e) {
+        } catch (IOException | UnsupportedPlatformException | CefInitializationException | RuntimeException | LinkageError e) {
+            // Anything left uncaught here ends this thread in silence, with the window stuck on the splash forever.
             Console.error("Chromium could not start", e);
             splash.failed("Não foi possível iniciar a interface. Feche e abra o Angatu Voice de novo.");
         } catch (InterruptedException e) {
@@ -204,8 +206,9 @@ final class BrowserWindow {
         if (Runtime.getRuntime().availableProcessors() >= STRONG_CPU_THREADS) {
             flags.add("--webrtc-max-cpu-consumption-percentage=100");
         }
-        if (ManagementFactory.getOperatingSystemMXBean() instanceof com.sun.management.OperatingSystemMXBean os
-                && os.getTotalMemorySize() <= LOW_MEMORY_BYTES) {
+        // Asked of Windows directly: the bundled runtime has no jdk.management module, so com.sun.management does not exist there.
+        WinBase.MEMORYSTATUSEX memory = new WinBase.MEMORYSTATUSEX();
+        if (Kernel32.INSTANCE.GlobalMemoryStatusEx(memory) && memory.ullTotalPhys.longValue() <= LOW_MEMORY_BYTES) {
             flags.add("--enable-low-end-device-mode");
         }
         return flags.toArray(String[]::new);

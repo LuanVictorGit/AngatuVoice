@@ -20,6 +20,11 @@ Copy-Item $jar $input
 Copy-Item -Recurse target/lib (Join-Path $input 'lib')
 
 $modules = 'java.base,java.desktop,java.logging,java.management,java.naming,java.net.http,java.sql,java.xml,java.prefs,jdk.unsupported,jdk.crypto.ec,jdk.zipfs,jdk.net,java.security.jgss,java.compiler'
+# Everything runs on a full JDK during development: a module missing from this list only shows up in the installed app.
+$needed = (jdeps --ignore-missing-deps --multi-release 25 --print-module-deps $jar).Trim() -split ','
+$missing = $needed | Where-Object { ($modules -split ',') -notcontains $_ }
+if ($missing) { throw "The bundled runtime lacks modules used by the app: $($missing -join ', ')" }
+
 jpackage --type app-image --name AngatuVoice --dest $image --input $input `
     --main-jar "angatu-voice-$Version.jar" --main-class br.com.angatusistemas.voice.Main `
     --app-version $numeric --vendor 'Angatu Sistemas' --icon installer/app.ico `

@@ -7,6 +7,12 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.7.1] - 2026-11-05
+
+### Corrigido
+- A versão 1.7.0 ficava presa na tela "Iniciando…" e nunca abria. O aplicativo volta a abrir normalmente.
+- Se a interface não conseguir iniciar por qualquer motivo, agora aparece uma mensagem, em vez de a tela ficar parada para sempre.
+
 ## [1.7.0] - 2026-11-05
 
 ### Adicionado
