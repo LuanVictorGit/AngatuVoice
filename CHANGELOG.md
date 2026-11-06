@@ -7,6 +7,21 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.7.0] - 2026-11-05
+
+### Adicionado
+- O compartilhamento de tela agora usa a placa de vídeo: H.264 por hardware (NVIDIA, Intel e AMD) para codificar e para exibir. Em 1080p, numa GTX 1660 SUPER, a imagem sai a 56 FPS, contra 24 FPS do VP9 e 9 FPS do AV1 por processador. Quem transmite usa um codificador só, não importa quantas pessoas assistem.
+- Codificação e decodificação rodam em linhas de execução próprias, fora da interface: a imagem não trava quando a tela do aplicativo está ocupada, e o contrário também.
+- Atualizações pequenas: quando só o aplicativo muda, o download é de poucos MB, não mais de 236 MB, e a instalação reaproveita o que já está no computador. Vale a partir da próxima versão, porque esta ainda precisa chegar por inteiro.
+
+### Corrigido
+- O Radmin VPN não abre mais sozinho. O aplicativo lê o estado dele sem tocar na janela. Só o botão Reconectar, as ações de rede e a primeira entrada automática na rede AngatuVoice abrem o Radmin, que depois é fechado pelo X e continua rodando em segundo plano.
+- Computadores fracos: o aplicativo rodava um script do PowerShell e dois comandos do Windows a cada 5 segundos. Agora não roda nenhum. A Java também passou a usar menos memória e processador, e sem placa de vídeo compatível a transmissão começa em 720p a 30 FPS em computadores com até 4 núcleos lógicos.
+- O overlay de quem está falando deixa passar os cliques para o que está embaixo dele.
+- O cartão "Você está transmitindo" não fica mais cortado nem com a foto por cima dos botões na coluna lateral.
+- A marca da Angatu Sistemas segue a especificação: "Desenvolvido por" ao lado do logotipo oficial, com link para o site.
+- Novas versões são procuradas a cada 15 minutos, em vez de 6 horas.
+
 ## [1.6.0] - 2026-11-05
 
 ### Adicionado

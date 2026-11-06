@@ -84,7 +84,7 @@ class UpdaterSecurityTest {
             out.write(1);
             out.closeEntry();
         }
-        Exception e = assertThrows(java.io.IOException.class, () -> PackageInstaller.stage(zip, null));
+        Exception e = assertThrows(java.io.IOException.class, () -> PackageInstaller.stage(zip, null, java.util.Optional.empty()));
         assertTrue(e.getMessage().contains("escapes"));
         assertFalse(Files.exists(dir.resolve("evil.txt")));
     }

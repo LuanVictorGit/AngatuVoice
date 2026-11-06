@@ -7,14 +7,12 @@ import br.com.angatusistemas.voice.services.LiveHub;
 import br.com.angatusistemas.voice.services.RadminService;
 import java.time.Instant;
 import java.util.Map;
-import java.util.Random;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Manages the mandatory default network "AngatuVoice", guaranteeing universal automatic creation
- * and joining for all participants, auto-recovery on network drops, and protection against removal.
+ * Manages the mandatory default network "AngatuVoice": one automatic join or creation for a new participant, joining
+ * again when the person asks, and protection against removal. Its periodic check never touches the Radmin window.
  *
  * @author Angatu Sistemas
  */
@@ -42,16 +40,10 @@ public final class DefaultNetworkService {
     }
 
     private static final String ID = "net_angatuvoice";
-    private static final long INITIAL_BACKOFF_MS = 3_000;
-    private static final long MAX_BACKOFF_MS = 30_000;
-    private static final Random JITTER = new Random();
-
     private static final AtomicReference<State> CURRENT_STATE = new AtomicReference<>(State.DISCONNECTED);
     private static final AtomicReference<String> LAST_MESSAGE = new AtomicReference<>("");
-    private static final AtomicInteger RETRY_COUNT = new AtomicInteger(0);
     private static final AtomicBoolean PENDING_AUTOJOIN_NOTICE = new AtomicBoolean(false);
-    private static final AtomicBoolean FORCE_NOTIFY_ON_NEXT_CONNECT = new AtomicBoolean(false);
-    private static volatile long nextAttemptTime = 0;
+    private static final AtomicBoolean JOIN_REQUESTED = new AtomicBoolean(false);
 
     private DefaultNetworkService() {
     }
@@ -95,9 +87,7 @@ public final class DefaultNetworkService {
     }
 
     public static void reconnect() {
-        nextAttemptTime = 0;
-        RETRY_COUNT.set(0);
-        FORCE_NOTIFY_ON_NEXT_CONNECT.set(true);
+        JOIN_REQUESTED.set(true);
         Thread.startVirtualThread(DefaultNetworkService::tick);
     }
 
@@ -112,7 +102,7 @@ public final class DefaultNetworkService {
     private static void tickInternal() {
         if (System.getProperty("angatu.radmin.ip") != null) {
             transition(State.CONNECTED, "Conectado (ambiente de teste).");
-            if (FORCE_NOTIFY_ON_NEXT_CONNECT.getAndSet(false)) {
+            if (JOIN_REQUESTED.getAndSet(false)) {
                 notifyAutoJoined();
             }
             return;
@@ -128,72 +118,71 @@ public final class DefaultNetworkService {
             return;
         }
 
-        // Query active networks from Radmin GUI
-        RadminAutomation.RadminStatus uiaStatus = RadminAutomation.query();
-        if (uiaStatus.isConnectedTo(NetworkDefaults.DEFAULT_NETWORK_NAME)) {
-            transition(State.CONNECTED, "Conectado à rede oficial AngatuVoice.");
-            RETRY_COUNT.set(0);
-            nextAttemptTime = 0;
-            updateRecord("connected");
-            if (FORCE_NOTIFY_ON_NEXT_CONNECT.getAndSet(false)) {
-                notifyAutoJoined();
-            }
+        RadminNetwork record = Saveable.findById(RadminNetwork.class, ID);
+        boolean requested = JOIN_REQUESTED.getAndSet(false);
+        if (!requested && isMember(record)) {
+            markConnected();
             return;
         }
-
-        long now = System.currentTimeMillis();
-        if (now < nextAttemptTime) {
+        // Opening the Radmin window unasked is only acceptable once ever, for the first automatic join; after that the button asks.
+        if (!requested && (record == null || record.isAutoJoinTried())) {
+            transition(State.DISCONNECTED, "Fora da rede " + NetworkDefaults.DEFAULT_NETWORK_NAME + ". Use o botão Reconectar para entrar.");
             return;
+        }
+        if (record != null) {
+            record.setAutoJoinTried(true);
+            record.save();
         }
 
         State previous = CURRENT_STATE.get();
-        State nextState = previous == State.CONNECTED ? State.RECONNECTING : State.CONNECTING;
-        transition(nextState, "Tentando conectar à rede " + NetworkDefaults.DEFAULT_NETWORK_NAME + "…");
-
-        // Universal Join-or-Create:
-        // 1. Try to join
-        RadminAutomation.OperationResult joinRes = RadminAutomation.join(
-                NetworkDefaults.DEFAULT_NETWORK_NAME,
-                NetworkDefaults.DEFAULT_NETWORK_PASSWORD);
-
-        if (!joinRes.ok()) {
-            String joinMsg = joinRes.message().toLowerCase();
-            Console.log("Tentativa de ingresso na rede padrão retornou: %s", joinRes.message());
-            // If the network does not exist or was not found, attempt automatic creation
-            if (joinMsg.contains("não encontrad") || joinMsg.contains("not found")
-                    || joinMsg.contains("inválid") || joinMsg.contains("tempo limite")
-                    || joinMsg.contains("incorret")) {
-                Console.log("Rede padrão não encontrada ou inacessível. Criando rede automaticamente: %s", NetworkDefaults.DEFAULT_NETWORK_NAME);
-                RadminAutomation.OperationResult createRes = RadminAutomation.create(
-                        NetworkDefaults.DEFAULT_NETWORK_NAME,
-                        NetworkDefaults.DEFAULT_NETWORK_PASSWORD);
-
-                if (!createRes.ok()) {
-                    String createMsg = createRes.message().toLowerCase();
-                    if (createMsg.contains("já existe") || createMsg.contains("already exists")) {
-                        // Concurrent creation by another peer, join immediately
-                        RadminAutomation.join(
-                                NetworkDefaults.DEFAULT_NETWORK_NAME,
-                                NetworkDefaults.DEFAULT_NETWORK_PASSWORD);
-                    }
-                }
-            }
-        }
-
-        // Check if joined
-        RadminAutomation.RadminStatus recheck = RadminAutomation.query();
-        if (recheck.isConnectedTo(NetworkDefaults.DEFAULT_NETWORK_NAME)) {
-            transition(State.CONNECTED, "Conectado à rede oficial AngatuVoice.");
-            RETRY_COUNT.set(0);
-            nextAttemptTime = 0;
-            updateRecord("connected");
-            FORCE_NOTIFY_ON_NEXT_CONNECT.set(false);
+        transition(previous == State.CONNECTED ? State.RECONNECTING : State.CONNECTING,
+                "Tentando conectar à rede " + NetworkDefaults.DEFAULT_NETWORK_NAME + "…");
+        if (joinOrCreate()) {
+            markConnected();
             notifyAutoJoined();
         } else {
             transition(State.DISCONNECTED, "Não foi possível conectar à rede padrão no momento.");
-            scheduleRetry();
             updateRecord("disconnected");
         }
+    }
+
+    /* Radmin only names the networks it has shown in its window, so a join seen here once stands while any membership remains. */
+    private static boolean isMember(RadminNetwork record) {
+        if (RadminAutomation.query().isConnectedTo(NetworkDefaults.DEFAULT_NETWORK_NAME)) {
+            return true;
+        }
+        return record != null && record.getLastSeenAt() > 0 && RadminAutomation.membershipCount() > 0;
+    }
+
+    private static boolean joinOrCreate() {
+        String name = NetworkDefaults.DEFAULT_NETWORK_NAME;
+        String password = NetworkDefaults.DEFAULT_NETWORK_PASSWORD;
+        RadminAutomation.OperationResult join = RadminAutomation.join(name, password);
+        if (join.ok()) {
+            return true;
+        }
+        String joinMsg = join.message().toLowerCase();
+        Console.log("Tentativa de ingresso na rede padrão retornou: %s", join.message());
+        boolean missing = joinMsg.contains("não encontrad") || joinMsg.contains("not found") || joinMsg.contains("inválid")
+                || joinMsg.contains("tempo limite") || joinMsg.contains("incorret");
+        if (!missing) {
+            return false;
+        }
+        Console.log("Criando a rede padrão automaticamente: %s", name);
+        RadminAutomation.OperationResult create = RadminAutomation.create(name, password);
+        if (create.ok()) {
+            return true;
+        }
+        String createMsg = create.message().toLowerCase();
+        // Another peer created it at the same moment.
+        return (createMsg.contains("já existe") || createMsg.contains("already exists")) && RadminAutomation.join(name, password).ok();
+    }
+
+    private static void markConnected() {
+        if (CURRENT_STATE.get() != State.CONNECTED) {
+            updateRecord("connected");
+        }
+        transition(State.CONNECTED, "Conectado à rede oficial AngatuVoice.");
     }
 
     public static void validateOperation(String networkName) {
@@ -209,13 +198,6 @@ public final class DefaultNetworkService {
             Console.log("Rede padrão [%s -> %s]: %s", old, newState, msg);
             LiveHub.emit("net.status", new StatusEvent(newState.name(), newState.label(), msg));
         }
-    }
-
-    private static void scheduleRetry() {
-        int attempt = RETRY_COUNT.incrementAndGet();
-        long backoff = Math.min(INITIAL_BACKOFF_MS * (1L << Math.min(attempt - 1, 5)), MAX_BACKOFF_MS);
-        long jitter = JITTER.nextInt(1500);
-        nextAttemptTime = System.currentTimeMillis() + backoff + jitter;
     }
 
     private static void updateRecord(String status) {

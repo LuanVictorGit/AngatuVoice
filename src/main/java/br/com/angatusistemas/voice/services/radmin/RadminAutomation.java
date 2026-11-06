@@ -1,10 +1,12 @@
 package br.com.angatusistemas.voice.services.radmin;
 
 import br.com.angatusistemas.lib.console.Console;
-import br.com.angatusistemas.lib.gson.GsonAPI;
-import br.com.angatusistemas.voice.utils.AppDirs;
+import br.com.angatusistemas.voice.services.RadminService;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.sun.jna.platform.win32.Advapi32Util;
+import com.sun.jna.platform.win32.Win32Exception;
+import com.sun.jna.platform.win32.WinReg;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -14,54 +16,49 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Automates Radmin VPN operations using Windows UI Automation on the user's interactive desktop.
+ * Reads the Radmin VPN state from the registry, and automates the operations only its window offers through
+ * Windows UI Automation on the user's interactive desktop. Only an explicit action opens that window.
  *
  * @author Angatu Sistemas
  */
 public final class RadminAutomation {
 
     private static final String SCRIPT_NAME = "radmin-automation.ps1";
+    private static final String UI_NETWORKS_KEY = "Software\\Famatech\\Radmin VPN\\ui\\networks";
+    private static final String MEMBERSHIPS_KEY = "SOFTWARE\\WOW6432Node\\Famatech\\RadminVPN\\1.0\\Networks";
+    private static final int ACTION_TIMEOUT_SECONDS = 40;
     private static Path cachedScriptPath;
 
     private RadminAutomation() {
     }
 
+    /* Called every few seconds: it reads the registry in-process, because a script here costs a compiler run and opens Radmin. */
     public static RadminStatus query() {
         if (System.getProperty("angatu.radmin.ip") != null) {
             String testIp = System.getProperty("angatu.radmin.ip");
             return new RadminStatus(true, true, "node", testIp, "Connected", Collections.singletonList(NetworkDefaults.DEFAULT_NETWORK_NAME), Collections.emptyList(), null);
         }
+        RadminService.Status net = RadminService.current();
+        List<String> known = subKeys(WinReg.HKEY_CURRENT_USER, UI_NETWORKS_KEY);
+        return new RadminStatus(net.installed(), net.running(), net.alias(), net.ip(), net.connected() ? "Online" : "Offline",
+                known, known, "");
+    }
 
-        String json = executeScript(10, "-Action", "list");
-        if (json.isBlank()) {
-            return new RadminStatus(false, false, "", "", "Offline", Collections.emptyList(), Collections.emptyList(), "Script execution failed");
-        }
+    /* Radmin lists each network it belongs to by id only, so this says how many there are, not which. */
+    public static int membershipCount() {
+        return subKeys(WinReg.HKEY_LOCAL_MACHINE, MEMBERSHIPS_KEY).size();
+    }
+
+    private static List<String> subKeys(WinReg.HKEY root, String key) {
         try {
-            JsonObject obj = JsonParser.parseString(json).getAsJsonObject();
-            boolean installed = obj.has("installed") && obj.get("installed").getAsBoolean();
-            boolean running = obj.has("running") && obj.get("running").getAsBoolean();
-            String alias = obj.has("alias") ? obj.get("alias").getAsString() : "";
-            String ip = obj.has("ip") ? obj.get("ip").getAsString() : "";
-            String status = obj.has("status") ? obj.get("status").getAsString() : "Offline";
-            String error = obj.has("error") ? obj.get("error").getAsString() : "";
-
-            List<String> networks = new ArrayList<>();
-            if (obj.has("networks") && obj.get("networks").isJsonArray()) {
-                obj.getAsJsonArray("networks").forEach(e -> networks.add(e.getAsString()));
-            }
-
-            List<String> known = new ArrayList<>();
-            if (obj.has("knownNetworks") && obj.get("knownNetworks").isJsonArray()) {
-                obj.getAsJsonArray("knownNetworks").forEach(e -> known.add(e.getAsString()));
-            }
-
-            return new RadminStatus(installed, running, alias, ip, status, networks, known, error);
-        } catch (Exception e) {
-            Console.warn("Failed to parse Radmin automation query JSON: %s", e.getMessage());
-            return new RadminStatus(false, false, "", "", "Error", Collections.emptyList(), Collections.emptyList(), e.getMessage());
+            return Advapi32Util.registryKeyExists(root, key) ? List.of(Advapi32Util.registryGetKeys(root, key)) : List.of();
+        } catch (Win32Exception e) {
+            Console.debug("Radmin registry not readable: " + e.getMessage());
+            return List.of();
         }
     }
 
@@ -69,7 +66,7 @@ public final class RadminAutomation {
         if (System.getProperty("angatu.radmin.ip") != null) {
             return new OperationResult(true, "Operação em ambiente de teste.");
         }
-        String json = executeScript(15, "-Action", "join", "-Name", name, "-Password", password);
+        String json = executeScript(ACTION_TIMEOUT_SECONDS, "-Action", "join", "-Name", name, "-Password", password);
         return parseResult(json, "Falha ao entrar na rede");
     }
 
@@ -77,7 +74,7 @@ public final class RadminAutomation {
         if (System.getProperty("angatu.radmin.ip") != null) {
             return new OperationResult(true, "Operação em ambiente de teste.");
         }
-        String json = executeScript(15, "-Action", "create", "-Name", name, "-Password", password);
+        String json = executeScript(ACTION_TIMEOUT_SECONDS, "-Action", "create", "-Name", name, "-Password", password);
         return parseResult(json, "Falha ao criar rede");
     }
 
@@ -85,7 +82,7 @@ public final class RadminAutomation {
         if (System.getProperty("angatu.radmin.ip") != null) {
             return new OperationResult(true, "Operação em ambiente de teste.");
         }
-        String json = executeScript(12, "-Action", "leave", "-Name", name);
+        String json = executeScript(ACTION_TIMEOUT_SECONDS, "-Action", "leave", "-Name", name);
         return parseResult(json, "Falha ao sair da rede");
     }
 
@@ -93,7 +90,7 @@ public final class RadminAutomation {
         if (System.getProperty("angatu.radmin.ip") != null) {
             return new OperationResult(true, "Operação em ambiente de teste.");
         }
-        String json = executeScript(12, "-Action", "delete", "-Name", name);
+        String json = executeScript(ACTION_TIMEOUT_SECONDS, "-Action", "delete", "-Name", name);
         return parseResult(json, "Falha ao excluir rede do Radmin");
     }
 
@@ -165,12 +162,20 @@ public final class RadminAutomation {
         Process process = null;
         try {
             process = new ProcessBuilder(command).redirectErrorStream(true).start();
-            byte[] bytes = process.getInputStream().readAllBytes();
+            // Reading first would wait on a stuck script forever and hold every later network action behind it.
+            InputStream output = process.getInputStream();
+            CompletableFuture<byte[]> bytes = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return output.readAllBytes();
+                } catch (IOException e) {
+                    return new byte[0];
+                }
+            });
             if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
                 return "";
             }
-            return new String(bytes, StandardCharsets.UTF_8).trim();
+            return new String(bytes.get(5, TimeUnit.SECONDS), StandardCharsets.UTF_8).trim();
         } catch (Exception e) {
             Console.warn("Error running Radmin automation script: %s", e.getMessage());
             return "";

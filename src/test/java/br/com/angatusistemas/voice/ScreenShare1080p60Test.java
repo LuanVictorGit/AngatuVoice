@@ -23,12 +23,12 @@ import java.net.http.WebSocket;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * Validates the 1080p 60 FPS screen share refactoring: default settings, codec negotiation order,
- * and end-to-end WebRTC transmission in embedded JCEF.
+ * Validates the 1080p 60 FPS screen share: default settings, and the path through the video card from end to end in embedded JCEF.
  *
  * @author Angatu Sistemas
  */
@@ -64,7 +64,7 @@ class ScreenShare1080p60Test {
     }
 
     @Test
-    void endToEnd1080p60WebRtcTransmission() throws Exception {
+    void endToEndThroughTheVideoCard() throws Exception {
         AppShell.open(port);
 
         String cdpWsUrl = null;
@@ -113,106 +113,69 @@ class ScreenShare1080p60Test {
                     }
                 }).get(5, TimeUnit.SECONDS);
 
-        // Run full WebRTC 1080p60 test using VP9 with steady-state delta measurement
+        // The real sender and receiver from hwvideo.js, over a real data channel, with a picture that keeps changing.
         String testScript = """
             (async () => {
+                const support = await AV.hwVideo.support();
+                if (!support.encode || !support.decode) return JSON.stringify({ skipped: true });
                 const canvas = document.createElement("canvas");
                 canvas.width = 1920;
                 canvas.height = 1080;
                 const ctx = canvas.getContext("2d");
-                let frameCount = 0;
-
-                function draw() {
-                    frameCount++;
-                    ctx.fillStyle = "#161616";
-                    ctx.fillRect(0, 0, 1920, 1080);
-                    ctx.fillStyle = "#22c55e";
-                    ctx.font = "32px sans-serif";
-                    ctx.fillText("1080p60 Validation - Frame " + frameCount, 80, 80);
-                    const x = (frameCount * 10) % 1800;
-                    ctx.fillStyle = "#3b82f6";
-                    ctx.fillRect(x, 150, 150, 80);
+                const noise = document.createElement("canvas");
+                noise.width = 2320;
+                noise.height = 1080;
+                const nctx = noise.getContext("2d");
+                const image = nctx.createImageData(2320, 1080);
+                for (let i = 0; i < image.data.length; i += 4) {
+                    const v = Math.random() * 90;
+                    image.data[i] = v; image.data[i + 1] = v; image.data[i + 2] = v; image.data[i + 3] = 255;
                 }
-
-                const timer = setInterval(draw, 16);
-                const stream = canvas.captureStream(60);
-                const track = stream.getVideoTracks()[0];
-                track.contentHint = "detail";
+                nctx.putImageData(image, 0, 0);
+                let n = 0;
+                const timer = setInterval(() => { n++; ctx.drawImage(noise, -(n * 7) % 400, 0); }, 16);
+                const track = canvas.captureStream(60).getVideoTracks()[0];
 
                 const pc1 = new RTCPeerConnection();
                 const pc2 = new RTCPeerConnection();
-                pc1.onicecandidate = e => e.candidate && pc2.addIceCandidate(e.candidate);
-                pc2.onicecandidate = e => e.candidate && pc1.addIceCandidate(e.candidate);
-
-                const sender = pc1.addTrack(track, stream);
-                const trans = pc1.getTransceivers()[0];
-
-                // Prefer VP9
-                const caps = RTCRtpSender.getCapabilities("video");
-                const vp9Codecs = caps.codecs.filter(c => c.mimeType === "video/VP9" && !(c.sdpFmtpLine || "").includes("profile-id=2"));
-                if (vp9Codecs.length && trans.setCodecPreferences) {
-                    trans.setCodecPreferences(vp9Codecs);
-                }
-
-                const p = sender.getParameters();
-                if (!p.encodings) p.encodings = [{}];
-                p.encodings[0].maxBitrate = 8000000;
-                p.encodings[0].maxFramerate = 60;
-                p.encodings[0].scaleResolutionDownBy = 1.0;
-                p.degradationPreference = "maintain-resolution";
-                await sender.setParameters(p);
-
-                let offer = await pc1.createOffer();
-                let sdp = offer.sdp.replace(/a=mid:0\\r\\n/g, "a=mid:0\\r\\nb=AS:16000\\r\\n");
-                offer = new RTCSessionDescription({ type: offer.type, sdp });
+                pc1.onicecandidate = (e) => e.candidate && pc2.addIceCandidate(e.candidate);
+                pc2.onicecandidate = (e) => e.candidate && pc1.addIceCandidate(e.candidate);
+                const open = { negotiated: true, id: 8, ordered: false, maxPacketLifeTime: 150 };
+                const out = pc1.createDataChannel("av-video", open);
+                const inc = pc2.createDataChannel("av-video", open);
+                out.binaryType = inc.binaryType = "arraybuffer";
+                let failed = "";
+                const sender = AV.hwVideo.createSender({ track, codec: support.encode, target: () => ({ height: 1080, fps: 60, bitrate: 8000000 }), onfail: () => { failed = "encoder"; } });
+                const receiver = AV.hwVideo.createReceiver({ channel: inc, onfail: () => { failed = "decoder"; } });
+                out.onmessage = (e) => { if (AV.hwVideo.isKeyRequest(e.data)) sender.requestKey(); };
+                inc.onmessage = (e) => receiver.take(e.data);
+                const offer = await pc1.createOffer();
                 await pc1.setLocalDescription(offer);
                 await pc2.setRemoteDescription(offer);
-
-                let answer = await pc2.createAnswer();
-                let asdp = answer.sdp.replace(/a=mid:0\\r\\n/g, "a=mid:0\\r\\nb=AS:16000\\r\\n");
-                answer = new RTCSessionDescription({ type: answer.type, sdp: asdp });
+                const answer = await pc2.createAnswer();
                 await pc2.setLocalDescription(answer);
                 await pc1.setRemoteDescription(answer);
+                await new Promise((r) => { out.onopen = r; if (out.readyState === "open") r(); });
+                sender.add("viewer", out);
 
-                // Warm up for 2 seconds to let ICE and keyframe settle
-                await new Promise(r => setTimeout(r, 2000));
+                const video = document.createElement("video");
+                video.muted = true;
+                video.srcObject = receiver.stream;
+                video.play();
 
-                let s1 = await pc1.getStats();
-                let s2 = await pc2.getStats();
-                let sent0 = 0, dec0 = 0;
-                s1.forEach(r => { if (r.type === "outbound-rtp" && r.kind === "video") sent0 = r.framesSent || 0; });
-                s2.forEach(r => { if (r.type === "inbound-rtp" && r.kind === "video") dec0 = r.framesDecoded || 0; });
+                await new Promise((r) => setTimeout(r, 3000));
+                const before = receiver.counters.decoded;
                 const t0 = performance.now();
-
-                // Measure over next 3 seconds
-                await new Promise(r => setTimeout(r, 3000));
-                const t1 = performance.now();
-
-                s1 = await pc1.getStats();
-                s2 = await pc2.getStats();
-                let outRtp = null, inRtp = null;
-                s1.forEach(r => { if (r.type === "outbound-rtp" && r.kind === "video") outRtp = r; });
-                s2.forEach(r => { if (r.type === "inbound-rtp" && r.kind === "video") inRtp = r; });
-
-                const elapsedSec = (t1 - t0) / 1000;
-                const steadyOutFps = Math.round(((outRtp ? outRtp.framesSent : 0) - sent0) / elapsedSec);
-                const steadyInFps = Math.round(((inRtp ? inRtp.framesDecoded : 0) - dec0) / elapsedSec);
-
+                await new Promise((r) => setTimeout(r, 5000));
+                const inFps = Math.round((receiver.counters.decoded - before) / ((performance.now() - t0) / 1000));
+                const result = { inFps, width: receiver.counters.width, height: receiver.counters.height, shown: video.videoWidth, failed };
                 clearInterval(timer);
+                sender.stop();
+                receiver.close();
                 track.stop();
                 pc1.close();
                 pc2.close();
-
-                return JSON.stringify({
-                    outWidth: outRtp ? outRtp.frameWidth : 0,
-                    outHeight: outRtp ? outRtp.frameHeight : 0,
-                    outFps: steadyOutFps,
-                    inWidth: inRtp ? inRtp.frameWidth : 0,
-                    inHeight: inRtp ? inRtp.frameHeight : 0,
-                    inFps: steadyInFps,
-                    codec: outRtp ? s1.get(outRtp.codecId)?.mimeType : "unknown",
-                    qualityLimitationReason: outRtp ? outRtp.qualityLimitationReason : "unknown"
-                });
+                return JSON.stringify(result);
             })()
         """;
 
@@ -234,14 +197,12 @@ class ScreenShare1080p60Test {
         String innerJson = respObj.getAsJsonObject("result").getAsJsonObject("result").get("value").getAsString();
         JsonObject metrics = JsonParser.parseString(innerJson).getAsJsonObject();
 
-        assertEquals(1920, metrics.get("outWidth").getAsInt(), "Sender resolution width must be 1920");
-        assertEquals(1080, metrics.get("outHeight").getAsInt(), "Sender resolution height must be 1080");
-        assertEquals(1920, metrics.get("inWidth").getAsInt(), "Receiver resolution width must be 1920");
-        assertEquals(1080, metrics.get("inHeight").getAsInt(), "Receiver resolution height must be 1080");
-        boolean isCi = System.getenv("CI") != null || System.getenv("GITHUB_ACTIONS") != null;
-        int minFps = isCi ? 20 : 50;
-        assertTrue(metrics.get("inFps").getAsInt() >= minFps, "Receiver steady-state FPS must be >= " + minFps + " (target 60 FPS), got: " + metrics.get("inFps").getAsInt());
-        assertEquals("video/VP9", metrics.get("codec").getAsString(), "Codec must be VP9");
-        assertEquals("none", metrics.get("qualityLimitationReason").getAsString(), "Quality limitation reason must be 'none'");
+        // A machine with no H.264 on its video card, like a CI runner, goes through WebRTC instead: nothing to measure here.
+        Assumptions.assumeFalse(metrics.has("skipped"), "no H.264 video card on this machine");
+        assertEquals("", metrics.get("failed").getAsString());
+        assertEquals(1920, metrics.get("width").getAsInt(), "picture width");
+        assertEquals(1080, metrics.get("height").getAsInt(), "picture height");
+        assertEquals(1920, metrics.get("shown").getAsInt(), "the video element shows the decoded frames");
+        assertTrue(metrics.get("inFps").getAsInt() >= 30, "steady frame rate through the video card, got " + metrics.get("inFps"));
     }
 }

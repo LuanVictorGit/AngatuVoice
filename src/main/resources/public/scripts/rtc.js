@@ -16,8 +16,16 @@
   const DUCK_GAIN = 0.06;
   const CALL_TIMEOUT_MS = 45000;
   const STATE_CHANNEL_ID = 7;
-  // VP9 achieves ~3.97 ms encode time per 1080p60 frame in JCEF with sharp text and ~40% lower bitrate than VP8; VP8 serves as universal fallback.
-  const CODEC_ORDER = ["video/VP9", "video/VP8", "video/AV1"];
+  // Only reached without a usable video card, or with a viewer on an older version: VP8 is the software codec that keeps its frame rate here.
+  const CODEC_ORDER = ["video/VP8", "video/VP9", "video/AV1"];
+  const VIDEO_CHANNEL_ID = 8;
+  // Lost pieces of a frame are worth resending only while that frame can still be shown.
+  const VIDEO_PACKET_LIFETIME_MS = 150;
+  const HW_FIRST_FRAME_MS = 6000;
+  const CAPTURE_HEADROOM_FPS = 120;
+  // Below this many threads a software encoder at full size takes the computer down with it.
+  const WEAK_CPU_THREADS = 4;
+  const WEAK_CPU_HEIGHT = 720;
   const START_KBPS = 6000;
   const MIN_KBPS = 800;
   const LOWER_RUNGS = [1440, 1080, 720, 540, 360];
@@ -45,6 +53,9 @@
   let shareAudio = null;
   let shareProbe = null;
   let shareHeight = 0;
+  let hwSender = null;
+  let hwEncoderCodec = null;
+  let hwDecodes = false;
   let ducked = false;
   let vadTimer = null;
   let statsTimer = null;
@@ -441,6 +452,9 @@
     peer.channel = pc.createDataChannel("av-state", { negotiated: true, id: STATE_CHANNEL_ID });
     peer.channel.onopen = () => sendState(peer);
     peer.channel.onmessage = (e) => onPeerState(peer, e.data);
+    peer.videoChannel = pc.createDataChannel("av-video", { negotiated: true, id: VIDEO_CHANNEL_ID, ordered: false, maxPacketLifeTime: VIDEO_PACKET_LIFETIME_MS });
+    peer.videoChannel.binaryType = "arraybuffer";
+    peer.videoChannel.onmessage = (e) => onVideoData(peer, e.data);
     if (mic) pc.addTrack(mic.track, mic.stream);
     else pc.addTransceiver("audio", { direction: "recvonly" });
     if (rtc.localShare) openShareFor(peer);
@@ -452,7 +466,13 @@
     try { o = JSON.parse(raw); } catch (e) { return; }
     const previous = p.state;
     const viewers = Array.isArray(o.vw) ? o.vw.filter((id) => typeof id === "string").slice(0, 64) : [];
-    p.state = { speaking: o.s === 1, muted: o.m === 1, deafened: o.d === 1, sharing: o.v === 1, viewers, at: performance.now() };
+    p.state = { speaking: o.s === 1, muted: o.m === 1, deafened: o.d === 1, sharing: o.v === 1, viaCard: o.vh === 1, viewers, at: performance.now() };
+    const decodes = o.h === 1;
+    if (decodes !== p.decodesOnCard) {
+      p.decodesOnCard = decodes;
+      if (rtc.localShare) feedShare(p);
+    }
+    if (!p.state.sharing && p.cardReceiver) closeCardReceiver(p);
     const wants = o.w === 1;
     let changed = !previous || previous.muted !== p.state.muted || previous.deafened !== p.state.deafened
       || previous.sharing !== p.state.sharing || previous.viewers.join() !== viewers.join();
@@ -470,7 +490,12 @@
     if (!p.channel || p.channel.readyState !== "open") return;
     try {
       const o = { s: rtc.speaking[myId()] ? 1 : 0, m: rtc.muted ? 1 : 0, d: rtc.deafened ? 1 : 0, w: rtc.watching.has(p.id) ? 1 : 0 };
-      if (rtc.localShare) { o.v = 1; o.vw = rtc.viewers(); }
+      if (hwDecodes) o.h = 1;
+      if (rtc.localShare) {
+        o.v = 1;
+        o.vw = rtc.viewers();
+        if (hwSender && hwSender.has(p.id)) o.vh = 1;
+      }
       p.channel.send(JSON.stringify(o));
     } catch (e) {
       console.warn("state not sent", e);
@@ -502,6 +527,59 @@
     p.audios.set(track.id, { gain, analyser, buffer: new Float32Array(analyser.fftSize), share, keepAlive, source });
   }
 
+  /* ---- the picture through the video card (hwvideo.js) ---- */
+
+  function onVideoData(p, data) {
+    if (AV.hwVideo.isKeyRequest(data)) {
+      if (hwSender && hwSender.has(p.id)) hwSender.requestKey();
+      return;
+    }
+    if (!rtc.watching.has(p.id)) return;
+    if (!p.cardReceiver) {
+      p.cardReceiver = AV.hwVideo.createReceiver({ channel: p.videoChannel, onfail: () => giveUpOnCardDecoding(p) });
+      p.cardWatchSince = performance.now();
+      rtc.onchange();
+    }
+    p.cardReceiver.take(data);
+  }
+
+  function closeCardReceiver(p) {
+    if (!p.cardReceiver) return;
+    p.cardReceiver.close();
+    p.cardReceiver = null;
+    rtc.onchange();
+  }
+
+  /* A card that cannot do it after all costs a moment of black picture: the sender goes back to WebRTC for this viewer. */
+  function giveUpOnCardDecoding(p) {
+    hwDecodes = false;
+    closeCardReceiver(p);
+    broadcastState();
+  }
+
+  function watchCardPicture(p, now) {
+    if (!rtc.watching.has(p.id) || !p.state || !p.state.viaCard) { p.cardWatchSince = 0; return; }
+    if (!p.cardWatchSince) p.cardWatchSince = now;
+    const receiver = p.cardReceiver;
+    if (receiver && receiver.counters.decoded === 0) receiver.askForKey();
+    else if (!receiver) AV.hwVideo.requestKey(p.videoChannel);
+    if ((!receiver || receiver.counters.decoded === 0) && now - p.cardWatchSince >= HW_FIRST_FRAME_MS) {
+      console.warn("no picture through the video card, falling back");
+      giveUpOnCardDecoding(p);
+    }
+  }
+
+  function cardTarget() {
+    const steps = ladder();
+    return { height: steps[0].height, fps: steps[0].fps, bitrate: steps[0].maxKbps * 1000 };
+  }
+
+  function stopCardSender() {
+    if (!hwSender) return;
+    hwSender.stop();
+    hwSender = null;
+  }
+
   function attachVideo(p, track, stream) {
     p.videos.set(track.id, stream);
     rtc.onchange();
@@ -517,6 +595,8 @@
     const p = peers.get(id);
     if (!p) return;
     p.audios.forEach((a) => { a.source.disconnect(); a.keepAlive.srcObject = null; });
+    closeCardReceiver(p);
+    if (hwSender) hwSender.remove(id);
     p.pc.close();
     peers.delete(id);
     rtc.watching.delete(id);
@@ -634,6 +714,7 @@
       AV.toast("Sem acesso ao microfone: você ouvirá a chamada, mas não será ouvido.", "error");
     }
     rtc.room = room;
+    hwDecodes = (await AV.hwVideo.support()).decode;
     audioContext();
     await AV.api("POST", "/api/call/state", { room, joined: true });
     const others = (AV.state.calls[room] || []).filter((id) => id !== myId());
@@ -721,6 +802,10 @@
     shareHeight = 0;
   }
 
+  function weak() {
+    return !hwEncoderCodec && (navigator.hardwareConcurrency || 8) <= WEAK_CPU_THREADS;
+  }
+
   function capKbps(height, fps) {
     if (height >= 1440) return fps > 30 ? 12000 : 7500;
     if (height >= 1080) return fps > 30 ? 8000 : 4500;
@@ -731,10 +816,11 @@
 
   function ladder() {
     const source = sourceHeight();
-    const fps = Math.max(MIN_FPS, num("video.fps"));
+    const fps = Math.max(MIN_FPS, weak() ? MIN_FPS : num("video.fps"));
     const motion = cfg()["video.priority"] === "motion";
     const setting = cfg()["video.resolution"];
-    const top = Math.min(source, setting === "native" ? source : Number(setting));
+    const wanted = Math.min(source, setting === "native" ? source : Number(setting));
+    const top = weak() ? Math.min(wanted, WEAK_CPU_HEIGHT) : wanted;
     const custom = num("video.bitrate");
     let rungs;
     if (motion) {
@@ -774,7 +860,8 @@
     enc.scaleResolutionDownBy = Math.max(1.0, step.scale);
     enc.priority = "high";
     enc.networkPriority = "high";
-    params.degradationPreference = cfg()["video.priority"] === "motion" ? "maintain-framerate" : "maintain-resolution";
+    // maintain-resolution holds this build at 2-5 FPS: see "Compartilhamento travado" in CLAUDE.md.
+    params.degradationPreference = cfg()["video.priority"] === "motion" ? "maintain-framerate" : "balanced";
     return sender.setParameters(params).catch((e) => console.warn("sender parameters refused", e));
   }
 
@@ -808,13 +895,35 @@
     if (!p.share) return;
     const stream = rtc.localShare;
     const on = !!stream && p.wantsShare;
-    const video = on ? stream.getVideoTracks()[0] : null;
+    const viaCard = on && !!hwEncoderCodec && p.decodesOnCard;
+    feedCard(p, stream, viaCard);
+    const video = on && !viaCard ? stream.getVideoTracks()[0] : null;
     const audio = on ? stream.getAudioTracks()[0] || null : null;
     if (p.share.video.sender.track !== video) {
       p.share.video.sender.replaceTrack(video).catch((e) => console.warn("share video not switched", e));
       if (video) { p.level = 0; reconfigure(p); }
     }
     if (p.share.audio && p.share.audio.sender.track !== audio) p.share.audio.sender.replaceTrack(audio).catch(() => {});
+  }
+
+  function feedCard(p, stream, viaCard) {
+    if (viaCard) {
+      if (!hwSender) {
+        hwSender = AV.hwVideo.createSender({ track: stream.getVideoTracks()[0], codec: hwEncoderCodec, target: cardTarget, onfail: onCardEncoderFailed });
+      }
+      if (!hwSender.has(p.id)) { hwSender.add(p.id, p.videoChannel); sendState(p); }
+    } else if (hwSender && hwSender.has(p.id)) {
+      hwSender.remove(p.id);
+      sendState(p);
+      if (hwSender.empty()) stopCardSender();
+    }
+  }
+
+  function onCardEncoderFailed() {
+    hwSender = null;
+    hwEncoderCodec = null;
+    peers.forEach(feedShare);
+    broadcastState();
   }
 
   function closeShareFor(p) {
@@ -831,7 +940,10 @@
   rtc.watch = function (id, on) {
     if (on) rtc.watching.add(id); else rtc.watching.delete(id);
     const p = peers.get(id);
-    if (p) sendState(p);
+    if (p) {
+      if (!on) closeCardReceiver(p);
+      sendState(p);
+    }
     applyOutput();
     rtc.onchange();
   };
@@ -896,7 +1008,8 @@
    */
   function captureRequest(sourceId, withAudio, steady) {
     const fps = Math.max(MIN_FPS, num("video.fps"));
-    const video = { chromeMediaSource: "desktop", chromeMediaSourceId: sourceId, maxWidth: 7680, maxHeight: 4320, maxFrameRate: fps };
+    // Asked for exactly 60, the capture falls on every other screen refresh: 33 FPS. Asked for more it delivers 42 on a still screen and up to 54 with motion, and the encoder keeps to its own rate.
+    const video = { chromeMediaSource: "desktop", chromeMediaSourceId: sourceId, maxWidth: 7680, maxHeight: 4320, maxFrameRate: hwEncoderCodec && fps > MIN_FPS ? CAPTURE_HEADROOM_FPS : fps };
     if (steady) video.minFrameRate = fps;
     return { video: { mandatory: video }, audio: withAudio ? { mandatory: { chromeMediaSource: "desktop" } } : false };
   }
@@ -977,6 +1090,7 @@
 
   rtc.startShare = async function (sourceId) {
     if (!rtc.room || rtc.localShare) return;
+    hwEncoderCodec = (await AV.hwVideo.support()).encode;
     const system = flag("video.systemAudio") ? await openSystemAudio() : null;
     let captured;
     try {
@@ -1002,6 +1116,7 @@
     if (!stream) return;
     rtc.localShare = null;
     rtc.selfPreview = false;
+    stopCardSender();
     peers.forEach(closeShareFor);
     stream.getVideoTracks().forEach((t) => t.stop());
     closeShareAudio();
@@ -1017,8 +1132,9 @@
     const video = stream.getVideoTracks()[0];
     video.contentHint = cfg()["video.priority"] === "motion" ? "motion" : "detail";
     const fps = Math.max(MIN_FPS, num("video.fps"));
-    video.applyConstraints({ frameRate: { ideal: fps, max: fps } }).catch(() => {});
+    if (!hwEncoderCodec) video.applyConstraints({ frameRate: { ideal: fps, max: fps } }).catch(() => {});
     peers.forEach((p) => { p.level = 0; reconfigure(p); });
+    if (hwSender) hwSender.retarget();
     rtc.onchange();
   };
 
@@ -1116,6 +1232,24 @@
         s.inHeight = r.frameHeight;
       }
     });
+    const out = hwSender && hwSender.counters(p.id);
+    if (out) {
+      counters.sent += out.frames;
+      counters.bytesSent += out.bytes;
+      s.outWidth = out.width;
+      s.outHeight = out.height;
+      s.codec = "H.264 na placa de vídeo";
+    }
+    const received = p.cardReceiver && p.cardReceiver.counters;
+    if (received) {
+      counters.decoded += received.decoded;
+      counters.bytesReceived += received.bytes;
+      if (received.width) {
+        s.inWidth = received.width;
+        s.inHeight = received.height;
+        s.codec = "H.264 na placa de vídeo";
+      }
+    }
     p.counters = counters;
     if (before) {
       const seconds = (counters.at - before.at) / 1000;
@@ -1141,6 +1275,7 @@
         p.stats = null;
       }
       watchConnection(p, now);
+      watchCardPicture(p, now);
       if (rtc.localShare) adaptShare(p, now);
     }
     rtc.onstats();
@@ -1167,7 +1302,7 @@
     }
     peers.forEach((p) => {
       if (!rtc.isSharing(p.id)) return;
-      const stream = rtc.watching.has(p.id) ? [...p.videos.values()][0] || null : null;
+      const stream = rtc.watching.has(p.id) ? (p.cardReceiver ? p.cardReceiver.stream : [...p.videos.values()][0] || null) : null;
       tiles.push({ id: p.id, key: "peer:" + p.id, local: false, stream });
     });
     return tiles;
@@ -1180,7 +1315,8 @@
       room: rtc.room,
       microphone: mic ? { open: mic.track.enabled, device: mic.raw.getAudioTracks()[0].label } : null,
       muted: rtc.muted,
-      sharing: rtc.localShare ? { systemAudio: shareAudio ? shareAudio.kind : null, ducked } : null,
+      sharing: rtc.localShare ? { systemAudio: shareAudio ? shareAudio.kind : null, ducked, encoder: hwEncoderCodec || "software" } : null,
+      decodesOnCard: hwDecodes,
       peers: [...peers.values()].map((p) => ({
         id: p.id,
         connection: p.pc.connectionState,

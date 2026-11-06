@@ -1,16 +1,24 @@
 package br.com.angatusistemas.voice.updater;
 
 import br.com.angatusistemas.lib.gson.GsonAPI;
+import br.com.angatusistemas.voice.utils.Crypto;
 import br.com.angatusistemas.voice.utils.AppDirs;
 import com.google.gson.JsonObject;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.FileTime;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -31,7 +39,65 @@ final class PackageInstaller {
     private PackageInstaller() {
     }
 
-    static Path stage(Path zip, Manifest manifest) throws IOException {
+    /* What a patch does not carry. Its hash decides whether the small package fits this install. */
+    private static final String[] BASE_FOLDERS = {"runtime", "app/lib"};
+
+    static String baseIdentity(Path install) throws IOException {
+        List<String> lines = new ArrayList<>();
+        for (String folder : BASE_FOLDERS) {
+            Path root = install.resolve(folder);
+            if (!Files.isDirectory(root)) {
+                throw new IOException("install has no " + folder);
+            }
+            try (Stream<Path> walk = Files.walk(root)) {
+                for (Path file : walk.filter(Files::isRegularFile).toList()) {
+                    lines.add(install.relativize(file).toString().replace('\\', '/') + " " + Files.size(file) + " " + sha256(file));
+                }
+            }
+        }
+        Collections.sort(lines);
+        return HexFormat.of().formatHex(Crypto.sha256(String.join("\n", lines).getBytes(StandardCharsets.UTF_8)));
+    }
+
+    static String sha256(Path file) throws IOException {
+        try (InputStream in = Files.newInputStream(file)) {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[64 * 1024];
+            for (int n = in.read(buffer); n >= 0; n = in.read(buffer)) {
+                md.update(buffer, 0, n);
+            }
+            return HexFormat.of().formatHex(md.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /* The staged tree is always a complete install: a patch borrows the rest from the current one, by hard link where the disk allows. */
+    private static void borrowBase(Path install, Path staging) throws IOException {
+        for (String folder : BASE_FOLDERS) {
+            Path root = install.resolve(folder);
+            try (Stream<Path> walk = Files.walk(root)) {
+                for (Path source : walk.toList()) {
+                    Path target = staging.resolve(install.relativize(source).toString());
+                    if (Files.isDirectory(source)) {
+                        Files.createDirectories(target);
+                    } else {
+                        link(source, target);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void link(Path source, Path target) throws IOException {
+        try {
+            Files.createLink(target, source);
+        } catch (IOException | UnsupportedOperationException e) {
+            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    static Path stage(Path zip, Manifest manifest, Optional<Path> patchOver) throws IOException {
         Path staging = zip.resolveSibling("staging");
         deleteTree(staging);
         Files.createDirectories(staging);
@@ -51,6 +117,9 @@ final class PackageInstaller {
                     total += copyBounded(in, out, MAX_UNPACKED_BYTES - total);
                 }
             }
+        }
+        if (patchOver.isPresent()) {
+            borrowBase(patchOver.get(), staging);
         }
         verifyLayout(staging, manifest);
         return staging;

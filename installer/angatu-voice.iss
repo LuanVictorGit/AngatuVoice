@@ -1,6 +1,6 @@
 ; Per-user installer: no administrator rights, shortcuts, optional autostart, clean uninstall.
 #ifndef AppVersion
-  #define AppVersion "1.6.0"
+  #define AppVersion "1.7.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\dist\image\AngatuVoice"

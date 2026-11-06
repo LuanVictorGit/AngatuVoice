@@ -566,7 +566,7 @@
           u.state === "downloading" && E("button", { class: "btn", onclick: () => AV.api("POST", "/api/update/cancel").catch(AV.fail) }, "Cancelar download")),
         E("small", { class: "mt-3 block text-faint" }, "Última verificação: " + last)),
       toggle("update.auto", "Atualizar automaticamente", "Baixa novas versões e instala quando você não estiver em uma chamada."),
-      select("update.intervalHours", "Verificar a cada", "", [["1", "1 hora"], ["6", "6 horas"], ["12", "12 horas"], ["24", "24 horas"], ["168", "7 dias"]]),
+      select("update.intervalMinutes", "Verificar a cada", "", [["15", "15 minutos"], ["30", "30 minutos"], ["60", "1 hora"], ["360", "6 horas"], ["1440", "24 horas"]]),
       row("Canal de atualização", "O canal Beta recebe versões em teste, que podem ter falhas.",
         E("select", { class: "input w-56", "aria-label": "Canal", onchange: async (e) => {
           if (e.target.value === "beta" && !(await AV.confirm("Entrar no canal Beta?", "Versões beta ainda estão em teste e podem ter falhas.", "Entrar no Beta"))) { e.target.value = "stable"; return; }
@@ -583,7 +583,7 @@
       E("img", { src: "/assets/icon-256.png", width: 96, height: 96, alt: "Angatu Voice", draggable: "false" }),
       E("div", { class: "text-xl font-bold" }, "Angatu Voice"), E("div", { class: "text-muted" }, "Versão " + AV.state.version),
       E("p", { class: "max-w-sm text-muted" }, "Conversa privada por voz, texto e tela sobre a sua rede do Radmin VPN."),
-      E("div", { class: "mt-2 flex items-center gap-2 text-sm text-faint" }, E("img", { src: "/assets/icon-32.png", width: 18, height: 18, alt: "", draggable: "false" }), "Desenvolvido por Angatu Sistemas"),
+      AV.brandMark("mt-2 flex items-center gap-2"),
       E("button", { class: "btn btn-danger mt-4", onclick: async () => { if (await AV.confirm("Sair do Angatu Voice?", "Você deixará de receber mensagens e chamadas até abrir o aplicativo de novo.", "Sair", true)) AV.api("POST", "/api/app/quit").catch(() => {}); } }, AV.icon("power", "ic-sm"), "Sair do aplicativo")));
   }
 

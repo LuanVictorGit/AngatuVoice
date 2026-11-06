@@ -479,13 +479,13 @@
   function coverFor(tile) {
     const name = nameOf(tile.id);
     if (tile.local) {
-      return [AV.avatar(tile.id, name, "avatar-lg"), E("div", { class: "font-semibold" }, "Você está transmitindo"),
-        E("div", { class: "text-sm text-muted" }, "A prévia fica desligada para poupar o computador."),
-        E("div", { class: "flex flex-wrap justify-center gap-2" },
+      return [AV.avatar(tile.id, name, "avatar-lg"), E("div", { class: "tile-cover-title font-semibold" }, "Você está transmitindo"),
+        E("div", { class: "tile-cover-note text-sm text-muted" }, "A prévia fica desligada para poupar o computador."),
+        E("div", { class: "tile-cover-actions" },
           E("button", { class: "btn", onclick: (e) => { e.stopPropagation(); AV.rtc.toggleSelfPreview(); } }, AV.icon("eye", "ic-sm"), "Ver minha transmissão"),
           E("button", { class: "btn btn-danger", onclick: (e) => { e.stopPropagation(); AV.rtc.stopShare(); } }, AV.icon("x", "ic-sm"), "Parar transmissão"))];
     }
-    return [AV.avatar(tile.id, name, "avatar-lg"), E("div", { class: "font-semibold" }, name + " está transmitindo"),
+    return [AV.avatar(tile.id, name, "avatar-lg"), E("div", { class: "tile-cover-title font-semibold" }, name + " está transmitindo"),
       E("button", { class: "btn btn-primary", onclick: (e) => { e.stopPropagation(); focusedTile = tile.key; AV.rtc.watch(tile.id, true); } }, AV.icon("eye", "ic-sm"), "Assistir transmissão")];
   }
 
@@ -1088,6 +1088,7 @@
       }
     });
     $("btn-open-settings").addEventListener("click", () => AV.openSettings("app"));
+    $("brand-link").addEventListener("click", AV.openBrandSite);
     $("btn-send").addEventListener("click", send);
     $("btn-emoji").addEventListener("click", emojiPicker);
     $("composer").addEventListener("input", autosize);

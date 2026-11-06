@@ -1,10 +1,12 @@
-param(
+﻿param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet("list", "join", "create", "leave", "delete", "show")]
+    [ValidateSet("join", "create", "leave", "delete", "show")]
     [string]$Action,
     [string]$Name = "",
     [string]$Password = ""
 )
+
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 Add-Type -ReferencedAssemblies "UIAutomationClient", "UIAutomationTypes", "WindowsBase" @"
 using System;
@@ -20,21 +22,12 @@ public class RadminAutomationCore {
     [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr h);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, int dwExtraInfo);
 
     private const int MOUSEEVENTF_RIGHTDOWN = 0x08;
     private const int MOUSEEVENTF_RIGHTUP = 0x10;
-
-    public class StatusInfo {
-        public bool installed;
-        public bool running;
-        public string alias = "";
-        public string ip = "";
-        public string status = "";
-        public List<string> networks = new List<string>();
-        public string error = "";
-    }
 
     public class ActionResult {
         public bool ok;
@@ -53,51 +46,27 @@ public class RadminAutomationCore {
         return null;
     }
 
-    public static StatusInfo QueryStatus(int pid) {
-        var info = new StatusInfo { installed = true };
-        IntPtr hDesk = OpenDesktop("Default", 0, false, 0x1FF);
-        Thread t = new Thread(() => {
-            SetThreadDesktop(hDesk);
+    public static bool HasMainWindow(int pid) {
+        bool found = false;
+        OnDesktop(() => { found = FindMainWindow(pid) != null; });
+        return found;
+    }
+
+    // The same message as clicking the X: Radmin hides in the tray and keeps running, with nothing left on the taskbar.
+    public static void CloseMainWindow(int pid) {
+        OnDesktop(() => {
             AutomationElement w = FindMainWindow(pid);
-            if (w == null) {
-                info.running = false;
-                info.error = "MainWindow not found";
-                return;
-            }
-            info.running = true;
-
-            try {
-                AutomationElement aliasEl = w.FindFirst(TreeScope.Descendants, 
-                    new PropertyCondition(AutomationElement.AutomationIdProperty, "MainWindow.centralWidget.mainContentWidget.userInfoWidget.LAlias"));
-                if (aliasEl != null) info.alias = aliasEl.Current.Name;
-
-                AutomationElement ipEl = w.FindFirst(TreeScope.Descendants, 
-                    new PropertyCondition(AutomationElement.AutomationIdProperty, "MainWindow.centralWidget.mainContentWidget.userInfoWidget.LIP"));
-                if (ipEl != null) info.ip = ipEl.Current.Name;
-
-                AutomationElement stEl = w.FindFirst(TreeScope.Descendants, 
-                    new PropertyCondition(AutomationElement.AutomationIdProperty, "MainWindow.centralWidget.mainContentWidget.userInfoWidget.LStatus"));
-                if (stEl != null) info.status = stEl.Current.Name;
-
-                AutomationElementCollection allDesc = w.FindAll(TreeScope.Descendants, Condition.TrueCondition);
-                for (int i = 0; i < allDesc.Count; i++) {
-                    AutomationElement el = allDesc[i];
-                    if (el.Current.AutomationId.EndsWith(".NetworkName")) {
-                        string n = el.Current.Name;
-                        if (!string.IsNullOrWhiteSpace(n) && !info.networks.Contains(n)) {
-                            info.networks.Add(n);
-                        }
-                    }
-                }
-            } catch (Exception ex) {
-                info.error = ex.Message;
-            }
+            if (w != null) PostMessage((IntPtr)w.Current.NativeWindowHandle, 0x0010, IntPtr.Zero, IntPtr.Zero);
         });
+    }
+
+    private static void OnDesktop(Action work) {
+        IntPtr hDesk = OpenDesktop("Default", 0, false, 0x1FF);
+        Thread t = new Thread(() => { SetThreadDesktop(hDesk); work(); });
         t.SetApartmentState(ApartmentState.STA);
         t.Start();
         t.Join();
         CloseDesktop(hDesk);
-        return info;
     }
 
     public static ActionResult Join(int pid, string name, string pass) {
@@ -161,7 +130,6 @@ public class RadminAutomationCore {
                 if (checkDlg == null) {
                     res.ok = true;
                     res.message = "Entrada na rede concluída com sucesso.";
-                    try { ShowWindow((IntPtr)w.Current.NativeWindowHandle, 6); } catch {}
                     return;
                 }
 
@@ -263,7 +231,6 @@ public class RadminAutomationCore {
                 if (checkDlg == null) {
                     res.ok = true;
                     res.message = "Rede criada com sucesso.";
-                    try { ShowWindow((IntPtr)w.Current.NativeWindowHandle, 6); } catch {}
                     return;
                 }
 
@@ -398,109 +365,44 @@ public class RadminAutomationCore {
 }
 "@
 
-function Get-RadminProcess {
+$exePath = "C:\Program Files (x86)\Radmin VPN\RvRvpnGui.exe"
+
+# Only an action that needs the Radmin window may open it, and it is closed by its X again afterwards.
+function Open-RadminWindow {
     $p = Get-Process RvRvpnGui -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $p) {
-        $exePath = "C:\Program Files (x86)\Radmin VPN\RvRvpnGui.exe"
-        if (Test-Path $exePath) {
-            Start-Process $exePath -ArgumentList "/show"
-            Start-Sleep -Milliseconds 800
-            $p = Get-Process RvRvpnGui -ErrorAction SilentlyContinue | Select-Object -First 1
-        }
+    if ($p -and [RadminAutomationCore]::HasMainWindow($p.Id)) { return $p }
+    if (-not (Test-Path $exePath)) { return $null }
+    Start-Process $exePath -ArgumentList "/show"
+    for ($i = 0; $i -lt 25; $i++) {
+        Start-Sleep -Milliseconds 200
+        $p = Get-Process RvRvpnGui -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($p -and [RadminAutomationCore]::HasMainWindow($p.Id)) { return $p }
     }
     return $p
 }
 
-$proc = Get-RadminProcess
+function Write-Outcome($res) {
+    [PSCustomObject]@{ ok = $res.ok; message = $res.message } | ConvertTo-Json -Compress
+}
 
-switch ($Action) {
-    "list" {
-        if (-not $proc) {
-            $known = @()
-            Get-Item -Path "HKCU:\Software\Famatech\Radmin VPN\ui\networks\*" -ErrorAction SilentlyContinue | ForEach-Object { $known += $_.PSChildName }
-            [PSCustomObject]@{
-                installed = $true
-                running = $false
-                alias = ""
-                ip = ""
-                status = "Offline"
-                networks = @()
-                knownNetworks = $known
-                error = "RvRvpnGui is not running"
-            } | ConvertTo-Json -Compress
-            exit 0
-        }
-        $r = [RadminAutomationCore]::QueryStatus($proc.Id)
-        if ($r.error -eq "MainWindow not found") {
-            $exePath = "C:\Program Files (x86)\Radmin VPN\RvRvpnGui.exe"
-            if (Test-Path $exePath) {
-                Start-Process $exePath -ArgumentList "/show"
-                Start-Sleep -Milliseconds 600
-                $r = [RadminAutomationCore]::QueryStatus($proc.Id)
-            }
-        }
-        $known = @()
-        Get-Item -Path "HKCU:\Software\Famatech\Radmin VPN\ui\networks\*" -ErrorAction SilentlyContinue | ForEach-Object { $known += $_.PSChildName }
-        foreach ($net in $r.networks) {
-            if ($known -notcontains $net) {
-                $known += $net
-            }
-        }
-        [PSCustomObject]@{
-            installed = $r.installed
-            running = $r.running
-            alias = $r.alias
-            ip = $r.ip
-            status = $r.status
-            networks = $r.networks
-            knownNetworks = $known
-            error = $r.error
-        } | ConvertTo-Json -Compress
+if ($Action -eq "show") {
+    Start-Process $exePath -ArgumentList "/show"
+    [PSCustomObject]@{ ok = $true; message = "Radmin VPN exibido." } | ConvertTo-Json -Compress
+    exit 0
+}
+
+$proc = Open-RadminWindow
+if (-not $proc) {
+    [PSCustomObject]@{ ok = $false; message = "Radmin VPN não pôde ser iniciado." } | ConvertTo-Json -Compress
+    exit 0
+}
+try {
+    switch ($Action) {
+        "join" { Write-Outcome ([RadminAutomationCore]::Join($proc.Id, $Name, $Password)) }
+        "create" { Write-Outcome ([RadminAutomationCore]::Create($proc.Id, $Name, $Password)) }
+        "leave" { Write-Outcome ([RadminAutomationCore]::LeaveOrDelete($proc.Id, $Name, $false)) }
+        "delete" { Write-Outcome ([RadminAutomationCore]::LeaveOrDelete($proc.Id, $Name, $true)) }
     }
-    "join" {
-        if (-not $proc) {
-            Start-Process "C:\Program Files (x86)\Radmin VPN\RvRvpnGui.exe" -ArgumentList "/show"
-            Start-Sleep -Seconds 2
-            $proc = Get-Process RvRvpnGui -ErrorAction SilentlyContinue | Select-Object -First 1
-        }
-        if (-not $proc) {
-            [PSCustomObject]@{ ok = $false; message = "Radmin VPN não pôde ser iniciado." } | ConvertTo-Json -Compress
-            exit 0
-        }
-        $res = [RadminAutomationCore]::Join($proc.Id, $Name, $Password)
-        [PSCustomObject]@{ ok = $res.ok; message = $res.message } | ConvertTo-Json -Compress
-    }
-    "create" {
-        if (-not $proc) {
-            Start-Process "C:\Program Files (x86)\Radmin VPN\RvRvpnGui.exe" -ArgumentList "/show"
-            Start-Sleep -Seconds 2
-            $proc = Get-Process RvRvpnGui -ErrorAction SilentlyContinue | Select-Object -First 1
-        }
-        if (-not $proc) {
-            [PSCustomObject]@{ ok = $false; message = "Radmin VPN não pôde ser iniciado." } | ConvertTo-Json -Compress
-            exit 0
-        }
-        $res = [RadminAutomationCore]::Create($proc.Id, $Name, $Password)
-        [PSCustomObject]@{ ok = $res.ok; message = $res.message } | ConvertTo-Json -Compress
-    }
-    "leave" {
-        if (-not $proc) {
-            [PSCustomObject]@{ ok = $false; message = "Radmin VPN não está em execução." } | ConvertTo-Json -Compress
-            exit 0
-        }
-        $res = [RadminAutomationCore]::LeaveOrDelete($proc.Id, $Name, $false)
-        [PSCustomObject]@{ ok = $res.ok; message = $res.message } | ConvertTo-Json -Compress
-    }
-    "delete" {
-        if (-not $proc) {
-            [PSCustomObject]@{ ok = $false; message = "Radmin VPN não está em execução." } | ConvertTo-Json -Compress
-            exit 0
-        }
-        $res = [RadminAutomationCore]::LeaveOrDelete($proc.Id, $Name, $true)
-        [PSCustomObject]@{ ok = $res.ok; message = $res.message } | ConvertTo-Json -Compress
-    }
-    "show" {
-        Start-Process "C:\Program Files (x86)\Radmin VPN\RvRvpnGui.exe" -ArgumentList "/show"
-        [PSCustomObject]@{ ok = $true; message = "Radmin VPN exibido." } | ConvertTo-Json -Compress
-    }
+} finally {
+    [RadminAutomationCore]::CloseMainWindow($proc.Id)
 }

@@ -25,11 +25,23 @@ jpackage --type app-image --name AngatuVoice --dest $image --input $input `
     --app-version $numeric --vendor 'Angatu Sistemas' --icon installer/app.ico `
     --add-modules $modules `
     --java-options '--enable-native-access=ALL-UNNAMED' --java-options '-XX:+UseCompactObjectHeaders' `
-    --java-options '-XX:MaxRAMPercentage=40' --java-options '-XX:+ExitOnOutOfMemoryError' --java-options '-Dfile.encoding=UTF-8'
+    --java-options '-XX:MaxRAMPercentage=25' --java-options '-XX:+UseSerialGC' --java-options '-XX:TieredStopAtLevel=1' `
+    --java-options '-XX:+ExitOnOutOfMemoryError' --java-options '-Dfile.encoding=UTF-8'
 if ($LASTEXITCODE -ne 0) { throw 'jpackage failed' }
 
 $zip = Join-Path $Out "AngatuVoice-$Version-win-x64.zip"
 Remove-Item $zip -ErrorAction SilentlyContinue
 Compress-Archive -Path (Join-Path $image 'AngatuVoice/*') -DestinationPath $zip -CompressionLevel Optimal
+# The small package: everything a usual update changes. The runtime and the libraries are left to the current install.
+$imageRoot = Join-Path $image 'AngatuVoice'
+$patchInput = Join-Path $Out 'patch'
+Remove-Item -Recurse -Force $patchInput -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force (Join-Path $patchInput 'app') | Out-Null
+Copy-Item (Join-Path $imageRoot 'AngatuVoice.exe') $patchInput
+Get-ChildItem (Join-Path $imageRoot 'app') -Force -File | Copy-Item -Destination (Join-Path $patchInput 'app')
+$patchZip = Join-Path $Out "AngatuVoice-$Version-app.zip"
+Remove-Item $patchZip -ErrorAction SilentlyContinue
+Compress-Archive -Path (Join-Path $patchInput '*') -DestinationPath $patchZip -CompressionLevel Optimal
 Write-Output "image: $image/AngatuVoice"
+Write-Output "patch: $patchZip"
 Write-Output "zip:   $zip"

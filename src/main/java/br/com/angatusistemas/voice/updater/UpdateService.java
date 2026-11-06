@@ -24,10 +24,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.Base64;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -53,7 +51,9 @@ public final class UpdateService {
     private static volatile Status status = Status.idle();
     private static volatile Manifest pending;
     private static volatile Path stagedZip;
-    private static volatile String pendingAssetUrl = "";
+    private static volatile Map<String, String> pendingAssets = Map.of();
+    private static volatile Optional<Path> patchBase = Optional.empty();
+    private static volatile boolean patchRefused;
 
     private UpdateService() {
     }
@@ -119,7 +119,7 @@ public final class UpdateService {
                 install();
                 return;
             }
-            long intervalMs = SettingsService.number("update.intervalHours") * 3_600_000L;
+            long intervalMs = SettingsService.number("update.intervalMinutes") * 60_000L;
             if (!"available".equals(status.state()) && !"ready".equals(status.state())
                     && System.currentTimeMillis() - lastCheck() >= intervalMs) {
                 check();
@@ -148,7 +148,7 @@ public final class UpdateService {
                 return;
             }
             pending = manifest;
-            pendingAssetUrl = latest.get().assets.getOrDefault(manifest.pkg().name(), "");
+            pendingAssets = latest.get().assets;
             publish(status.about(manifest).with("available", null));
             if (SettingsService.flag("update.auto") || manifest.mandatory()) {
                 download(manifest);
@@ -242,13 +242,34 @@ public final class UpdateService {
         return manifest;
     }
 
+    /* The usual update changes only the application: the small package fits whenever the runtime and libraries here are the ones it was built on. */
+    private static Optional<Path> installToPatch(Manifest manifest) {
+        Optional<Path> install = AppDirs.install();
+        if (manifest.patch() == null || patchRefused || install.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            return manifest.patch().base().equals(PackageInstaller.baseIdentity(install.get())) ? install : Optional.empty();
+        } catch (IOException e) {
+            Console.warn("Could not compare the install with the patch: %s", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
     private static void download(Manifest manifest) throws IOException {
+        Optional<Path> over = installToPatch(manifest);
+        patchBase = over;
+        boolean patch = over.isPresent();
+        String name = patch ? manifest.patch().name() : manifest.pkg().name();
+        String url = patch ? manifest.patch().url() : manifest.pkg().url();
+        long size = patch ? manifest.patch().size() : manifest.pkg().size();
+        String sha = patch ? manifest.patch().sha256() : manifest.pkg().sha256();
         Path dir = AppDirs.ensure(AppDirs.updates().resolve(manifest.version()));
-        Path part = dir.resolve("package.zip.part");
-        Path zip = dir.resolve("package.zip");
+        Path part = dir.resolve(name + ".part");
+        Path zip = dir.resolve(name);
         CANCEL.set(false);
         if (!Files.exists(zip)) {
-            streamPackage(manifest, part);
+            streamPackage(pendingAssets.getOrDefault(name, url), size, part);
             if (CANCEL.get()) {
                 publish(status.with("available", null));
                 return;
@@ -256,22 +277,21 @@ public final class UpdateService {
             Files.move(part, zip);
         }
         publish(status.with("validating", null));
-        if (Files.size(zip) != manifest.pkg().size() || !manifest.pkg().sha256().equals(sha256(zip))) {
+        if (Files.size(zip) != size || !sha.equals(PackageInstaller.sha256(zip))) {
             Files.deleteIfExists(zip);
+            patchRefused = patch;
             throw new SecurityException("package hash or size mismatch");
         }
         stagedZip = zip;
         publish(status.with("ready", null));
     }
 
-    private static void streamPackage(Manifest manifest, Path part) throws IOException {
-        long total = manifest.pkg().size();
+    private static void streamPackage(String url, long total, Path part) throws IOException {
         long have = Files.exists(part) ? Files.size(part) : 0;
         if (have > total) {
             Files.delete(part);
             have = 0;
         }
-        String url = pendingAssetUrl.isEmpty() ? manifest.pkg().url() : pendingAssetUrl;
         Map<String, String> headers = have > 0 ? Map.of("Range", "bytes=" + have + "-") : Map.of();
         HttpResponse<InputStream> response = UpdateHttp.get(url, token(), withAccept(headers));
         int code = response.statusCode();
@@ -315,7 +335,7 @@ public final class UpdateService {
     private static void runInstall(Manifest manifest, Path zip) {
         try {
             publish(status.with("installing", null));
-            Path staging = PackageInstaller.stage(zip, manifest);
+            Path staging = PackageInstaller.stage(zip, manifest, patchBase);
             publish(status.with("restarting", null));
             PackageInstaller.launch(staging, manifest, Version.current().toString(), ProcessHandle.current().pid());
             Thread.sleep(800);
@@ -323,6 +343,7 @@ public final class UpdateService {
             AppShell.exit();
         } catch (IOException | RuntimeException e) {
             Console.error("update install failed", e);
+            patchRefused = patchBase.isPresent();
             record(manifest.version(), "failed", e.getMessage());
             publish(status.with("failed", "A instalação da atualização falhou. A versão atual continua funcionando."));
             BUSY.set(false);
@@ -362,19 +383,6 @@ public final class UpdateService {
     private static boolean inCall() {
         String me = PeerNetwork.me() == null ? "" : PeerNetwork.me().id();
         return CallService.snapshot().values().stream().anyMatch(members -> members.contains(me));
-    }
-
-    private static String sha256(Path file) throws IOException {
-        try (InputStream in = Files.newInputStream(file)) {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] buffer = new byte[64 * 1024];
-            for (int n = in.read(buffer); n >= 0; n = in.read(buffer)) {
-                md.update(buffer, 0, n);
-            }
-            return HexFormat.of().formatHex(md.digest());
-        } catch (java.security.NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);
-        }
     }
 
     private static String token() {

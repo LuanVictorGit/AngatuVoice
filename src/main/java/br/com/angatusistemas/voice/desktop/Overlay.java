@@ -2,6 +2,10 @@ package br.com.angatusistemas.voice.desktop;
 
 import br.com.angatusistemas.voice.services.AvatarService;
 import br.com.angatusistemas.voice.services.SettingsService;
+import com.sun.jna.Native;
+import com.sun.jna.platform.win32.User32;
+import com.sun.jna.platform.win32.WinDef;
+import com.sun.jna.platform.win32.WinUser;
 import java.awt.AlphaComposite;
 import java.awt.Color;
 import java.awt.Font;
@@ -30,6 +34,7 @@ import javax.swing.SwingUtilities;
  */
 public final class Overlay {
 
+    private static final int WS_EX_NOACTIVATE = 0x08000000;
     private static final int ROW = 40;
     private static final int WIDTH = 240;
     private static final int MARGIN = 24;
@@ -73,6 +78,17 @@ public final class Overlay {
         window.setBounds(x, y, WIDTH, height);
         window.repaint();
         window.setVisible(true);
+        passClicksThrough(window);
+    }
+
+    /* AWT has no such option: without these styles Windows hands the card every click aimed at what is underneath it. */
+    private static void passClicksThrough(JWindow w) {
+        WinDef.HWND hwnd = new WinDef.HWND(Native.getWindowPointer(w));
+        int style = User32.INSTANCE.GetWindowLong(hwnd, WinUser.GWL_EXSTYLE);
+        int wanted = style | WinUser.WS_EX_LAYERED | WinUser.WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
+        if (wanted != style) {
+            User32.INSTANCE.SetWindowLong(hwnd, WinUser.GWL_EXSTYLE, wanted);
+        }
     }
 
     private static JWindow create() {

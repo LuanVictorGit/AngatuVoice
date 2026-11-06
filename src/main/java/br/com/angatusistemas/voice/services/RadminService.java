@@ -1,6 +1,10 @@
 package br.com.angatusistemas.voice.services;
 
+import br.com.angatusistemas.lib.console.Console;
 import br.com.angatusistemas.voice.utils.Processes;
+import com.sun.jna.platform.win32.Advapi32Util;
+import com.sun.jna.platform.win32.Win32Exception;
+import com.sun.jna.platform.win32.WinReg;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InterfaceAddress;
@@ -10,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -25,6 +30,8 @@ public final class RadminService {
     private static final String SERVICE = "RvControlSvc";
     private static final String REGISTRY_KEY = "HKLM\\SOFTWARE\\WOW6432Node\\Famatech\\RadminVPN\\1.0";
     private static final Pattern ALIAS = Pattern.compile("(?m)^\\s*Alias\\s+REG_SZ\\s+(.+?)\\s*$");
+    private static final String CHAT_KEY = "Software\\Famatech\\Radmin VPN\\ui\\Chat";
+    private static final AtomicBoolean NOTIFICATIONS_SET = new AtomicBoolean(false);
     private static final int MISSES_TO_DISCONNECT = 2;
     private static final AtomicReference<Status> CURRENT = new AtomicReference<>(Status.EMPTY);
     private static volatile int misses;
@@ -125,13 +132,17 @@ public final class RadminService {
         static final Adapter NONE = new Adapter("", null, "", 0);
     }
 
+    /* Done once per run and in-process: this used to start two reg.exe every five seconds. */
     public static void ensureNotificationsDisabled() {
-        Thread.ofVirtual().start(() -> {
-            try {
-                Processes.run(5, "reg", "add", "HKCU\\Software\\Famatech\\Radmin VPN\\ui\\Chat", "/v", "Notifications", "/t", "REG_SZ", "/d", "false", "/f");
-                Processes.run(5, "reg", "add", "HKCU\\Software\\Famatech\\Radmin VPN\\ui\\Chat", "/v", "NotificationSound", "/t", "REG_SZ", "/d", "false", "/f");
-            } catch (Exception ignored) {
-            }
-        });
+        if (!NOTIFICATIONS_SET.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            Advapi32Util.registryCreateKey(WinReg.HKEY_CURRENT_USER, CHAT_KEY);
+            Advapi32Util.registrySetStringValue(WinReg.HKEY_CURRENT_USER, CHAT_KEY, "Notifications", "false");
+            Advapi32Util.registrySetStringValue(WinReg.HKEY_CURRENT_USER, CHAT_KEY, "NotificationSound", "false");
+        } catch (Win32Exception e) {
+            Console.warn("Could not turn off the Radmin notifications: %s", e.getMessage());
+        }
     }
 }

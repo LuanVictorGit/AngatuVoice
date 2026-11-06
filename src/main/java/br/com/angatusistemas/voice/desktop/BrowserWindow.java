@@ -1,5 +1,8 @@
 package br.com.angatusistemas.voice.desktop;
 
+import java.lang.management.ManagementFactory;
+import java.util.ArrayList;
+import java.util.List;
 import br.com.angatusistemas.voice.utils.Version;
 
 import br.com.angatusistemas.lib.console.Console;
@@ -46,7 +49,10 @@ final class BrowserWindow {
 
     private static final String JCEF_VERSION = "152.0.6";
     private static final int RELOAD_LIMIT = 3;
-    private static final int PUMP_MS = 8;
+    // Woken this often for as long as the app runs, so it is one frame at 60 Hz and not faster.
+    private static final int PUMP_MS = 16;
+    private static final int STRONG_CPU_THREADS = 6;
+    private static final long LOW_MEMORY_BYTES = 4L * 1024 * 1024 * 1024;
     private static final int PM_REMOVE = 1;
     private static final String[] CHROMIUM_FLAGS = {
             "--enable-media-stream",
@@ -169,6 +175,7 @@ final class BrowserWindow {
             builder.getCefSettings().log_file = AppDirs.ensure(AppDirs.logs()).resolve("chromium.log").toString();
             builder.getCefSettings().background_color = builder.getCefSettings().new ColorType(255, 15, 14, 13);
             builder.addJcefArgs(CHROMIUM_FLAGS);
+            builder.addJcefArgs(flagsForThisComputer());
             String extraFlags = System.getProperty("angatu.debug.chromium");
             if (extraFlags != null && !extraFlags.isBlank()) {
                 builder.addJcefArgs(extraFlags.trim().split("\s+"));
@@ -189,6 +196,19 @@ final class BrowserWindow {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /* What the machine can spare decides this: capture may take a whole core only where one is free, and little RAM asks Chromium to save it. */
+    private static String[] flagsForThisComputer() {
+        List<String> flags = new ArrayList<>();
+        if (Runtime.getRuntime().availableProcessors() >= STRONG_CPU_THREADS) {
+            flags.add("--webrtc-max-cpu-consumption-percentage=100");
+        }
+        if (ManagementFactory.getOperatingSystemMXBean() instanceof com.sun.management.OperatingSystemMXBean os
+                && os.getTotalMemorySize() <= LOW_MEMORY_BYTES) {
+            flags.add("--enable-low-end-device-mode");
+        }
+        return flags.toArray(String[]::new);
     }
 
     // Chromium's windows belong to the Swing event thread, which never reads Windows messages by itself: without this

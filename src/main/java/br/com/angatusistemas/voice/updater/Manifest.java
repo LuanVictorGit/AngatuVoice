@@ -15,12 +15,16 @@ import java.util.regex.Pattern;
  * @author Angatu Sistemas
  */
 public record Manifest(String app, String version, String channel, String minVersion, String os, String arch,
-                       boolean mandatory, String notes, String publishedAt, Pkg pkg) {
+                       boolean mandatory, String notes, String publishedAt, Pkg pkg, Patch patch) {
 
     public static final long MAX_PACKAGE_BYTES = 700L * 1024 * 1024;
     private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
 
     public record Pkg(String name, String url, long size, String sha256) {
+    }
+
+    /* Only the launcher and the application jar. It applies over an install whose runtime and libraries hash to {@code base}. */
+    public record Patch(String name, String url, long size, String sha256, String base) {
     }
 
     public static Manifest verified(byte[] raw, byte[] signature, byte[] publicKey, Set<String> allowedHosts) {
@@ -49,6 +53,17 @@ public record Manifest(String app, String version, String channel, String minVer
                 && allowedHosts.contains(uri.getHost().toLowerCase());
         if (!ok) {
             throw new IllegalArgumentException("manifest failed validation");
+        }
+        if (patch != null) {
+            URI patchUri = patch.url == null ? null : URI.create(patch.url);
+            boolean patchOk = patch.sha256 != null && SHA256.matcher(patch.sha256).matches() && patch.base != null
+                    && SHA256.matcher(patch.base).matches() && patch.size > 0 && patch.size <= MAX_PACKAGE_BYTES
+                    && patch.name != null && patch.name.matches("[A-Za-z0-9._-]{1,120}\\.zip") && patchUri != null
+                    && "https".equals(patchUri.getScheme()) && patchUri.getHost() != null
+                    && allowedHosts.contains(patchUri.getHost().toLowerCase());
+            if (!patchOk) {
+                throw new IllegalArgumentException("manifest patch failed validation");
+            }
         }
     }
 

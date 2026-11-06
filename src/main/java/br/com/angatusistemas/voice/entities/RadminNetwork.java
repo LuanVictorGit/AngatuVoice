@@ -20,4 +20,5 @@ public final class RadminNetwork extends Saveable {
     private String status;
     private long lastSeenAt;
     private long createdAt;
+    private boolean autoJoinTried;
 }

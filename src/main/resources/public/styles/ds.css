@@ -154,7 +154,22 @@ kbd { font-family: var(--av-mono); font-size: 12px; padding: 2px 6px; border-rad
 .tile-video.closed video { display: none; }
 .tile-video.closed .tile-video-header { opacity: 1; background: transparent; border-color: transparent; }
 .tile-cover { display: none; }
-.tile-video.closed .tile-cover { display: flex; flex: 1 1 0; min-height: 0; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 48px 16px 16px; text-align: center; }
+.tile-video.closed .tile-cover { display: flex; flex: 1 1 0; min-width: 0; min-height: 0; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 48px 16px 16px; text-align: center; overflow: hidden; }
+/* A tile in the side rail keeps only the essential: its header already carries the same actions as the cover buttons. */
+.tile-cover-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.tile-video.closed { container-type: size; }
+@container (max-width: 320px) {
+  .tile-video.closed .tile-cover { gap: 4px; padding: 38px 8px 8px; }
+  .tile-cover .avatar-lg { width: 32px; height: 32px; font-size: 13px; flex: none; }
+  .tile-cover-title { font-size: 12px; line-height: 1.25; }
+  .tile-cover-note, .tile-cover-actions { display: none; }
+  .tile-cover .btn { height: 28px; padding: 0 8px; font-size: 12px; white-space: nowrap; }
+  .tile-video-header .tile-name, .tile-video-header .mono { display: none; }
+}
+@media (max-width: 640px) {
+  .stage { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: minmax(150px, auto); overflow-y: auto; }
+  .tile-video, .tile-video.focused { grid-column: 1; grid-row: auto; }
+}
 .tile-loading { display: none; }
 .tile-video.waiting:not(.closed) .tile-loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--av-muted); font-size: 13px; font-weight: 600; pointer-events: none; }
 .live-badge { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 4px; background: var(--av-danger); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; flex: none; }
@@ -245,6 +260,8 @@ button.chip:hover { background: var(--av-bg2); }
 
 .brand-mark { opacity: 0.82; transition: opacity var(--av-fast) var(--av-ease); text-decoration: none; }
 .brand-mark:hover { opacity: 1; }
+.brand-logo { width: 76px; height: 26px; flex: none; }
+.brand-label { font-size: 13px; color: var(--av-faint); white-space: nowrap; }
 [data-theme="light"] .brand-on-dark { display: none !important; }
 [data-theme="dark"] .brand-on-light { display: none !important; }
 }
