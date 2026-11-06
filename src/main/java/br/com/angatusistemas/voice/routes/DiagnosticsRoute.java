@@ -5,7 +5,6 @@ import br.com.angatusistemas.lib.javalin.routes.Route;
 import br.com.angatusistemas.lib.javalin.routes.RouteType;
 import br.com.angatusistemas.voice.services.AutostartService;
 import br.com.angatusistemas.voice.services.PeerNetwork;
-import br.com.angatusistemas.voice.services.RadminService;
 import br.com.angatusistemas.voice.utils.AppDirs;
 import br.com.angatusistemas.voice.utils.Version;
 import io.javalin.http.Context;
@@ -27,12 +26,10 @@ public final class DiagnosticsRoute extends Route {
         Guard.requireSession(ctx);
         List<PeerNetwork.PeerView> peers = PeerNetwork.peers();
         ctx.json(GsonAPI.get().toJson(Map.of(
-                "radmin", RadminService.current(),
+                "connected", PeerNetwork.connected(),
                 "version", Version.current().toString(),
                 "peersKnown", peers.size(),
                 "peersOnline", peers.stream().filter(PeerNetwork.PeerView::online).count(),
-                "listenPort", PeerNetwork.listenPort(),
-                "linksOpen", PeerNetwork.linkCount(),
                 "latencyMs", PeerNetwork.latency(),
                 "install", AppDirs.install().map(Object::toString).orElse(""),
                 "autostart", AutostartService.enabled(),

@@ -5,6 +5,7 @@ import br.com.angatusistemas.lib.gson.GsonAPI;
 import br.com.angatusistemas.lib.javalin.routes.Route;
 import br.com.angatusistemas.lib.javalin.routes.RouteType;
 import br.com.angatusistemas.voice.entities.Group;
+import br.com.angatusistemas.voice.services.PeerNetwork;
 import br.com.angatusistemas.voice.services.GroupService;
 import br.com.angatusistemas.voice.services.LiveHub;
 import io.javalin.http.BadRequestResponse;
@@ -28,6 +29,7 @@ public final class JoinGroupRoute extends Route {
         Body body = JsonBody.read(ctx, Body.class);
         try {
             Group group = GroupService.join(body.code());
+            PeerNetwork.groupsChanged();
             LiveHub.emit("group.changed", Map.of("id", group.getId()));
             ctx.status(StatusCode.CREATED.code()).json(GsonAPI.get().toJson(Map.of("id", group.getId())));
         } catch (IllegalStateException e) {

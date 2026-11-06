@@ -5,8 +5,8 @@
 <h1 align="center">Angatu Voice</h1>
 
 <p align="center">
-  Voz, texto e compartilhamento de tela entre quem está na mesma rede do <b>Radmin VPN</b>.<br>
-  Privado, leve e sem servidor de ninguém no meio.
+  Voz, texto e compartilhamento de tela, sem configurar nada.<br>
+  Instalou e abriu, está conectado.
 </p>
 
 <p align="center">
@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <sub>Windows 10 ou 11 (64 bits) · o Java já vem dentro do instalador · requer o <a href="https://www.radmin-vpn.com/br/">Radmin VPN</a> instalado</sub>
+  <sub>Windows 10 ou 11 (64 bits) · o Java já vem dentro do instalador</sub>
 </p>
 
 <p align="center">
@@ -26,12 +26,12 @@
 ## Como funciona
 
 1. **Instale e abra.** O instalador é por usuário, não pede administrador e já configura o início com o Windows (você pode desmarcar).
-2. **Conexão automática.** O Angatu Voice conecta você automaticamente à rede padrão `AngatuVoice` no Radmin VPN, lê o seu apelido e encontra quem mais está na rede. Você também pode gerenciar outras redes adicionais pelas configurações.
-3. **Converse.** A *Rede Radmin* é o grupo de todo mundo da sua rede. Para um círculo menor, crie um grupo privado e mande o convite só para quem deve entrar.
+2. **Conexão automática.** O Angatu Voice se conecta sozinho ao servidor e mostra quem está online. Não há conta, senha nem VPN: a sua identidade é uma chave criada no seu computador.
+3. **Converse.** A conversa *Geral* é de todo mundo. Para um círculo menor, crie um grupo privado e mande o convite só para quem deve entrar.
 4. **Chame no voz.** Um clique em *Chamar* faz tocar para quem você chamou, com aviso de quem é mesmo com o aplicativo em segundo plano. Na chamada, você vê quem está falando, o ping de cada um e pode silenciar ou ajustar o volume de cada pessoa só para você.
-5. **Mostre a sua tela.** Até a resolução original, a 30 ou 60 quadros por segundo; se a rede de alguém não acompanhar, a qualidade desce só para essa pessoa e volta quando melhora.
+5. **Mostre a sua tela.** A placa de vídeo codifica a imagem, até a resolução original e 60 quadros por segundo, e o servidor entrega a quem escolher assistir.
 
-Tudo trafega direto entre os computadores, dentro do Radmin VPN, com identidade verificada e conexão cifrada.
+Tudo passa por um servidor só, com conexão cifrada e mensagens assinadas por quem escreveu. O servidor guarda mensagens para quem está offline e apaga as antigas sozinho.
 
 ## Um olhar por dentro
 
@@ -41,7 +41,7 @@ Tudo trafega direto entre os computadores, dentro do Radmin VPN, com identidade 
     <td width="50%"><img src="docs/img/configuracoes-audio.png" alt="Configurações de áudio"><br><sub><b>Áudio sob controle.</b> Microfone, saída, sensibilidade, cancelamento de eco, supressão de ruído e teste.</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/img/configuracoes-rede.png" alt="Configurações de rede"><br><sub><b>Rede.</b> Status do Radmin, seu IP privado, participantes e conexão manual por IP.</sub></td>
+    <td width="50%"><img src="docs/img/configuracoes-rede.png" alt="Configurações de rede"><br><sub><b>Rede.</b> Conexão com o servidor e participantes.</sub></td>
     <td width="50%"><img src="docs/img/atualizacoes.png" alt="Atualizações"><br><sub><b>Sempre atualizado.</b> Novas versões chegam sozinhas, verificadas e com volta automática se algo falhar.</sub></td>
   </tr>
 </table>
@@ -53,8 +53,8 @@ Tudo trafega direto entre os computadores, dentro do Radmin VPN, com identidade 
 
 ## O que tem dentro
 
-- **Gerenciador de redes Radmin VPN integrado:** conexão automática à rede padrão protegida `AngatuVoice`, com gerenciador visual para criar, entrar e alternar redes diretamente pelo aplicativo.
-- **Compartilhamento de tela em 1080p a 60 FPS:** transmissão em tempo real com codec VP9, seletor de modo Nitidez vs Movimento, exibição de taxa de bits e aceleração por GPU.
+- **Sem VPN e sem configuração:** o aplicativo se conecta sozinho e reconecta sozinho se a internet oscilar.
+- **Tela pela placa de vídeo:** H.264 por hardware em NVIDIA, Intel e AMD, em linhas de execução próprias. Quem assiste abre quando quer, e a imagem não trava a interface.
 - **Grupos privados** com convite, conversas individuais, histórico salvo no seu computador e mensagens pendentes entregues quando a pessoa volta.
 - **Chamadas** individuais e em grupo, com baixa latência, cancelamento de eco e supressão de ruído.
 - **Atalhos globais** para apertar para falar, silenciar microfone ou áudio, entrar e sair da chamada.
@@ -67,12 +67,12 @@ Tudo trafega direto entre os computadores, dentro do Radmin VPN, com identidade 
 ```powershell
 mvn -B test
 mvn -q -B -DskipTests package
-java --enable-native-access=ALL-UNNAMED -jar target\angatu-voice-1.4.0.jar
+java --enable-native-access=ALL-UNNAMED -jar target\angatu-voice-2.0.0.jar
 ```
 
 Requisitos: JDK 25 (com `jpackage`), Maven 3.9+ e o binário do [Tailwind](https://github.com/tailwindlabs/tailwindcss/releases) em `tools\bin\`. O pacote e o instalador saem de `tools\package.ps1` e `installer\angatu-voice.iss`; o GitHub Actions faz tudo isso ao publicar uma tag `vX.Y.Z`.
 
-- [Arquitetura, protocolo, integração com o Radmin e segurança](docs/ARQUITETURA.md)
+- [Arquitetura, servidor, protocolo e segurança](docs/ARQUITETURA.md)
 - [Atualizador, manifesto e rollback](docs/ATUALIZADOR.md)
 - [Versionamento e como publicar uma atualização](docs/VERSIONAMENTO.md)
 - [Histórico de versões](CHANGELOG.md)

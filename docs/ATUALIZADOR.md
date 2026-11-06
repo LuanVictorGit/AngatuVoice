@@ -41,5 +41,4 @@ Validado antes de qualquer uso: assinatura Ed25519 sobre os bytes exatos; `app`,
 - **"Não foi possível verificar atualizações"**: sem internet, limite de requisições do GitHub ou repositório privado sem token. O app continua funcionando.
 - **"Recusada porque não pôde ser autenticada"**: assinatura inválida (segredo `UPDATE_SIGNING_KEY` diferente da chave pública embutida).
 - **Atualização revertida**: veja `%APPDATA%\AngatuVoice\logs\app.log` e o histórico em Configurações, Atualizações.
-- **Radmin indisponível**: o banner explica; abra o Radmin VPN e entre em uma rede.
-- **Ninguém aparece**: o broadcast pode não atravessar a rede; use "Conectar por IP" (Configurações, Rede). As portas TCP 47600 a 47609 precisam estar liberadas no firewall do Windows para a faixa do Radmin.
+- **Sem conexão com o servidor**: o banner avisa e o aplicativo tenta de novo sozinho. Confira a internet e se um firewall bloqueia `voice.angatusistemas.com.br`.

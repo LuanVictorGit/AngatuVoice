@@ -22,7 +22,7 @@ public final class Migrations {
 
     private static final String ID = "schema";
     private static final int KEEP_BACKUPS = 3;
-    private static final List<Runnable> STEPS = List.of(GroupService::ensureRadmin, br.com.angatusistemas.voice.services.radmin.NetworkManager::ensureDefaultNetwork);
+    private static final List<Runnable> STEPS = List.of(GroupService::ensurePublic, () -> { }, GroupService::moveOldPublicGroup);
 
     private Migrations() {
     }

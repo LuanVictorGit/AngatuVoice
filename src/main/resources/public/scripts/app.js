@@ -17,7 +17,7 @@
   let activeFullscreenTile = null;
 
   AV.state = null;
-  AV.chat = "radmin";
+  AV.chat = "publico";
   AV.latency = null;
 
   const $ = (id) => document.getElementById(id);
@@ -32,38 +32,8 @@
   const chatOfRoom = (room) => (room.startsWith("dm:") ? "dm:" + room.slice(3).split("+").find((id) => id !== me().id) : room);
   const nameOf = (id) => (id === me().id ? me().name : (peerOf(id) || { name: "Participante" }).name);
 
-  let autoJoinedShown = false;
-  function showAutoJoinedModal() {
-    if (autoJoinedShown) return;
-    autoJoinedShown = true;
-    AV.sound("connected");
-    AV.toast("Você entrou na rede AngatuVoice automaticamente. Pode fechar o Radmin e usar o Voice <3", "ok");
-    AV.modal("Rede AngatuVoice conectada", (body) => {
-      body.append(
-        E("div", { class: "flex items-start gap-4 py-2" },
-          E("div", { class: "w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0" },
-            AV.icon("network", "ic-lg")),
-          E("div", { class: "space-y-1.5" },
-            E("h3", { class: "font-bold text-base text-zinc-100" }, "Você entrou na rede AngatuVoice automaticamente!"),
-            E("p", { class: "text-sm text-zinc-300" }, "Pode fechar a janela do Radmin VPN e usar o Voice ", E("span", { class: "text-rose-400 font-bold" }, "<3")),
-            E("p", { class: "text-xs text-muted" }, "Todos os participantes da rede AngatuVoice já estão acessíveis para voz, chat e compartilhamento de tela.")
-          )
-        )
-      );
-    }, [
-      { label: "Entendido", primary: true, run: (close) => close() }
-    ]);
-  }
-
-  AV.resetAutoJoinNotice = function () {
-    autoJoinedShown = false;
-  };
-
   AV.refresh = async function () {
     AV.state = await AV.api("GET", "/api/state");
-    if (AV.state && AV.state.autoJoined) {
-      showAutoJoinedModal();
-    }
     AV.latency = { peers: Object.fromEntries(AV.state.peers.map((p) => [p.id, p.rtt])), at: Date.now() };
     document.documentElement.dataset.theme = setting("theme");
     renderAll();
@@ -106,8 +76,8 @@
     const nav = $("nav");
     const inCall = (chat) => (AV.state.calls[roomOf(chat)] || []).length > 0;
     const callMark = (chat) => (inCall(chat) ? AV.icon("volume", "ic-sm text-ok") : null);
-    const network = AV.state.groups.filter((g) => g.kind === "radmin");
-    const groups = AV.state.groups.filter((g) => g.kind !== "radmin");
+    const network = AV.state.groups.filter((g) => g.kind === "public");
+    const groups = AV.state.groups.filter((g) => g.kind !== "public");
     const peers = [...AV.state.peers].sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name));
     AV.fill(nav, 
       E("div", { class: "nav-title hidden md:block" }, "Rede"),
@@ -121,7 +91,7 @@
       groups.map((g) => navItem(g.id, g.name, AV.icon("users"), g.unread, callMark(g.id))),
       E("div", { class: "nav-title hidden md:block" }, "Conversas privadas"),
       peers.length === 0 && E("div", { class: "hidden px-2 py-2 text-xs text-faint md:block" }, "Quando alguém entrar na rede, aparece aqui."),
-      peers.map((p) => navItem("dm:" + p.id, p.name, AV.avatar(p.id, p.name, "avatar-sm", p.online, p.unstable), AV.state.directUnread["dm:" + p.id] || 0, callMark("dm:" + p.id))));
+      peers.map((p) => navItem("dm:" + p.id, p.name, AV.avatar(p.id, p.name, "avatar-sm", p.online), AV.state.directUnread["dm:" + p.id] || 0, callMark("dm:" + p.id))));
   }
 
   function chatTitle() {
@@ -139,13 +109,13 @@
     const group = dm ? null : groupOf(AV.chat);
     const room = roomOf(AV.chat);
     const inThisCall = AV.rtc.room === room;
-    AV.fill($("chat-title"), dm && peer ? AV.avatar(peer.id, peer.name, "avatar-sm mr-2 inline-grid align-middle", peer.online, peer.unstable) : null,
+    AV.fill($("chat-title"), dm && peer ? AV.avatar(peer.id, peer.name, "avatar-sm mr-2 inline-grid align-middle", peer.online) : null,
       E("span", {}, chatTitle()),
-      group && group.kind === "radmin" && E("span", { class: "chip ml-3 align-middle" }, E("span", { class: "dot " + (AV.state.radmin.connected ? "dot-on" : "dot-off") }), AV.state.radmin.connected ? "Radmin conectado" : "Sem Radmin"),
-      dm && peer && E("span", { class: "chip ml-3 align-middle" }, peer.unstable ? "Reconectando…" : peer.online ? "Online" : "Offline"));
+      group && group.kind === "public" && E("span", { class: "chip ml-3 align-middle" }, E("span", { class: "dot " + (AV.state.net.connected ? "dot-on" : "dot-off") }), AV.state.net.connected ? "Conectado" : "Sem conexão"),
+      dm && peer && E("span", { class: "chip ml-3 align-middle" }, peer.online ? "Online" : "Offline"));
     AV.fill($("chat-tools"), 
       group && group.hasInvite && E("button", { class: "btn", onclick: () => inviteDialog(group) }, AV.icon("copy", "ic-sm"), E("span", { class: "hidden lg:inline" }, "Convidar")),
-      group && group.kind !== "radmin" && E("button", { class: "btn btn-ghost btn-icon text-muted hover:text-danger", title: "Excluir grupo", "aria-label": "Excluir grupo", onclick: () => deleteGroup(group) }, AV.icon("trash")),
+      group && group.kind !== "public" && E("button", { class: "btn btn-ghost btn-icon text-muted hover:text-danger", title: "Excluir grupo", "aria-label": "Excluir grupo", onclick: () => deleteGroup(group) }, AV.icon("trash")),
       dm && peer && E("button", { class: "btn btn-ghost btn-icon text-muted hover:text-danger", title: "Limpar ou excluir conversa", "aria-label": "Limpar ou excluir conversa", onclick: () => dmOptionsDialog(peer) }, AV.icon("trash")),
       E("button", { id: "stage-chat", class: "btn hidden", onclick: toggleChatOverStage }, AV.icon("chat", "ic-sm"), chatOverStage ? "Ocultar conversa" : "Mostrar conversa"),
       E("button", { class: "btn btn-ghost btn-icon xl:hidden", title: "Participantes", "aria-label": "Participantes", onclick: membersDialog }, AV.icon("users")),
@@ -161,12 +131,12 @@
     renderCall();
   }
 
-  function memberRow(id, name, online, alias, duplicate, unstable) {
+  function memberRow(id, name, online, duplicate) {
     const self = id === me().id;
     return E("div", { class: "member-row flex items-center gap-3 rounded-md px-2 py-1.5" + (AV.rtc.speaking[id] ? " speaking" : ""), dataset: { peer: id } },
-      AV.avatar(id, name, "avatar-sm", online, unstable),
+      AV.avatar(id, name, "avatar-sm", online),
       E("div", { class: "min-w-0 flex-1" }, E("div", { class: "truncate font-semibold " + (online ? "" : "text-faint") }, name),
-        E("div", { class: "truncate text-xs text-faint" }, unstable ? "Reconectando…" : (alias ? alias + " · " : "") + id.slice(0, 8))),
+        E("div", { class: "truncate text-xs text-faint" }, id.slice(0, 8))),
       duplicate && E("span", { class: "chip", title: "Outro participante usa o mesmo nome. Confira o código antes de confiar." }, AV.icon("alert", "ic-sm")),
       !self && online && E("span", { dataset: { pingPeer: id } }, AV.pingBadge(peerPing(id))),
       !self && AV.rtc.isPeerMuted(id) && E("span", { title: "Silenciado por você" }, AV.icon("volume-x", "ic-sm text-danger")),
@@ -175,11 +145,11 @@
 
   function membersList() {
     const group = isDm(AV.chat) ? null : groupOf(AV.chat);
-    const others = AV.state.peers.filter((p) => (isDm(AV.chat) ? "dm:" + p.id === AV.chat : group && group.kind === "radmin" ? true : p.online && p.groups.includes(AV.chat)));
+    const others = AV.state.peers.filter((p) => (isDm(AV.chat) ? "dm:" + p.id === AV.chat : group && group.kind === "public" ? true : p.online && p.groups.includes(AV.chat)));
     const online = others.filter((p) => p.online);
     const offline = others.filter((p) => !p.online);
-    const section = (title, list) => list.length ? [E("div", { class: "nav-title" }, title + " — " + list.length), list.map((p) => memberRow(p.id, p.name, p.online, p.alias, p.duplicateName, p.unstable))] : [];
-    return [E("div", { class: "nav-title" }, "Você"), memberRow(me().id, me().name, true, me().alias, false), section("Online", online), section("Offline", offline)];
+    const section = (title, list) => list.length ? [E("div", { class: "nav-title" }, title + " — " + list.length), list.map((p) => memberRow(p.id, p.name, p.online, p.duplicateName))] : [];
+    return [E("div", { class: "nav-title" }, "Você"), memberRow(me().id, me().name, true, false), section("Online", online), section("Offline", offline)];
   }
 
   function renderMembers() {
@@ -192,9 +162,9 @@
 
   function renderBanners() {
     const banners = [];
-    const r = AV.state.radmin;
+    const r = AV.state.net;
     if (!r.connected) {
-      banners.push(E("div", { class: "banner error" }, AV.icon("alert"), E("div", { class: "flex-1" }, E("b", {}, "Radmin VPN indisponível. "), AV.state.issues.join(" ") + " Sem ele, só as conversas salvas ficam disponíveis."),
+      banners.push(E("div", { class: "banner error" }, AV.icon("alert"), E("div", { class: "flex-1" }, E("b", {}, "Sem conexão com o servidor. "), "Tentando de novo. Enquanto isso, só as conversas salvas ficam disponíveis."),
         E("button", { class: "btn", onclick: () => AV.openSettings("network") }, "Ver rede")));
     }
     if (linkDown) banners.push(E("div", { class: "banner" }, AV.icon("refresh"), "Reconectando ao aplicativo…"));
@@ -234,7 +204,7 @@
   }
 
   function networkPing() {
-    if (!AV.state.radmin.connected) return { ms: null, text: "Sem rede", title: "Sem conexão com o Radmin VPN, não há como medir a latência." };
+    if (!AV.state.net.connected) return { ms: null, text: "Sem rede", title: "Sem conexão com o servidor, não há como medir a latência." };
     const room = AV.rtc.room;
     const ids = room ? (AV.state.calls[room] || []).filter((id) => id !== me().id) : AV.state.peers.filter((p) => p.online).map((p) => p.id);
     if (!ids.length) return { ms: null, text: "—", title: "Ninguém conectado para medir a latência." };
@@ -275,7 +245,7 @@
       body.append(E("p", { class: "mb-3 text-sm text-muted" }, "O ping é o tempo de ida e volta até cada pessoa. Até 100 ms é bom, até 200 ms é intermediário e acima disso a conversa começa a atrasar."));
       if (!online.length) body.append(E("p", { class: "text-muted" }, "Ninguém conectado para medir a latência."));
       online.forEach((p) => body.append(E("div", { class: "row" },
-        E("div", { class: "flex min-w-0 items-center gap-3" }, AV.avatar(p.id, p.name, "avatar-sm", p.online, p.unstable), E("span", { class: "truncate font-semibold" }, p.name)),
+        E("div", { class: "flex min-w-0 items-center gap-3" }, AV.avatar(p.id, p.name, "avatar-sm", p.online), E("span", { class: "truncate font-semibold" }, p.name)),
         E("span", { dataset: { pingPeer: p.id } }, AV.pingBadge(peerPing(p.id))))));
     }, [{ label: "Fechar", run: (close) => close() }]);
   }
@@ -339,12 +309,12 @@
   function renderBottom() {
     const rtc = AV.rtc;
     const inCall = !!rtc.room;
-    const r = AV.state.radmin;
+    const r = AV.state.net;
     const btn = (icon, title, onclick, cls, disabled) => E("button", { class: "btn btn-icon " + (cls || ""), title, "aria-label": title, onclick, disabled: disabled || false }, AV.icon(icon));
     AV.fill($("bottombar"), 
       E("div", { class: "flex min-w-0 items-center gap-3" }, AV.avatar(me().id, me().name, "", true),
         E("div", { class: "hidden min-w-0 sm:block" }, E("div", { class: "truncate font-semibold" }, me().name),
-          E("div", { class: "flex items-center gap-2 text-xs text-muted" }, E("span", { class: "dot " + (r.connected ? "dot-on" : "dot-off") }), r.connected ? "Radmin · " + r.ip : "Sem conexão"))),
+          E("div", { class: "flex items-center gap-2 text-xs text-muted" }, E("span", { class: "dot " + (r.connected ? "dot-on" : "dot-off") }), r.connected ? "Conectado" : "Sem conexão"))),
       E("div", { class: "flex-1" }),
       E("div", { class: "flex items-center gap-2" },
         shareChip(),
@@ -784,9 +754,9 @@
                 try {
                   await AV.api("DELETE", "/api/peers/" + peer.id);
                   messages = [];
-                  AV.chat = "radmin";
+                  AV.chat = "publico";
                   await AV.refresh();
-                  selectChat("radmin");
+                  selectChat("publico");
                   AV.toast("Conversa excluída.", "ok");
                 } catch (e) { AV.fail(e); }
               }
@@ -800,9 +770,9 @@
     if (!(await AV.confirm("Excluir " + group.name + "?", "Você sairá do grupo e todas as mensagens dele serão apagadas deste computador.", "Excluir grupo", true))) return;
     try {
       await AV.api("DELETE", "/api/groups/" + group.id);
-      AV.chat = "radmin";
+      AV.chat = "publico";
       await AV.refresh();
-      selectChat("radmin");
+      selectChat("publico");
       AV.toast("Grupo excluído com sucesso.", "ok");
     } catch (e) { AV.fail(e); }
   }
@@ -1060,12 +1030,11 @@
     AV.on("peer.changed", () => refreshSoon());
     AV.on("peer.relinked", ({ id }) => { AV.rtc.resync(id); refreshSoon(); });
     AV.on("net.latency", ({ peers }) => { AV.latency = { peers, at: Date.now() }; renderPing(); });
-    AV.on("net.autojoined", () => showAutoJoinedModal());
     AV.on("net", () => refreshSoon());
     AV.on("group.changed", () => refreshSoon());
     AV.on("peer.profile", () => refreshSoon());
     AV.on("messages.cleared", ({ chat }) => { if (chat === AV.chat) { messages = []; renderMessages(true); } });
-    AV.on("peer.removed", ({ id }) => { if (AV.chat === "dm:" + id) { selectChat("radmin"); } refreshSoon(); });
+    AV.on("peer.removed", ({ id }) => { if (AV.chat === "dm:" + id) { selectChat("publico"); } refreshSoon(); });
     AV.on("call.state", (d) => { AV.rtc.handleRoom(d); renderHeader(); renderCall(); renderNav(); renderMembers(); renderBanners(); });
     AV.on("call.incoming", ({ calls }) => { AV.state.incoming = calls; renderIncoming(); });
     AV.on("call.action", onCallAction);
@@ -1109,8 +1078,8 @@
       lastUpdateState = AV.state.update.state;
       enforceUpdateStatus(AV.state.update);
       const last = setting("ui.lastChat");
-      const valid = last === "radmin" || groupOf(last) || (isDm(last) && peerOf(last.slice(3)));
-      await selectChat(valid ? last : "radmin");
+      const valid = groupOf(last) || (isDm(last) && peerOf(last.slice(3)));
+      await selectChat(valid ? last : "publico");
       AV.live.start();
       document.getElementById("boot").classList.add("done");
     } catch (e) {

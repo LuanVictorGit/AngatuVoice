@@ -3,6 +3,7 @@ package br.com.angatusistemas.voice.routes;
 import br.com.angatusistemas.lib.connection.StatusCode;
 import br.com.angatusistemas.lib.javalin.routes.Route;
 import br.com.angatusistemas.lib.javalin.routes.RouteType;
+import br.com.angatusistemas.voice.services.PeerNetwork;
 import br.com.angatusistemas.voice.services.IdentityService;
 import io.javalin.http.BadRequestResponse;
 import io.javalin.http.Context;
@@ -24,7 +25,7 @@ public final class RenameSelfRoute extends Route {
         if (IdentityService.clean(body.name()).isEmpty()) {
             throw new BadRequestResponse("Informe um nome com até 32 caracteres.");
         }
-        IdentityService.rename(body.name());
+        PeerNetwork.renamed(IdentityService.rename(body.name()));
         ctx.status(StatusCode.NO_CONTENT.code());
     }
 

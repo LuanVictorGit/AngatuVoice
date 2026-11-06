@@ -76,6 +76,12 @@ public final class MessageService {
                 chat);
     }
 
+    /* What this person sent that nobody has confirmed yet, across every chat. */
+    public static List<Message> pending() {
+        return Saveable.query(Message.class,
+                "SELECT data FROM " + TABLE + " WHERE json_extract(data,'$.pending')=1 ORDER BY json_extract(data,'$.sentAt') ASC LIMIT 200");
+    }
+
     public static void delivered(String id) {
         Saveable.mutate(Message.class, id, stored -> stored.setPending(false));
     }

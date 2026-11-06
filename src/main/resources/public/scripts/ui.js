@@ -75,12 +75,12 @@ AV.avatarVersion = function (id) {
   return peer ? peer.avatar || "" : "";
 };
 
-AV.avatar = function (id, name, size, online, unstable) {
+AV.avatar = function (id, name, size, online) {
   const version = AV.avatarVersion(id);
   const node = AV.el("div", { class: "avatar " + (size || ""), style: "background:" + AV.colorFor(id), "aria-hidden": "true" },
     version ? AV.el("img", { src: "/api/avatar/" + id + "?v=" + version, alt: "", draggable: "false", class: "avatar-img" })
       : (name || "?").trim().charAt(0).toUpperCase());
-  if (online !== undefined) node.append(AV.el("span", { class: "presence" + (online ? " on" : "") + (unstable ? " unstable" : "") }));
+  if (online !== undefined) node.append(AV.el("span", { class: "presence" + (online ? " on" : "") + ("") }));
   return node;
 };
 

@@ -329,7 +329,6 @@
       select("theme", "Tema", "", [["dark", "Escuro"], ["light", "Claro"]]),
       toggle("notifications", "Notificações", "Avisa sobre mensagens e entradas quando a janela está em segundo plano."),
       toggle("privacy.preview", "Mostrar o texto nas notificações", "Desligado, a notificação só diz que chegou uma mensagem."),
-      toggle("privacy.shareAlias", "Compartilhar meu apelido do Radmin", "Outros participantes veem o seu apelido do Radmin VPN ao lado do nome."),
       toggle("overlay.enabled", "Mostrar quem está falando no canto da tela", "Durante uma chamada, com o Angatu Voice em segundo plano, um aviso discreto mostra quem fala."),
       toggle("overlay.transparent", "Fundo transparente nos avisos", "Remove a caixa escura de fundo, exibindo apenas as fotos e os nomes sobre a tela."),
       select("overlay.corner", "Posição do aviso", "", [["tr", "Canto superior direito"], ["tl", "Canto superior esquerdo"], ["br", "Canto inferior direito"], ["bl", "Canto inferior esquerdo"]]));
@@ -355,187 +354,20 @@
   }
 
   function networkTab(body) {
-    const r = AV.state.radmin;
-    const dot = (cls) => E("span", { class: "dot " + cls });
-    const topHeader = E("div", { class: "mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" },
-      E("div", {},
-        E("div", { class: "font-semibold" }, "Estado do Radmin VPN"),
-        E("div", { class: "text-sm text-muted" }, r.installed ? (r.running ? "Serviço ativo e operacional." : "Instalado, mas o serviço está parado.") : "Radmin VPN não encontrado no computador.")),
-      E("div", { class: "flex gap-2" },
-        E("button", { class: "btn btn-sm", onclick: () => AV.api("POST", "/api/networks/open-radmin").catch(AV.fail) }, AV.icon("share", "ic-sm mr-1"), "Abrir Radmin"),
-        E("button", { class: "btn btn-sm", onclick: () => loadNetworks() }, AV.icon("refresh", "ic-sm mr-1"), "Atualizar")));
-
-    const managerSection = E("div", { class: "mt-6" });
-
-    body.append(
-      topHeader,
-      row("Seu apelido no Radmin", "Lido do próprio Radmin VPN.", E("span", { class: "mono" }, r.alias || "—")),
-      row("IP privado", r.adapter ? "Adaptador: " + r.adapter : "", E("span", { class: "mono" }, r.ip || "—")),
-      ...(AV.state.issues.length ? [E("div", { class: "banner mt-3 rounded-md" }, AV.icon("alert"), AV.state.issues.join(" "))] : []),
-      managerSection);
-
-    async function loadNetworks() {
-      AV.fill(managerSection, E("div", { class: "text-muted text-sm" }, "Carregando redes…"));
-      let list = [];
-      try {
-        list = await AV.api("GET", "/api/networks");
-      } catch (e) {
-        AV.fill(managerSection, E("div", { class: "banner rounded-md" }, "Não foi possível consultar as redes: " + e.message));
-        return;
-      }
-
-      const def = list.find((n) => n.isDefault);
-      const custom = list.filter((n) => !n.isDefault);
-
-      const statusChip = (st) => {
-        if (st === "connected") return E("span", { class: "chip chip-green" }, "Conectado");
-        if (st === "connecting") return E("span", { class: "chip chip-blue" }, "Conectando…");
-        if (st === "reconnecting") return E("span", { class: "chip chip-yellow" }, "Reconectando…");
-        if (st === "awaiting_bootstrap") return E("span", { class: "chip chip-yellow" }, "Aguardando inicialização");
-        if (st === "service_stopped") return E("span", { class: "chip chip-red" }, "Serviço parado");
-        return E("span", { class: "chip" }, "Desconectado");
-      };
-
-      const defCard = def ? E("div", { class: "card p-4 border border-emerald-500/30 bg-emerald-500/5 mb-6" },
-        E("div", { class: "flex items-center justify-between" },
-          E("div", { class: "flex items-center gap-2" },
-            E("div", { class: "text-lg font-bold" }, def.name),
-            E("span", { class: "chip chip-blue text-xs" }, "Rede obrigatória do sistema")),
-          statusChip(def.status)),
-        E("p", { class: "text-sm text-muted mt-1" }, "Rede padrão permanente do AngatuVoice para comunicação com todos os participantes."),
-        E("div", { class: "mt-3 flex flex-wrap items-center gap-4 text-sm" },
-          E("div", {}, E("span", { class: "text-muted" }, "IP: "), E("span", { class: "mono font-semibold" }, def.ip || r.ip || "—")),
-          E("div", {}, E("span", { class: "text-muted" }, "Participantes: "), E("span", { class: "font-semibold" }, def.onlinePeers + " online")),
-          def.message && E("div", { class: "text-faint text-xs italic" }, def.message)),
-        E("div", { class: "mt-4 flex gap-2" },
-          E("button", { class: "btn btn-sm btn-primary", onclick: async () => {
-            try {
-              if (AV.resetAutoJoinNotice) AV.resetAutoJoinNotice();
-              await AV.api("POST", "/api/networks/reconnect");
-              AV.toast("Reconexão iniciada…", "ok");
-              setTimeout(loadNetworks, 1000);
-            } catch (err) { AV.fail(err); }
-          } }, AV.icon("refresh", "ic-sm mr-1"), "Reconectar"))) : E("div");
-
-      const customHeader = E("div", { class: "mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between" },
-        E("h3", { class: "font-bold" }, "Outras redes Radmin (" + custom.length + ")"),
-        E("div", { class: "flex gap-2" },
-          E("button", { class: "btn btn-sm", onclick: openJoinModal }, AV.icon("plus", "ic-sm mr-1"), "Entrar em rede"),
-          E("button", { class: "btn btn-sm", onclick: openCreateModal }, AV.icon("plus", "ic-sm mr-1"), "Criar rede")));
-
-      const customList = custom.length ? E("div", { class: "card px-4 mb-6" },
-        custom.map((n) => E("div", { class: "row py-3 flex items-center justify-between" },
-          E("div", {},
-            E("div", { class: "font-semibold" }, n.name),
-            E("div", { class: "text-xs text-muted" }, n.status === "connected" ? "Conectada no Radmin" : "Desconectada")),
-          E("div", { class: "flex items-center gap-2" },
-            statusChip(n.status),
-            n.status === "connected" ?
-              E("button", { class: "btn btn-sm btn-ghost", onclick: async () => {
-                if (await AV.confirm("Sair da rede " + n.name + "?", "Você deixará de se comunicar com os membros desta rede adicional.", "Sair")) {
-                  try {
-                    await AV.api("POST", "/api/networks/leave", { name: n.name });
-                    AV.toast("Saída concluída.", "ok");
-                    loadNetworks();
-                  } catch (err) { AV.fail(err); }
-                }
-              } }, "Sair") :
-              E("button", { class: "btn btn-sm", onclick: () => openJoinModal(n.name) }, "Conectar"),
-            E("button", { class: "btn btn-sm btn-ghost text-red-500", "aria-label": "Excluir rede", title: "Excluir rede", onclick: async () => {
-              if (await AV.confirm("Excluir rede " + n.name + "?", "A rede será excluída do Radmin VPN e removida do AngatuVoice.", "Excluir")) {
-                try {
-                  AV.toast("Excluindo rede…", "ok");
-                  await AV.api("DELETE", "/api/networks/" + encodeURIComponent(n.name));
-                  AV.toast("Rede excluída com sucesso.", "ok");
-                  loadNetworks();
-                } catch (err) { AV.fail(err); }
-              }
-            } }, AV.icon("trash", "ic-sm")))))) :
-        E("p", { class: "text-sm text-muted mb-6" }, "Nenhuma rede adicional cadastrada. Você pode criar ou entrar em outras redes pelos botões acima.");
-
-      AV.fill(managerSection, defCard, customHeader, customList);
-    }
-
-    function openJoinModal(presetName) {
-      const nameInput = E("input", { class: "input w-full", placeholder: "Nome da rede", value: typeof presetName === "string" ? presetName : "", required: true });
-      const passInput = E("input", { class: "input w-full", type: "password", placeholder: "Senha da rede", required: true });
-      AV.modal("Entrar em rede Radmin", (b) => {
-        b.append(
-          E("p", { class: "text-sm text-muted mb-3" }, "Informe o nome e a senha da rede Radmin VPN que deseja ingressar."),
-          E("div", { class: "space-y-3" },
-            E("div", {}, E("label", { class: "text-xs font-semibold block mb-1" }, "Nome da rede"), nameInput),
-            E("div", {}, E("label", { class: "text-xs font-semibold block mb-1" }, "Senha"), passInput)));
-      }, [
-        { label: "Cancelar", run: (close) => close() },
-        { label: "Entrar", primary: true, run: async (close) => {
-          const name = nameInput.value.trim();
-          const pass = passInput.value;
-          if (!name || !pass) { AV.toast("Preencha o nome e a senha da rede.", "warn"); return; }
-          try {
-            AV.toast("Conectando…", "ok");
-            const res = await AV.api("POST", "/api/networks/join", { name, password: pass });
-            if (res.ok) {
-              AV.toast(res.message || "Conectado à rede com sucesso!", "ok");
-              close();
-              loadNetworks();
-            } else {
-              AV.toast(res.message || "Não foi possível entrar na rede.", "warn");
-            }
-          } catch (e) { AV.fail(e); }
-        } }
-      ]);
-    }
-
-    function openCreateModal() {
-      const nameInput = E("input", { class: "input w-full", placeholder: "Nome da nova rede", required: true });
-      const passInput = E("input", { class: "input w-full", type: "password", placeholder: "Senha (mínimo 6 caracteres)", required: true });
-      const confirmInput = E("input", { class: "input w-full", type: "password", placeholder: "Confirmar senha", required: true });
-      AV.modal("Criar nova rede Radmin", (b) => {
-        b.append(
-          E("p", { class: "text-sm text-muted mb-3" }, "Crie uma nova rede privada no Radmin VPN sob sua administração."),
-          E("div", { class: "space-y-3" },
-            E("div", {}, E("label", { class: "text-xs font-semibold block mb-1" }, "Nome da rede"), nameInput),
-            E("div", {}, E("label", { class: "text-xs font-semibold block mb-1" }, "Senha"), passInput),
-            E("div", {}, E("label", { class: "text-xs font-semibold block mb-1" }, "Confirmar senha"), confirmInput)));
-      }, [
-        { label: "Cancelar", run: (close) => close() },
-        { label: "Criar rede", primary: true, run: async (close) => {
-          const name = nameInput.value.trim();
-          const pass = passInput.value;
-          const confirm = confirmInput.value;
-          if (!name || !pass) { AV.toast("Preencha todos os campos.", "warn"); return; }
-          if (pass.length < 6) { AV.toast("A senha deve ter no mínimo 6 caracteres.", "warn"); return; }
-          if (pass !== confirm) { AV.toast("As senhas informadas não coincidem.", "warn"); return; }
-          try {
-            AV.toast("Criando rede…", "ok");
-            const res = await AV.api("POST", "/api/networks/create", { name, password: pass });
-            if (res.ok) {
-              AV.toast(res.message || "Rede criada com sucesso!", "ok");
-              close();
-              loadNetworks();
-            } else {
-              AV.toast(res.message || "Não foi possível criar a rede.", "warn");
-            }
-          } catch (e) { AV.fail(e); }
-        } }
-      ]);
-    }
-
-    loadNetworks();
+    const n = AV.state.net;
+    body.append(E("div", { class: "mb-3" },
+      E("div", { class: "font-semibold" }, "Servidor do Angatu Voice"),
+      E("div", { class: "text-sm text-muted" }, n.connected ? "Conectado. Mensagens, voz e tela passam pelo servidor." : "Sem conexão. O aplicativo continua tentando sozinho.")));
+    body.append(row("Mensagens no servidor", "Guardadas para quem está offline por até 30 dias, e até as 1.000 mais recentes de cada conversa. No seu computador, o histórico continua.", E("span", { class: "chip" }, n.connected ? "Conectado" : "Offline")));
 
     const peers = AV.state.peers;
     body.append(E("h3", { class: "mt-6 mb-2 font-bold" }, "Participantes conhecidos (" + peers.filter((p) => p.online).length + " online)"),
       peers.length ? E("div", { class: "card px-4" }, peers.map((p) => E("div", { class: "row" },
         E("div", { class: "flex items-center gap-3" }, AV.avatar(p.id, p.name, "avatar-sm", p.online),
           E("div", {}, E("div", { class: "font-semibold" }, p.name, p.duplicateName && E("span", { class: "chip ml-2" }, "nome repetido")),
-            E("small", { class: "mono text-muted" }, p.id + (p.ip ? "  ·  " + p.ip : "")))),
+            E("small", { class: "mono text-muted" }, p.id))),
         E("span", { class: "chip" }, p.online ? "Conectado" : "Offline")))) : E("p", { class: "text-muted" }, "Ninguém foi encontrado ainda. Peça para as outras pessoas abrirem o Angatu Voice."));
-    const address = E("input", { class: "input", placeholder: "26.10.20.30", "aria-label": "IP do participante", maxlength: 21 });
-    body.append(E("h3", { class: "mt-6 mb-2 font-bold" }, "Conectar por IP"),
-      E("p", { class: "mb-2 text-sm text-muted" }, "Se a descoberta automática não achar alguém, informe o IP dele no Radmin VPN."),
-      E("div", { class: "flex gap-2" }, address, E("button", { class: "btn btn-primary", onclick: async () => {
-        try { await AV.api("POST", "/api/peers", { address: address.value.trim() }); AV.toast("Tentando conectar…", "ok"); address.value = ""; } catch (e) { AV.fail(e); }
-      } }, "Conectar")),
+    body.append(
       E("button", { class: "btn mt-6", onclick: async () => {
         try {
           const d = await AV.api("GET", "/api/system/diagnostics");
@@ -582,7 +414,7 @@
     body.append(E("div", { class: "flex flex-col items-center gap-3 py-8 text-center" },
       E("img", { src: "/assets/icon-256.png", width: 96, height: 96, alt: "Angatu Voice", draggable: "false" }),
       E("div", { class: "text-xl font-bold" }, "Angatu Voice"), E("div", { class: "text-muted" }, "Versão " + AV.state.version),
-      E("p", { class: "max-w-sm text-muted" }, "Conversa privada por voz, texto e tela sobre a sua rede do Radmin VPN."),
+      E("p", { class: "max-w-sm text-muted" }, "Conversa por voz, texto e tela."),
       AV.brandMark("mt-2 flex items-center gap-2"),
       E("button", { class: "btn btn-danger mt-4", onclick: async () => { if (await AV.confirm("Sair do Angatu Voice?", "Você deixará de receber mensagens e chamadas até abrir o aplicativo de novo.", "Sair", true)) AV.api("POST", "/api/app/quit").catch(() => {}); } }, AV.icon("power", "ic-sm"), "Sair do aplicativo")));
   }

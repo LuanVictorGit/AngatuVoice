@@ -3,6 +3,7 @@ package br.com.angatusistemas.voice.routes;
 import br.com.angatusistemas.lib.connection.StatusCode;
 import br.com.angatusistemas.lib.javalin.routes.Route;
 import br.com.angatusistemas.lib.javalin.routes.RouteType;
+import br.com.angatusistemas.voice.services.PeerNetwork;
 import br.com.angatusistemas.voice.services.GroupService;
 import br.com.angatusistemas.voice.services.LiveHub;
 import io.javalin.http.Context;
@@ -24,6 +25,7 @@ public final class LeaveGroupRoute extends Route {
         Guard.requireSession(ctx);
         try {
             GroupService.leave(ctx.pathParam("id"));
+            PeerNetwork.groupsChanged();
         } catch (IllegalArgumentException e) {
             throw new NotFoundResponse("Grupo não encontrado.");
         }

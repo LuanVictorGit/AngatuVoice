@@ -62,9 +62,7 @@ public final class IdentityService {
     }
 
     private static String defaultName() {
-        String alias = RadminService.refresh().alias();
-        String fallback = clean(System.getenv().getOrDefault("COMPUTERNAME", "Usuário"));
-        return alias.isBlank() ? fallback : clean(alias);
+        return clean(System.getenv().getOrDefault("COMPUTERNAME", "Usuário"));
     }
 
     public record Self(String id, byte[] publicKey, PrivateKey privateKey, String name) {

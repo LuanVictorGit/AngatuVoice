@@ -3,6 +3,7 @@ package br.com.angatusistemas.voice.services;
 import br.com.angatusistemas.lib.database.Saveable;
 import br.com.angatusistemas.lib.gson.GsonAPI;
 import br.com.angatusistemas.voice.entities.Group;
+import br.com.angatusistemas.voice.entities.Message;
 import br.com.angatusistemas.voice.utils.Crypto;
 import com.google.gson.JsonParseException;
 import java.nio.charset.StandardCharsets;
@@ -12,13 +13,14 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 /**
- * Manages the conversation spaces: the automatic Radmin network and private groups shared by an invite code.
+ * Manages the conversation spaces: the chat everyone on the server shares and private groups shared by an invite code.
  *
  * @author Angatu Sistemas
  */
 public final class GroupService {
 
-    public static final String RADMIN = "radmin";
+    public static final String PUBLIC = "publico";
+    private static final String OLD_PUBLIC = "radmin";
     private static final String PREFIX = "AV1.";
     private static final Pattern ID = Pattern.compile("g_[0-9a-f]{16}");
     private static final int MAX_NAME = 40;
@@ -26,15 +28,25 @@ public final class GroupService {
     private GroupService() {
     }
 
-    public static void ensureRadmin() {
-        if (!Saveable.exists(Group.class, RADMIN)) {
-            Group radmin = new Group();
-            radmin.setId(RADMIN);
-            radmin.setName("Rede Radmin");
-            radmin.setKind("radmin");
-            radmin.setCreatedAt(Instant.now().toEpochMilli());
-            radmin.save();
+    public static void ensurePublic() {
+        if (!Saveable.exists(Group.class, PUBLIC)) {
+            Group everyone = new Group();
+            everyone.setId(PUBLIC);
+            everyone.setName("Geral");
+            everyone.setKind("public");
+            everyone.setCreatedAt(Instant.now().toEpochMilli());
+            everyone.save();
         }
+    }
+
+    /* The chat everyone used to share carries on as the one everyone shares on the server. */
+    public static void moveOldPublicGroup() {
+        ensurePublic();
+        List<Message> moved = Saveable.findByField(Message.class, "chatId", OLD_PUBLIC);
+        moved.forEach(m -> m.setChatId(PUBLIC));
+        Saveable.saveAll(moved);
+        Saveable.deleteById(Group.class, OLD_PUBLIC);
+        Saveable.query(Group.class, "DROP TABLE IF EXISTS " + OLD_PUBLIC + "networks");
     }
 
     public static List<Group> list() {
@@ -86,7 +98,7 @@ public final class GroupService {
 
     public static void leave(String id) {
         Group group = find(id);
-        if (group == null || RADMIN.equals(id)) {
+        if (group == null || PUBLIC.equals(id)) {
             throw new IllegalArgumentException("cannot leave " + id);
         }
         MessageService.clear(id);

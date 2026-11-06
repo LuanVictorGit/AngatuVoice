@@ -34,8 +34,6 @@ class CallRoutesTest {
 
     @BeforeAll
     static void boot() throws Exception {
-        System.setProperty("angatu.radmin.ip", "127.0.0.98");
-        System.setProperty("angatu.radmin.alias", "teste");
         try (ServerSocket probe = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
             port = probe.getLocalPort();
         }
@@ -52,7 +50,7 @@ class CallRoutesTest {
     @Test
     void decliningRequiresASession() throws Exception {
         HttpRequest request = HttpRequest.newBuilder(uri("/api/call/decline"))
-                .POST(HttpRequest.BodyPublishers.ofString("{\"room\":\"radmin\"}")).build();
+                .POST(HttpRequest.BodyPublishers.ofString("{\"room\":\"publico\"}")).build();
         assertEquals(401, HTTP.send(request, HttpResponse.BodyHandlers.ofString()).statusCode());
     }
 
@@ -64,7 +62,7 @@ class CallRoutesTest {
 
     @Test
     void decliningARoomThatIsNotRingingChangesNothing() throws Exception {
-        assertEquals(204, post("/api/call/decline", "{\"room\":\"radmin\"}").statusCode());
+        assertEquals(204, post("/api/call/decline", "{\"room\":\"publico\"}").statusCode());
     }
 
     @Test

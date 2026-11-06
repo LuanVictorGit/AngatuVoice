@@ -35,7 +35,7 @@ public final class Main {
 
     private static final long LOG_LIMIT_BYTES = 5L * 1024 * 1024;
     private static final String CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-            + "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ws://127.0.0.1:*; "
+            + "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ws://127.0.0.1:* wss://voice.angatusistemas.com.br; "
             + "object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 
     private Main() {

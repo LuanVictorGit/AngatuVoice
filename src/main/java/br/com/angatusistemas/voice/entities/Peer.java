@@ -17,10 +17,7 @@ public final class Peer extends Saveable {
 
     private String id;
     private String name;
-    private String radminAlias;
     private String publicKey;
-    private String lastIp;
-    private int lastPort;
     private long firstSeen;
     private long lastSeen;
     private String avatar;

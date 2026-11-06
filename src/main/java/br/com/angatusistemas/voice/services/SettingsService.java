@@ -111,7 +111,6 @@ public final class SettingsService {
         m.put("closeToTray", new Rule("true", BOOL));
         m.put("theme", new Rule("dark", oneOf("dark", "light")));
         m.put("notifications", new Rule("true", BOOL));
-        m.put("privacy.shareAlias", new Rule("true", BOOL));
         m.put("privacy.preview", new Rule("true", BOOL));
         m.put("update.auto", new Rule("true", BOOL));
         m.put("update.channel", new Rule("stable", oneOf("stable", "beta")));
@@ -148,7 +147,7 @@ public final class SettingsService {
         m.put("sounds.enabled", new Rule("true", BOOL));
         m.put("sounds.volume", new Rule("100", range(0, 100)));
         m.put("sounds.ring", new Rule("true", BOOL));
-        m.put("ui.lastChat", new Rule("radmin", v -> v.length() <= 80));
+        m.put("ui.lastChat", new Rule("publico", v -> v.length() <= 80));
         m.put("ui.trayHintShown", new Rule("false", BOOL));
         return Collections.unmodifiableMap(m);
     }

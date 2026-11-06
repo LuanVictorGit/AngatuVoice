@@ -7,10 +7,26 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [2.0.0] - 2026-11-06
+
+### Adicionado
+- Agora um servidor próprio cuida de tudo: quem está online, mensagens, voz e tela. Não é mais preciso instalar nenhuma VPN nem entrar em rede nenhuma: abriu o aplicativo, está conectado.
+- Mensagens para quem está offline ficam guardadas no servidor e chegam quando a pessoa volta. Ele apaga sozinho as com mais de 30 dias e, em cada conversa, as que passam das 1.000 mais recentes. O histórico no seu computador continua.
+- Quem transmite envia a tela uma vez só para o servidor, que entrega a todos que assistem.
+- Um aviso rápido mostra quando alguém começa ou para de assistir à sua tela.
+
+### Mudou
+- Qualquer pessoa com o aplicativo pode entrar e aparece para todos na conversa Geral. Para um círculo menor, continuam os grupos privados com convite.
+- As mensagens passam pelo servidor de forma legível para ele. A assinatura impede que alguém escreva em nome de outra pessoa, mas não esconde o conteúdo de quem administra o servidor.
+- A voz passa pelo servidor, então ninguém na chamada vê o endereço de ninguém.
+
+### Corrigido
+- A tela de quem transmite podia ficar preta com o som funcionando. Sem imagem por 4 segundos, o aplicativo refaz a inscrição sozinho.
+
 ## [1.7.3] - 2026-11-05
 
 ### Corrigido
-- O Radmin VPN não abre mais junto com o Angatu Voice, nem na primeira vez. Quem ainda não está na rede AngatuVoice entra pelo botão Reconectar, em Configurações > Rede.
+- O VPN não abre mais junto com o Angatu Voice, nem na primeira vez. Quem ainda não está na rede AngatuVoice entra pelo botão Reconectar, em Configurações > Rede.
 
 ## [1.7.2] - 2026-11-05
 
@@ -31,7 +47,7 @@ O texto de cada seção vira as notas da versão no GitHub e na tela de Atualiza
 - Atualizações pequenas: quando só o aplicativo muda, o download é de poucos MB, não mais de 236 MB, e a instalação reaproveita o que já está no computador. Vale a partir da próxima versão, porque esta ainda precisa chegar por inteiro.
 
 ### Corrigido
-- O Radmin VPN não abre mais sozinho. O aplicativo lê o estado dele sem tocar na janela. Só o botão Reconectar, as ações de rede e a primeira entrada automática na rede AngatuVoice abrem o Radmin, que depois é fechado pelo X e continua rodando em segundo plano.
+- O VPN não abre mais sozinho. O aplicativo lê o estado dele sem tocar na janela. Só o botão Reconectar, as ações de rede e a primeira entrada automática na rede AngatuVoice abrem a VPN, que depois é fechado pelo X e continua rodando em segundo plano.
 - Computadores fracos: o aplicativo rodava um script do PowerShell e dois comandos do Windows a cada 5 segundos. Agora não roda nenhum. A Java também passou a usar menos memória e processador, e sem placa de vídeo compatível a transmissão começa em 720p a 30 FPS em computadores com até 4 núcleos lógicos.
 - O overlay de quem está falando deixa passar os cliques para o que está embaixo dele.
 - O cartão "Você está transmitindo" não fica mais cortado nem com a foto por cima dos botões na coluna lateral.
@@ -58,8 +74,8 @@ O texto de cada seção vira as notas da versão no GitHub e na tela de Atualiza
 ## [1.5.3] - 2026-11-05
 
 ### Adicionado
-- Mensagem visual e aviso sonoro ao entrar automaticamente na rede AngatuVoice via automação do Radmin VPN, orientando o usuário que pode fechar a janela do Radmin e utilizar o Voice.
-- Minimização automática da janela do Radmin VPN para a bandeja do sistema após conclusão do ingresso ou criação de rede por automação.
+- Mensagem visual e aviso sonoro ao entrar automaticamente na rede AngatuVoice via automação do VPN, orientando o usuário que pode fechar a janela da VPN e utilizar o Voice.
+- Minimização automática da janela do VPN para a bandeja do sistema após conclusão do ingresso ou criação de rede por automação.
 - Notificação em tempo real via WebSocket (`net.autojoined`) e leitura no estado inicial do aplicativo.
 
 ## [1.5.2] - 2026-11-05
@@ -68,29 +84,29 @@ O texto de cada seção vira as notas da versão no GitHub e na tela de Atualiza
 - Substituição e padronização completa de todos os efeitos sonoros por arquivos MP3 livres sob licença CC0 1.0 Universal / Domínio Público, catalogados e documentados em `assets/audio/LICENSES.md`, preservando intacta a música de chamada principal.
 - Exibição da versão do sistema no título da janela principal (`Angatu Voice vX.Y.Z`).
 - Bloqueio estrito de interface e encerramento imediato de chamadas ativas em versões desatualizadas com atualização automática em segundo plano.
-- Monitor em segundo plano (`RadminToastWatch`) para fechar automaticamente notificações travadas do Radmin VPN (`CToastContainer` / popups Qt).
+- Monitor em segundo plano (próprio) para fechar automaticamente notificações travadas do VPN (`CToastContainer` / popups Qt).
 
 ### Corrigido
 - Ajuste do volume padrão dos sons e toque de chamada para iniciar em 100%.
-- Operações de criar, entrar, sair e excluir redes do Radmin VPN aprimoradas com automação nativa via menu de contexto do Windows e confirmações de diálogo.
-- Desativação proativa de notificações nativas de chat do Radmin VPN no registro do Windows para evitar popups indesejados.
+- Operações de criar, entrar, sair e excluir redes do VPN aprimoradas com automação nativa via menu de contexto do Windows e confirmações de diálogo.
+- Desativação proativa de notificações nativas de chat do VPN no registro do Windows para evitar popups indesejados.
 
 ## [1.5.1] - 2026-11-05
 
 ### Adicionado
 - Criação e ingresso universais e automáticos na rede padrão AngatuVoice para todos os participantes, sem necessidade de configuração de nós administradores.
-- Detecção nativa de avisos e confirmações do Radmin VPN na automação da interface do Windows.
+- Detecção nativa de avisos e confirmações do VPN na automação da interface do Windows.
 
 ### Corrigido
 - Falha de servidor (Server Error) ao abrir as configurações de rede ou clicar no botão "Reconectar".
 - Execução assíncrona da reconexão de rede, evitando bloqueios na interface e respostas lentas de requisições.
-- Descoberta e restauração do Radmin VPN quando a janela do programa estiver minimizada na bandeja do sistema (system tray).
+- Descoberta e restauração do VPN quando a janela do programa estiver minimizada na bandeja do sistema (system tray).
 
 ## [1.5.0] - 2026-11-05
 
 ### Adicionado
-- Gerenciador automático de redes Radmin VPN integrado diretamente na tela de Configurações > Rede.
-- Conexão automática e permanente à rede padrão "AngatuVoice" (senha123) ao abrir o aplicativo, sem exigir configuração manual do usuário no Radmin.
+- Gerenciador automático de redes VPN integrado diretamente na tela de Configurações > Rede.
+- Conexão automática e permanente à rede padrão "AngatuVoice" (senha123) ao abrir o aplicativo, sem exigir configuração manual do usuário na VPN.
 - Painel visual de redes: cartão em destaque da rede padrão AngatuVoice com selo de proteção, status de conexão, IP virtual, contagem de participantes e botão de reconexão.
 - Ações para criar novas redes secundárias ou entrar em redes de terceiros diretamente pela interface do aplicativo.
 - Inicialização controlada da rede (modo mestre de inicialização) e recuperação contínua com intervalo exponencial e aleatoriedade contra oscilações de conexão.
@@ -145,7 +161,7 @@ O texto de cada seção vira as notas da versão no GitHub e na tela de Atualiza
 ## [1.4.4] - 2026-11-03
 
 ### Corrigido
-- Chamadas que ficavam em "Conectando…" para sempre: a voz agora usa o endereço do Radmin, que antes ficava de fora da conexão.
+- Chamadas que ficavam em "Conectando…" para sempre: a voz agora usa o endereço da VPN, que antes ficava de fora da conexão.
 
 ## [1.4.3] - 2026-11-03
 
@@ -245,4 +261,4 @@ O texto de cada seção vira as notas da versão no GitHub e na tela de Atualiza
 ## [1.0.0] - 2026-11-03
 
 ### Adicionado
-- Primeira versão: mensagens em grupo e privadas, grupos com convite, chamadas de voz, compartilhamento de tela, integração com o Radmin VPN, bandeja, atalhos globais, início com o Windows e atualização automática.
+- Primeira versão: mensagens em grupo e privadas, grupos com convite, chamadas de voz, compartilhamento de tela, integração com o VPN, bandeja, atalhos globais, início com o Windows e atualização automática.

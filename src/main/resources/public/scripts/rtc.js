@@ -1,5 +1,5 @@
 "use strict";
-/* Voice and screen sharing over WebRTC. Media flows peer to peer across the Radmin adapter; Java only relays signalling. */
+/* Voice over WebRTC through the server's TURN relay, and shared screens through the server's stream channel; Java only relays signalling. */
 (function () {
   const peers = new Map();
   const VOICE_BITRATE = 64000;
@@ -18,10 +18,9 @@
   const STATE_CHANNEL_ID = 7;
   // Only reached without a usable video card, or with a viewer on an older version: VP8 is the software codec that keeps its frame rate here.
   const CODEC_ORDER = ["video/VP8", "video/VP9", "video/AV1"];
-  const VIDEO_CHANNEL_ID = 8;
-  // Lost pieces of a frame are worth resending only while that frame can still be shown.
-  const VIDEO_PACKET_LIFETIME_MS = 150;
-  const HW_FIRST_FRAME_MS = 6000;
+  const HW_FIRST_FRAME_MS = 8000;
+  // A picture that stopped while the sound goes on: the viewer subscribes again instead of staying on a black screen.
+  const PICTURE_STALLED_MS = 4000;
   const CAPTURE_HEADROOM_FPS = 120;
   // Below this many threads a software encoder at full size takes the computer down with it.
   const WEAK_CPU_THREADS = 4;
@@ -360,19 +359,6 @@
     if (d) signal(p.id, d.type, { type: d.type, sdp: withVideoHints(d.sdp) });
   }
 
-  /*
-   * Chromium never lists the Radmin adapter (it is virtual), so its only IPv4 candidate carries the default route address.
-   * BrowserWindow makes it bind that port on every interface, so the same port answers on the Radmin address: announce that one instead.
-   */
-  function radminCandidate(candidate) {
-    const radmin = AV.state.radmin;
-    if (!radmin || radmin.adapter === "dev-loopback" || !radmin.ip) return candidate;
-    const parts = (candidate.candidate || "").split(" ");
-    if (parts.length < 8 || parts[7] !== "host" || !/^\d+\.\d+\.\d+\.\d+$/.test(parts[4])) return null;
-    parts[4] = radmin.ip;
-    return { ...candidate, candidate: parts.join(" ") };
-  }
-
   function preferCodecs(transceiver) {
     const caps = RTCRtpSender.getCapabilities("video");
     if (!caps || !transceiver.setCodecPreferences) return;
@@ -399,7 +385,9 @@
   function ensurePeer(id) {
     let p = peers.get(id);
     if (p) return p;
-    const pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: "max-bundle" });
+    // Voice only ever travels through the server's TURN relay: nobody in a call sees anyone else's address.
+    const turn = AV.state.net.turn;
+    const pc = new RTCPeerConnection({ iceServers: turn ? [turn] : [], iceTransportPolicy: turn ? "relay" : "all", bundlePolicy: "max-bundle" });
     p = {
       id, pc, sid: crypto.randomUUID(), remoteSid: null, polite: myId() > id, makingOffer: false, ignoreOffer: false, pendingCandidates: [],
       audios: new Map(), videos: new Map(), share: null, wantsShare: false, counters: null, channel: null, state: null, voice: newMeter(), stats: null,
@@ -420,8 +408,7 @@
       }
     };
     pc.onicecandidate = (e) => {
-      const candidate = e.candidate && radminCandidate(e.candidate.toJSON());
-      if (candidate) signal(id, "candidate", candidate);
+      if (e.candidate) signal(id, "candidate", e.candidate.toJSON());
     };
     pc.oniceconnectionstatechange = () => {
       const state = pc.iceConnectionState;
@@ -452,9 +439,6 @@
     peer.channel = pc.createDataChannel("av-state", { negotiated: true, id: STATE_CHANNEL_ID });
     peer.channel.onopen = () => sendState(peer);
     peer.channel.onmessage = (e) => onPeerState(peer, e.data);
-    peer.videoChannel = pc.createDataChannel("av-video", { negotiated: true, id: VIDEO_CHANNEL_ID, ordered: false, maxPacketLifeTime: VIDEO_PACKET_LIFETIME_MS });
-    peer.videoChannel.binaryType = "arraybuffer";
-    peer.videoChannel.onmessage = (e) => onVideoData(peer, e.data);
     if (mic) pc.addTrack(mic.track, mic.stream);
     else pc.addTransceiver("audio", { direction: "recvonly" });
     if (rtc.localShare) openShareFor(peer);
@@ -466,13 +450,14 @@
     try { o = JSON.parse(raw); } catch (e) { return; }
     const previous = p.state;
     const viewers = Array.isArray(o.vw) ? o.vw.filter((id) => typeof id === "string").slice(0, 64) : [];
-    p.state = { speaking: o.s === 1, muted: o.m === 1, deafened: o.d === 1, sharing: o.v === 1, viaCard: o.vh === 1, viewers, at: performance.now() };
+    p.state = { speaking: o.s === 1, muted: o.m === 1, deafened: o.d === 1, sharing: o.v === 1, stream: typeof o.vh === "string" ? o.vh : "", viewers, at: performance.now() };
     const decodes = o.h === 1;
     if (decodes !== p.decodesOnCard) {
       p.decodesOnCard = decodes;
       if (rtc.localShare) feedShare(p);
     }
-    if (!p.state.sharing && p.cardReceiver) closeCardReceiver(p);
+    if (p.cardReceiver && p.cardReceiver.id !== p.state.stream) closeCardReceiver(p);
+    openCardReceiver(p);
     const wants = o.w === 1;
     let changed = !previous || previous.muted !== p.state.muted || previous.deafened !== p.state.deafened
       || previous.sharing !== p.state.sharing || previous.viewers.join() !== viewers.join();
@@ -480,23 +465,31 @@
     if (previous && !previous.sharing && p.state.sharing) AV.sound("streamStart");
     if (wants !== p.wantsShare) {
       p.wantsShare = wants;
-      if (rtc.localShare) { feedShare(p); AV.sound(wants ? "viewerJoin" : "viewerLeave"); broadcastState(); }
+      if (rtc.localShare) {
+        feedShare(p);
+        AV.sound(wants ? "viewerJoin" : "viewerLeave");
+        // Name is looked up at call time: app.js (nameOf) loads after this file.
+        const known = AV.state.peers.find((x) => x.id === p.id);
+        AV.toast((known && known.name ? known.name : "Alguém") + (wants ? " começou a assistir à sua tela." : " parou de assistir à sua tela."));
+        broadcastState();
+      }
       changed = true;
     }
     if (changed) rtc.onchange();
   }
 
   function sendState(p) {
-    if (!p.channel || p.channel.readyState !== "open") return;
     try {
       const o = { s: rtc.speaking[myId()] ? 1 : 0, m: rtc.muted ? 1 : 0, d: rtc.deafened ? 1 : 0, w: rtc.watching.has(p.id) ? 1 : 0 };
       if (hwDecodes) o.h = 1;
       if (rtc.localShare) {
         o.v = 1;
         o.vw = rtc.viewers();
-        if (hwSender && hwSender.has(p.id)) o.vh = 1;
+        if (hwSender && hwSender.has(p.id)) o.vh = hwSender.id;
       }
-      p.channel.send(JSON.stringify(o));
+      // Voice may still be connecting, or failing, and a shared screen does not depend on it: the server carries this meanwhile.
+      if (p.channel && p.channel.readyState === "open") p.channel.send(JSON.stringify(o));
+      else signal(p.id, "state", { state: o });
     } catch (e) {
       console.warn("state not sent", e);
     }
@@ -529,18 +522,14 @@
 
   /* ---- the picture through the video card (hwvideo.js) ---- */
 
-  function onVideoData(p, data) {
-    if (AV.hwVideo.isKeyRequest(data)) {
-      if (hwSender && hwSender.has(p.id)) hwSender.requestKey();
-      return;
-    }
-    if (!rtc.watching.has(p.id)) return;
-    if (!p.cardReceiver) {
-      p.cardReceiver = AV.hwVideo.createReceiver({ channel: p.videoChannel, onfail: () => giveUpOnCardDecoding(p) });
-      p.cardWatchSince = performance.now();
-      rtc.onchange();
-    }
-    p.cardReceiver.take(data);
+  function openCardReceiver(p) {
+    if (p.cardReceiver || !hwDecodes || !rtc.watching.has(p.id) || !p.state || !p.state.stream) return;
+    const receiver = AV.hwVideo.createReceiver({ url: AV.state.net.streamUrl, stream: p.state.stream, onfail: () => giveUpOnCardDecoding(p) });
+    receiver.id = p.state.stream;
+    p.cardReceiver = receiver;
+    p.cardFrames = 0;
+    p.cardFramesAt = performance.now();
+    rtc.onchange();
   }
 
   function closeCardReceiver(p) {
@@ -557,15 +546,43 @@
     broadcastState();
   }
 
+  /* Nothing on screen for too long: first try a clean subscription, and if the very first picture never comes, fall back to WebRTC. */
   function watchCardPicture(p, now) {
-    if (!rtc.watching.has(p.id) || !p.state || !p.state.viaCard) { p.cardWatchSince = 0; return; }
-    if (!p.cardWatchSince) p.cardWatchSince = now;
     const receiver = p.cardReceiver;
-    if (receiver && receiver.counters.decoded === 0) receiver.askForKey();
-    else if (!receiver) AV.hwVideo.requestKey(p.videoChannel);
-    if ((!receiver || receiver.counters.decoded === 0) && now - p.cardWatchSince >= HW_FIRST_FRAME_MS) {
-      console.warn("no picture through the video card, falling back");
+    if (!receiver) return;
+    const decoded = receiver.counters.decoded;
+    if (decoded !== p.cardFrames) {
+      p.cardFrames = decoded;
+      p.cardFramesAt = now;
+      p.cardRetries = 0;
+      return;
+    }
+    const silent = now - p.cardFramesAt;
+    if (decoded === 0 && silent >= HW_FIRST_FRAME_MS && (p.cardRetries || 0) >= 1) {
+      console.warn("no picture from the server, falling back");
       giveUpOnCardDecoding(p);
+    } else if (silent >= PICTURE_STALLED_MS) {
+      p.cardRetries = (p.cardRetries || 0) + 1;
+      closeCardReceiver(p);
+      openCardReceiver(p);
+    } else {
+      receiver.askForKey();
+    }
+  }
+
+  /* Same safety for a picture coming over WebRTC: dropping and renewing the request makes the sender feed the track again. */
+  function watchRtcPicture(p, now) {
+    if (p.cardReceiver || !rtc.watching.has(p.id) || !p.state || !p.state.sharing || p.state.stream) { p.rtcStalledSince = 0; return; }
+    if (p.stats && p.stats.inFps > 0) { p.rtcStalledSince = 0; return; }
+    if (!p.rtcStalledSince) p.rtcStalledSince = now;
+    if (now - p.rtcStalledSince >= PICTURE_STALLED_MS) {
+      p.rtcStalledSince = 0;
+      rtc.watching.delete(p.id);
+      sendState(p);
+      setTimeout(() => {
+        rtc.watching.add(p.id);
+        sendState(p);
+      }, 500);
     }
   }
 
@@ -633,6 +650,7 @@
         try { await pc.addIceCandidate(data); } catch (e) { if (!p.ignoreOffer) throw e; }
         return;
       }
+      if (kind === "state") { onPeerState(p, JSON.stringify(data.state)); return; }
       const collision = kind === "offer" && (p.makingOffer || pc.signalingState !== "stable");
       p.ignoreOffer = !p.polite && collision;
       if (p.ignoreOffer) return;
@@ -909,9 +927,9 @@
   function feedCard(p, stream, viaCard) {
     if (viaCard) {
       if (!hwSender) {
-        hwSender = AV.hwVideo.createSender({ track: stream.getVideoTracks()[0], codec: hwEncoderCodec, target: cardTarget, onfail: onCardEncoderFailed });
+        hwSender = AV.hwVideo.createSender({ url: AV.state.net.streamUrl, track: stream.getVideoTracks()[0], codec: hwEncoderCodec, target: cardTarget, onfail: onCardEncoderFailed });
       }
-      if (!hwSender.has(p.id)) { hwSender.add(p.id, p.videoChannel); sendState(p); }
+      if (!hwSender.has(p.id)) { hwSender.add(p.id); sendState(p); }
     } else if (hwSender && hwSender.has(p.id)) {
       hwSender.remove(p.id);
       sendState(p);
@@ -942,6 +960,7 @@
     const p = peers.get(id);
     if (p) {
       if (!on) closeCardReceiver(p);
+      else openCardReceiver(p);
       sendState(p);
     }
     applyOutput();
@@ -1276,6 +1295,7 @@
       }
       watchConnection(p, now);
       watchCardPicture(p, now);
+      watchRtcPicture(p, now);
       if (rtc.localShare) adaptShare(p, now);
     }
     rtc.onstats();
@@ -1285,7 +1305,7 @@
     const sending = [...peers.values()].map((p) => p.stats).filter((s) => s && s.outHeight);
     if (!sending.length) return null;
     const best = sending.reduce((a, b) => (b.outHeight > a.outHeight ? b : a));
-    const totalOutKbps = sending.reduce((acc, s) => acc + (s.outKbps || 0), 0);
+    const totalOutKbps = hwSender ? best.outKbps : sending.reduce((acc, s) => acc + (s.outKbps || 0), 0);
     return { width: best.outWidth, height: best.outHeight, fps: best.outFps, codec: best.codec, kbps: best.outKbps, totalKbps: totalOutKbps };
   };
 
