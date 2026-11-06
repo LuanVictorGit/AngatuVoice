@@ -1,0 +1,40 @@
+services:
+  relay:
+    build: .
+    restart: unless-stopped
+    mem_limit: 256m
+    environment:
+      - TURN_SECRET=${TURN_SECRET}
+      - MESSAGE_RETENTION_DAYS=${MESSAGE_RETENTION_DAYS:-30}
+      - MESSAGE_MAX_PER_CHAT=${MESSAGE_MAX_PER_CHAT:-1000}
+    volumes:
+      - voice-relay-data:/data
+  # Voice travels here: WebRTC needs UDP, which the web proxy in front of the relay cannot carry. Credentials come from the relay.
+  turn:
+    image: coturn/coturn:4.7-alpine
+    restart: unless-stopped
+    mem_limit: 64m
+    network_mode: host
+    command:
+      - -n
+      - --log-file=stdout
+      - --no-cli
+      - --no-tls
+      - --no-dtls
+      - --fingerprint
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET}
+      - --realm=voice.angatusistemas.com.br
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49260
+      - --no-multicast-peers
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
+      - --denied-peer-ip=127.0.0.0-127.255.255.255
+      - --max-bps=1500000
+      - --user-quota=32
+      - --total-quota=400
+volumes:
+  voice-relay-data:

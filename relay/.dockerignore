@@ -1,0 +1,12 @@
+target/
+out/
+bin/
+.git/
+.gitignore
+.github/
+*.db
+*.db-shm
+*.db-wal
+data/
+uploads/
+.env
