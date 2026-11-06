@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="84" viewBox="0 0 400 84" role="img" aria-label="Baixar para Windows">
+  <rect width="400" height="84" rx="14" fill="#f2a33a"/>
+  <g fill="#1a1206">
+    <rect x="34" y="24" width="16" height="16" rx="1.5"/>
+    <rect x="53" y="24" width="16" height="16" rx="1.5"/>
+    <rect x="34" y="43" width="16" height="16" rx="1.5"/>
+    <rect x="53" y="43" width="16" height="16" rx="1.5"/>
+    <text x="90" y="42" font-family="Segoe UI, -apple-system, Helvetica, Arial, sans-serif" font-size="26" font-weight="700">Baixar para Windows</text>
+    <text x="90" y="62" font-family="Segoe UI, -apple-system, Helvetica, Arial, sans-serif" font-size="14">Instalador para Windows 10 e 11</text>
+  </g>
+</svg>

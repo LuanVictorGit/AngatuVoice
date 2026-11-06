@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="https://github.com/LuanVictorGit/AngatuVoice/releases/latest/download/AngatuVoice-Setup.exe">
-    <img height="72" src="https://img.shields.io/badge/BAIXAR_PARA_WINDOWS-f2a33a?style=for-the-badge&logo=windows&logoColor=1a1206" alt="Baixar o Angatu Voice para Windows">
+    <img width="400" src="docs/img/baixar-windows.svg" alt="Baixar o Angatu Voice para Windows">
   </a>
 </p>
 
@@ -86,7 +86,7 @@ Para quem tem autorização para trabalhar no projeto:
 
 <p align="center">
   <a href="https://github.com/LuanVictorGit/AngatuVoice/releases/latest/download/AngatuVoice-Setup.exe">
-    <img height="56" src="https://img.shields.io/badge/BAIXAR_PARA_WINDOWS-f2a33a?style=for-the-badge&logo=windows&logoColor=1a1206" alt="Baixar o Angatu Voice para Windows">
+    <img width="320" src="docs/img/baixar-windows.svg" alt="Baixar o Angatu Voice para Windows">
   </a>
 </p>
 
