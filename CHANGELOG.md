@@ -7,6 +7,11 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.7.3] - 2026-11-05
+
+### Corrigido
+- O Radmin VPN não abre mais junto com o Angatu Voice, nem na primeira vez. Quem ainda não está na rede AngatuVoice entra pelo botão Reconectar, em Configurações > Rede.
+
 ## [1.7.2] - 2026-11-05
 
 ### Corrigido

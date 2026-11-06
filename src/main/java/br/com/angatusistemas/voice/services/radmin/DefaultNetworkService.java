@@ -11,8 +11,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Manages the mandatory default network "AngatuVoice": one automatic join or creation for a new participant, joining
- * again when the person asks, and protection against removal. Its periodic check never touches the Radmin window.
+ * Manages the default network "AngatuVoice": joining or creating it when the person asks, and protection against removal.
+ * Nothing here opens the Radmin window on its own, at startup or later.
  *
  * @author Angatu Sistemas
  */
@@ -124,14 +124,10 @@ public final class DefaultNetworkService {
             markConnected();
             return;
         }
-        // Opening the Radmin window unasked is only acceptable once ever, for the first automatic join; after that the button asks.
-        if (!requested && (record == null || record.isAutoJoinTried())) {
+        // Joining needs the Radmin window, and that window only ever opens because the person pressed a button.
+        if (!requested) {
             transition(State.DISCONNECTED, "Fora da rede " + NetworkDefaults.DEFAULT_NETWORK_NAME + ". Use o botão Reconectar para entrar.");
             return;
-        }
-        if (record != null) {
-            record.setAutoJoinTried(true);
-            record.save();
         }
 
         State previous = CURRENT_STATE.get();
