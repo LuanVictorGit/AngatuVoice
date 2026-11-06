@@ -142,6 +142,7 @@ public final class StreamHub {
         }
         MEMBERS.put(ctx.sessionId(), stream);
         ctx.send("ready");
+        Console.log("Stream %s started", id.substring(0, 6));
     }
 
     private static void watch(WsContext ctx, String id) {
@@ -157,6 +158,7 @@ public final class StreamHub {
         Viewer viewer = new Viewer(ctx, stream);
         MEMBERS.put(ctx.sessionId(), viewer);
         stream.viewers.add(viewer);
+        Console.log("Stream %s: viewer joined, %d frames so far", id.substring(0, 6), stream.frames);
         viewer.sender = Thread.startVirtualThread(viewer::sendLoop);
         ctx.send("ready");
         stream.notifyPublisher("key");
@@ -173,6 +175,7 @@ public final class StreamHub {
         byte[] frame = new byte[data.remaining()];
         data.get(frame);
         boolean key = (frame[0] & 1) != 0;
+        stream.frames++;
         for (Viewer viewer : stream.viewers) {
             viewer.offer(frame, key);
         }
@@ -187,6 +190,7 @@ public final class StreamHub {
         Member member = MEMBERS.remove(ctx.sessionId());
         if (member instanceof Stream stream) {
             STREAMS.remove(stream.id, stream);
+            Console.log("Stream %s ended after %d frames, %d watching", stream.id.substring(0, 6), stream.frames, stream.viewers.size());
             stream.viewers.forEach(Viewer::ended);
         } else if (member instanceof Viewer viewer) {
             viewer.stream.viewers.remove(viewer);
@@ -213,6 +217,7 @@ public final class StreamHub {
         private final Map<String, Long> noticedAt = new ConcurrentHashMap<>();
         private long windowStart;
         private long windowBytes;
+        private long frames;
 
         Stream(String id, WsContext publisher) {
             this.id = id;

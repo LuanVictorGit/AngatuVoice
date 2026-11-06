@@ -7,6 +7,14 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [2.0.2] - 2026-11-06
+
+### Corrigido
+- Transmissão presa em "Carregando transmissão…" quando a placa de vídeo de quem transmite é Intel ou AMD: o aplicativo parava de entregar quadros ao codificador antes de receber o primeiro de volta. Se uma placa não devolver imagem em 4 segundos, a transmissão continua pelo processador.
+
+### Adicionado
+- Erros de chamada e de transmissão agora ficam gravados no log do aplicativo.
+
 ## [2.0.1] - 2026-11-06
 
 ### Corrigido

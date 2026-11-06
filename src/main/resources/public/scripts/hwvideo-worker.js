@@ -21,6 +21,7 @@ const BITRATE_DOWN = 0.7;
 const BITRATE_UP = 1.15;
 const MAX_BITRATE = 16000000;
 const CONNECT_RETRIES = 3;
+const ENCODER_SILENT_MS = 4000;
 const CLOSE_NO_STREAM = 4404;
 
 let role = null;
@@ -42,12 +43,14 @@ function encoderRole({ url, stream, readable, codec, target: firstTarget }) {
   let lastEncodedAt = 0;
   let configureAgain = false;
   let running = true;
-  let pending = 0;
+  let fed = 0;
+  let firstFedAt = 0;
   let frames = 0;
   let bytes = 0;
   let calmSince = 0;
   let socket = null;
   let attempts = 0;
+  let produced = false;
   const reader = readable.getReader();
 
   function fail(reason) {
@@ -87,12 +90,14 @@ function encoderRole({ url, stream, readable, codec, target: firstTarget }) {
       bitrate = Math.min(MAX_BITRATE, target.bitrate, Math.round(bitrate * BITRATE_UP));
       configureAgain = true;
     }
+    // A card that accepts frames and never returns one must not leave people looking at nothing: WebRTC takes over.
+    if (!produced && fed > 0 && now - firstFedAt > ENCODER_SILENT_MS) fail("encoder took " + fed + " frames and returned none");
     postMessage({ type: "counters", frames, bytes });
   }, ADAPT_EVERY_MS);
 
   const encoder = new VideoEncoder({
     output(chunk) {
-      pending--;
+      produced = true;
       const key = chunk.type === "key";
       if (!socket) return;
       if (socket.bufferedAmount > OVERFLOW_BYTES) { skipping = true; forceKey = true; return; }
@@ -133,11 +138,13 @@ function encoderRole({ url, stream, readable, codec, target: firstTarget }) {
       }
       const now = performance.now();
       // Behind already, nobody connected, or ahead of the target rate: this frame goes.
-      if (!socket || pending >= MAX_ENCODE_QUEUE || now - lastEncodedAt < (1000 / target.fps) * PACING_SLACK) { frame.close(); continue; }
+      // The count that matters is frames waiting to enter: Intel and AMD cards keep several inside before the first comes out,
+      // and counting those as "behind" starves the encoder of the very frames it is waiting for.
+      if (!socket || encoder.encodeQueueSize >= MAX_ENCODE_QUEUE || now - lastEncodedAt < (1000 / target.fps) * PACING_SLACK) { frame.close(); continue; }
       lastEncodedAt = now;
       const keyFrame = forceKey || now - lastKeyAt >= KEYFRAME_EVERY_MS;
       if (keyFrame) { forceKey = false; lastKeyAt = now; }
-      pending++;
+      if (!fed++) firstFedAt = now;
       encoder.encode(frame, { keyFrame });
       frame.close();
     }

@@ -258,6 +258,16 @@ final class BrowserWindow {
     }
 
     private void installHandlers() {
+        client.addDisplayHandler(new org.cef.handler.CefDisplayHandlerAdapter() {
+            @Override
+            public boolean onConsoleMessage(CefBrowser b, org.cef.CefSettings.LogSeverity level, String message, String source, int line) {
+                // What goes wrong in calls and shares only shows up here: without this, the app log says nothing about them.
+                if (level == org.cef.CefSettings.LogSeverity.LOGSEVERITY_WARNING || level == org.cef.CefSettings.LogSeverity.LOGSEVERITY_ERROR) {
+                    Console.warn("page: %s", message.length() > 400 ? message.substring(0, 400) : message);
+                }
+                return false;
+            }
+        });
         client.addLifeSpanHandler(new CefLifeSpanHandlerAdapter() {
             @Override
             public boolean onBeforePopup(CefBrowser b, CefFrame f, String url, String name) {

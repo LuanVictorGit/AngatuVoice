@@ -18,9 +18,10 @@
   const STATE_CHANNEL_ID = 7;
   // Only reached without a usable video card, or with a viewer on an older version: VP8 is the software codec that keeps its frame rate here.
   const CODEC_ORDER = ["video/VP8", "video/VP9", "video/AV1"];
-  const HW_FIRST_FRAME_MS = 8000;
+  const HW_FIRST_FRAME_MS = 15000;
   // A picture that stopped while the sound goes on: the viewer subscribes again instead of staying on a black screen.
-  const PICTURE_STALLED_MS = 4000;
+  const PICTURE_STALLED_MS = 6000;
+  const RTC_PICTURE_RETRIES = 2;
   const CAPTURE_HEADROOM_FPS = 120;
   // Below this many threads a software encoder at full size takes the computer down with it.
   const WEAK_CPU_THREADS = 4;
@@ -559,7 +560,7 @@
     }
     const silent = now - p.cardFramesAt;
     if (decoded === 0 && silent >= HW_FIRST_FRAME_MS && (p.cardRetries || 0) >= 1) {
-      console.warn("no picture from the server, falling back");
+      console.warn("no picture from the server, falling back to WebRTC");
       giveUpOnCardDecoding(p);
     } else if (silent >= PICTURE_STALLED_MS) {
       p.cardRetries = (p.cardRetries || 0) + 1;
@@ -573,10 +574,12 @@
   /* Same safety for a picture coming over WebRTC: dropping and renewing the request makes the sender feed the track again. */
   function watchRtcPicture(p, now) {
     if (p.cardReceiver || !rtc.watching.has(p.id) || !p.state || !p.state.sharing || p.state.stream) { p.rtcStalledSince = 0; return; }
-    if (p.stats && p.stats.inFps > 0) { p.rtcStalledSince = 0; return; }
+    if (p.stats && p.stats.inFps > 0) { p.rtcStalledSince = 0; p.rtcRetries = 0; return; }
     if (!p.rtcStalledSince) p.rtcStalledSince = now;
-    if (now - p.rtcStalledSince >= PICTURE_STALLED_MS) {
+    // Each retry shows up on the other side as someone leaving and coming back, so this does not go on forever.
+    if (now - p.rtcStalledSince >= PICTURE_STALLED_MS && (p.rtcRetries || 0) < RTC_PICTURE_RETRIES) {
       p.rtcStalledSince = 0;
+      p.rtcRetries = (p.rtcRetries || 0) + 1;
       rtc.watching.delete(p.id);
       sendState(p);
       setTimeout(() => {
