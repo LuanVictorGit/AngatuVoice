@@ -195,8 +195,8 @@ public final class NetHub {
             Mac mac = Mac.getInstance("HmacSHA1");
             mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA1"));
             JsonArray urls = new JsonArray();
-            urls.add("turn:" + TURN_HOST + ":3478?transport=udp");
-            urls.add("turn:" + TURN_HOST + ":3478?transport=tcp");
+            urls.add("turn:" + TURN_HOST + ":3479?transport=udp");
+            urls.add("turn:" + TURN_HOST + ":3479?transport=tcp");
             JsonObject turn = new JsonObject();
             turn.add("urls", urls);
             turn.addProperty("username", username);
@@ -303,6 +303,10 @@ public final class NetHub {
         }
         String stored = direct ? "dm:" + (from.id.compareTo(to) < 0 ? from.id + "+" + to : to + "+" + from.id) : chat;
         long seq = MessageStore.store(id, stored, direct ? to : "", from.id, f.get("ts").getAsLong(), f.toString());
+        JsonObject confirmation = new JsonObject();
+        confirmation.addProperty("t", "stored");
+        confirmation.addProperty("id", id);
+        from.ctx.send(confirmation.toString());
         String out = envelope(from.id, f, seq).toString();
         if (direct) {
             Session target = ONLINE.get(to);
