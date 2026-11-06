@@ -40,6 +40,8 @@
     cleanStaleCalls();
   };
   const refreshSoon = AV.debounce(() => AV.refresh().catch(AV.fail), 200);
+  const CONNECT_GRACE_MS = 6000;
+  setTimeout(() => { if (AV.state) refreshSoon(); }, CONNECT_GRACE_MS + 100);
 
   function cleanStaleCalls() {
     Object.entries(AV.state.calls).forEach(([room, members]) => {
@@ -163,7 +165,8 @@
   function renderBanners() {
     const banners = [];
     const r = AV.state.net;
-    if (!r.connected) {
+    // The connection takes a moment after opening: that is not an outage worth a red banner.
+    if (!r.connected && performance.now() > CONNECT_GRACE_MS) {
       banners.push(E("div", { class: "banner error" }, AV.icon("alert"), E("div", { class: "flex-1" }, E("b", {}, "Sem conexão com o servidor. "), "Tentando de novo. Enquanto isso, só as conversas salvas ficam disponíveis."),
         E("button", { class: "btn", onclick: () => AV.openSettings("network") }, "Ver rede")));
     }

@@ -7,6 +7,11 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [2.0.1] - 2026-11-06
+
+### Corrigido
+- Ao abrir, o aplicativo podia ficar em "Sem conexão com o servidor" e demorar a entrar, ou não entrar. Agora ele se identifica no primeiro contato.
+
 ## [2.0.0] - 2026-11-06
 
 ### Adicionado

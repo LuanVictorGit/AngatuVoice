@@ -71,8 +71,8 @@ final class ServerLink implements WebSocket.Listener {
             try {
                 finished = new CompletableFuture<>();
                 tail = CompletableFuture.completedFuture(null);
-                socket = http.newWebSocketBuilder().buildAsync(address, this).get();
                 lastRx = System.currentTimeMillis();
+                http.newWebSocketBuilder().buildAsync(address, this).get();
                 finished.get();
                 wait = FIRST_RETRY_MS;
             } catch (InterruptedException e) {
@@ -139,6 +139,13 @@ final class ServerLink implements WebSocket.Listener {
             bye.addProperty("t", "bye");
             send(bye);
         }
+    }
+
+    /* The server's challenge can arrive before buildAsync returns, so the socket has to be known from here: a reply sent to nothing never comes back. */
+    @Override
+    public void onOpen(WebSocket ws) {
+        socket = ws;
+        ws.request(1);
     }
 
     @Override
