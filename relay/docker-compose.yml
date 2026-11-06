@@ -22,6 +22,9 @@ services:
     image: coturn/coturn:4.7-alpine
     restart: unless-stopped
     mem_limit: 64m
+    networks:
+      voice-turn:
+        ipv4_address: 172.29.99.10
     ports:
       - "3479:3479/udp"
       - "3479:3479/tcp"
@@ -41,11 +44,17 @@ services:
       - --min-port=49160
       - --max-port=49260
       - --no-multicast-peers
-      - --denied-peer-ip=10.0.0.0-10.255.255.255
-      - --denied-peer-ip=192.168.0.0-192.168.255.255
-      - --denied-peer-ip=127.0.0.0-127.255.255.255
+      # Everyone in a call is relayed by this same process, so it needs to reach only itself. Anything else would make it an open proxy.
+      - --relay-ip=172.29.99.10
+      - --denied-peer-ip=0.0.0.0-255.255.255.255
+      - --allowed-peer-ip=172.29.99.10
       - --max-bps=1500000
       - --user-quota=32
       - --total-quota=400
+networks:
+  voice-turn:
+    ipam:
+      config:
+        - subnet: 172.29.99.0/24
 volumes:
   voice-relay-data:
