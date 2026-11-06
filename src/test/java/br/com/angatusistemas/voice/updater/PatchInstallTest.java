@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import br.com.angatusistemas.voice.utils.Version;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
@@ -75,6 +76,23 @@ class PatchInstallTest {
         assertEquals("same", Files.readString(staged.resolve("app/lib/dep.jar")));
         assertTrue(Files.exists(staged.resolve("runtime/bin/java.dll")));
         assertTrue(Files.notExists(staged.resolve("app/angatu-voice-1.0.0.jar")), "the previous jar never comes along");
+    }
+
+    @Test
+    void oldPackagesGoAndAWaitingOneStays() throws IOException {
+        Path updates = temp.resolve("updates");
+        write(updates.resolve("1.5.3/package.zip.part"), "abandoned");
+        write(updates.resolve("1.7.0/package.zip"), "installed already");
+        write(updates.resolve("not-a-version/x"), "unknown");
+        write(updates.resolve("2.0.0/app.zip"), "waiting for the end of a call");
+        write(updates.resolve("apply-update.ps1"), "needed by recovery");
+        Version current = Version.parse("1.7.0");
+        PackageInstaller.removePackages(updates, folder -> PackageInstaller.isNewerThan(folder, current));
+        assertTrue(Files.notExists(updates.resolve("1.5.3")));
+        assertTrue(Files.notExists(updates.resolve("1.7.0")));
+        assertTrue(Files.notExists(updates.resolve("not-a-version")));
+        assertTrue(Files.exists(updates.resolve("2.0.0/app.zip")));
+        assertTrue(Files.exists(updates.resolve("apply-update.ps1")));
     }
 
     @Test

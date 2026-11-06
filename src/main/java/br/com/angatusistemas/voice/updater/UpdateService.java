@@ -82,6 +82,9 @@ public final class UpdateService {
         } catch (IOException e) {
             Console.warn("Could not write the startup marker: %s", e.getMessage());
         }
+        // Only now: this version has proven it opens, so nothing older can still be needed. A newer one may be waiting for the end of a call.
+        Task.runAsync(() -> PackageInstaller.removePackages(AppDirs.updates(),
+                folder -> PackageInstaller.isNewerThan(folder, Version.current())));
     }
 
     public static void check() {
@@ -257,6 +260,8 @@ public final class UpdateService {
     }
 
     private static void download(Manifest manifest) throws IOException {
+        // A package for a version that was passed over will never be installed.
+        PackageInstaller.removePackages(AppDirs.updates(), manifest.version()::equals);
         Optional<Path> over = installToPatch(manifest);
         patchBase = over;
         boolean patch = over.isPresent();

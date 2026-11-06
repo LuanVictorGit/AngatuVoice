@@ -1,7 +1,9 @@
 package br.com.angatusistemas.voice.updater;
 
+import br.com.angatusistemas.lib.console.Console;
 import br.com.angatusistemas.lib.gson.GsonAPI;
 import br.com.angatusistemas.voice.utils.Crypto;
+import br.com.angatusistemas.voice.utils.Version;
 import br.com.angatusistemas.voice.utils.AppDirs;
 import com.google.gson.JsonObject;
 import java.io.IOException;
@@ -20,6 +22,7 @@ import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -161,6 +164,35 @@ final class PackageInstaller {
             return Optional.ofNullable(result);
         } catch (IOException | RuntimeException e) {
             return Optional.empty();
+        }
+    }
+
+    /* Each package is hundreds of megabytes. A folder that one locked file keeps alive is simply tried again on the next run. */
+    static void removePackages(Path updates, Predicate<String> keep) {
+        if (!Files.isDirectory(updates)) {
+            return;
+        }
+        try (Stream<Path> folders = Files.list(updates)) {
+            for (Path folder : folders.filter(Files::isDirectory).toList()) {
+                if (keep.test(folder.getFileName().toString())) {
+                    continue;
+                }
+                try {
+                    deleteTree(folder);
+                } catch (IOException e) {
+                    Console.warn("Could not remove the old update %s: %s", folder.getFileName(), e.getMessage());
+                }
+            }
+        } catch (IOException e) {
+            Console.warn("Could not read the updates folder: %s", e.getMessage());
+        }
+    }
+
+    static boolean isNewerThan(String folder, Version current) {
+        try {
+            return Version.parse(folder).compareTo(current) > 0;
+        } catch (IllegalArgumentException e) {
+            return false;
         }
     }
 

@@ -7,6 +7,11 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [1.7.2] - 2026-11-05
+
+### Corrigido
+- Os pacotes de atualização antigos, que podiam ocupar centenas de MB, agora são apagados sozinhos assim que a versão instalada abre. Downloads incompletos de versões que ficaram para trás também.
+
 ## [1.7.1] - 2026-11-05
 
 ### Corrigido
