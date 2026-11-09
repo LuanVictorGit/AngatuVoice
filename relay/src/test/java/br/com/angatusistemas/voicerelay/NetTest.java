@@ -4,153 +4,84 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import br.com.angatusistemas.lib.gson.GsonAPI;
-import br.com.angatusistemas.voicerelay.services.MessageStore;
 import br.com.angatusistemas.voicerelay.services.NetHub;
 import com.google.gson.JsonObject;
-import java.net.InetAddress;
-import java.net.ServerSocket;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.WebSocket;
-import java.nio.charset.StandardCharsets;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.MessageDigest;
-import java.security.Signature;
-import java.util.Base64;
 import java.util.HexFormat;
 import java.util.UUID;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * The network channel on a real server and real sockets: proof of identity, presence, routing, offline delivery and purge.
+ * The network channel on a real server and real sockets: proof of identity, presence across devices, routing, and the
+ * legacy protocol old apps still speak.
  *
  * @author Angatu Sistemas
  */
 class NetTest {
 
-    private static String url;
-    private static final HttpClient HTTP = HttpClient.newHttpClient();
-
     @BeforeAll
     static void start() throws Exception {
-        System.setProperty("angatu.offline.grace", "200");
-        int port;
-        try (ServerSocket probe = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
-            port = probe.getLocalPort();
-        }
-        Main.start(port, 0);
-        url = "ws://127.0.0.1:" + port + "/ws/net";
+        TestClient.startServer();
     }
 
-    private static final class Client implements WebSocket.Listener {
-
-        final BlockingQueue<JsonObject> frames = new LinkedBlockingQueue<>();
-        final CompletableFuture<Integer> closed = new CompletableFuture<>();
-        final StringBuilder partial = new StringBuilder();
-        final KeyPair keys;
-        final String id;
-        WebSocket socket;
-
-        Client() throws Exception {
-            keys = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
-            id = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(keys.getPublic().getEncoded()), 0, 10);
-        }
-
-        static Client connected(String name, String groups) throws Exception {
-            Client c = new Client();
-            c.connect(name, groups, true);
-            return c;
-        }
-
-        void connect(String name, String groups, boolean goodSignature) throws Exception {
-            socket = HTTP.newWebSocketBuilder().buildAsync(URI.create(url), this).get(5, TimeUnit.SECONDS);
-            JsonObject challenge = next("challenge");
-            Signature signer = Signature.getInstance("Ed25519");
-            signer.initSign(keys.getPrivate());
-            signer.update(("AV3|auth|" + (goodSignature ? challenge.get("n").getAsString() : "other")).getBytes(StandardCharsets.UTF_8));
-            String pub = Base64.getEncoder().encodeToString(keys.getPublic().getEncoded());
-            String sig = Base64.getEncoder().encodeToString(signer.sign());
-            socket.sendText("{\"t\":\"hello\",\"pub\":\"" + pub + "\",\"sig\":\"" + sig + "\",\"name\":\"" + name + "\",\"groups\":" + groups + "}", true).join();
-        }
-
-        void send(String json) {
-            socket.sendText(json, true).join();
-        }
-
-        JsonObject next(String type) throws InterruptedException {
-            for (int i = 0; i < 50; i++) {
-                JsonObject f = frames.poll(200, TimeUnit.MILLISECONDS);
-                if (f != null && type.equals(f.get("t").getAsString())) {
-                    return f;
-                }
-            }
-            throw new AssertionError("no frame of type " + type);
-        }
-
-        @Override
-        public CompletionStage<?> onText(WebSocket ws, CharSequence data, boolean last) {
-            partial.append(data);
-            if (last) {
-                frames.add(GsonAPI.get().fromJson(partial.toString(), JsonObject.class));
-                partial.setLength(0);
-            }
-            ws.request(1);
-            return null;
-        }
-
-        @Override
-        public CompletionStage<?> onClose(WebSocket ws, int code, String reason) {
-            closed.complete(code);
-            return null;
-        }
-    }
-
-    private static String message(Client from, String to, String chat, String text, long ts) {
+    private static String legacyMessage(TestClient from, String to, String chat, String text) {
         String id = from.id + ":" + UUID.randomUUID();
         return "{\"t\":\"msg\",\"f\":{\"t\":\"msg\",\"id\":\"" + id + "\",\"chat\":\"" + chat + "\",\"to\":\"" + to + "\",\"from\":\""
-                + from.id + "\",\"ts\":" + ts + ",\"text\":\"" + text + "\"}}";
+                + from.id + "\",\"ts\":" + System.currentTimeMillis() + ",\"text\":\"" + text + "\",\"name\":\"Ana\"}}";
     }
 
     @Test
     void aSignatureThatProvesNothingIsRefused() throws Exception {
-        Client liar = new Client();
-        liar.connect("liar", "[]", false);
+        TestClient liar = new TestClient();
+        liar.connect("liar", "[]", false, true);
         assertEquals(NetHub.CLOSE_REFUSED, liar.closed.get(5, TimeUnit.SECONDS));
     }
 
     @Test
     void peopleSeeEachOtherComeAndGo() throws Exception {
-        Client a = Client.connected("Ana", "[]");
-        a.next("welcome");
-        Client b = Client.connected("Bia", "[]");
-        JsonObject welcome = b.next("welcome");
-        assertTrue(welcome.getAsJsonArray("peers").toString().contains(a.id), "the newcomer sees who is here");
+        TestClient a = TestClient.legacy("Ana", "[]").ready();
+        TestClient b = TestClient.legacy("Bia", "[]").ready();
+        assertTrue(b.welcome.getAsJsonArray("peers").toString().contains(a.id), "the newcomer sees who is here");
+        assertFalse(b.welcome.has("http"), "legacy apps get the old welcome");
         assertEquals(b.id, a.next("online").getAsJsonObject("peer").get("id").getAsString());
         b.send("{\"t\":\"bye\"}");
         assertEquals(b.id, a.next("offline").get("id").getAsString());
     }
 
     @Test
+    void aSecondDeviceDoesNotReplaceTheFirstAndPresenceFollowsTheLastOne() throws Exception {
+        TestClient watcher = TestClient.modern("Cid", "[]").ready();
+        TestClient phone = TestClient.modern("Ana", "[]").ready();
+        assertEquals(phone.id, watcher.next("online").getAsJsonObject("peer").get("id").getAsString());
+        TestClient desk = phone.secondDevice().connect("Ana", "[]", true, true).ready();
+        assertEquals(2, desk.welcome.get("proto").getAsInt());
+        assertEquals(64, desk.welcome.get("http").getAsString().length());
+        assertFalse(watcher.received("online", 300), "a second device is not a new arrival");
+        assertFalse(phone.closed.isDone(), "both devices stay connected");
+
+        watcher.send("{\"t\":\"route\",\"to\":\"" + phone.id + "\",\"f\":{\"t\":\"call\"}}");
+        assertEquals(watcher.id, desk.next("route").get("from").getAsString());
+        assertFalse(phone.received("route", 300), "signalling goes only to the most recent device");
+
+        TestClient sameDevice = new TestClient(desk.keys, desk.device).connect("Ana", "[]", true, true).ready();
+        assertEquals(NetHub.CLOSE_REPLACED, desk.closed.get(5, TimeUnit.SECONDS), "the same device replaces itself");
+        phone.send("{\"t\":\"bye\"}");
+        assertFalse(watcher.received("offline", 500), "still online on another device");
+        sameDevice.send("{\"t\":\"bye\"}");
+        assertEquals(phone.id, watcher.next("offline").get("id").getAsString());
+    }
+
+    @Test
     void framesGoOnlyToWhoTheyAreForAndCarryTheRealSender() throws Exception {
-        Client a = Client.connected("Ana", "[]");
-        a.next("welcome");
-        Client b = Client.connected("Bia", "[]");
-        b.next("welcome");
-        Client c = Client.connected("Cid", "[]");
-        c.next("welcome");
+        TestClient a = TestClient.legacy("Ana", "[]").ready();
+        TestClient b = TestClient.legacy("Bia", "[]").ready();
+        TestClient c = TestClient.legacy("Cid", "[]").ready();
         a.send("{\"t\":\"route\",\"to\":\"" + b.id + "\",\"f\":{\"t\":\"sig\",\"from\":\"forged\"}}");
         JsonObject got = b.next("route");
         assertEquals(a.id, got.get("from").getAsString());
         assertEquals("sig", got.getAsJsonObject("f").get("t").getAsString());
-        assertTrue(c.frames.stream().noneMatch(f -> "route".equals(f.get("t").getAsString())));
+        assertFalse(c.received("route", 200));
     }
 
     @Test
@@ -158,16 +89,12 @@ class NetTest {
         String group = "g_" + HexFormat.of().formatHex(new byte[] {1, 2, 3, 4, 5, 6, 7, (byte) (System.nanoTime() & 0x7f)});
         String good = "[{\"id\":\"" + group + "\",\"token\":\"" + "a".repeat(64) + "\"}]";
         String bad = "[{\"id\":\"" + group + "\",\"token\":\"" + "b".repeat(64) + "\"}]";
-        Client member = Client.connected("Ana", good);
-        member.next("welcome");
-        Client also = Client.connected("Bia", good);
-        also.next("welcome");
-        Client outsider = Client.connected("Cid", bad);
-        outsider.next("welcome");
+        TestClient member = TestClient.legacy("Ana", good).ready();
+        TestClient also = TestClient.legacy("Bia", good).ready();
+        TestClient outsider = TestClient.legacy("Cid", bad).ready();
         member.send("{\"t\":\"route\",\"to\":\"" + group + "\",\"f\":{\"t\":\"call\"}}");
         assertEquals(member.id, also.next("route").get("from").getAsString());
-        Thread.sleep(200);
-        assertTrue(outsider.frames.stream().noneMatch(f -> "route".equals(f.get("t").getAsString())));
+        assertFalse(outsider.received("route", 200));
         outsider.send("{\"t\":\"route\",\"to\":\"" + group + "\",\"f\":{\"t\":\"call\"}}");
         Thread.sleep(200);
         assertEquals(0, member.frames.stream().filter(f -> "route".equals(f.get("t").getAsString())).count());
@@ -175,58 +102,54 @@ class NetTest {
 
     @Test
     void someoneOfflineReceivesWhatTheyMissed() throws Exception {
-        Client a = Client.connected("Ana", "[]");
-        a.next("welcome");
-        Client b = new Client();
-        a.send(message(a, b.id, "dm", "oi", System.currentTimeMillis()));
-        Thread.sleep(200);
-        b.connect("Bia", "[]", true);
-        b.next("welcome");
+        TestClient a = TestClient.legacy("Ana", "[]").ready();
+        TestClient b = new TestClient();
+        a.send(legacyMessage(a, b.id, "dm", "oi"));
+        a.next("stored");
+        b.connect("Bia", "[]", true, false).ready();
         b.send("{\"t\":\"sync\",\"since\":0}");
-        JsonObject got = b.next("route");
-        assertEquals("oi", got.getAsJsonObject("f").get("text").getAsString());
+        JsonObject got = b.until("synced").stream().filter(f -> "route".equals(f.get("t").getAsString())
+                && "oi".equals(f.getAsJsonObject("f").get("text").getAsString())).findFirst().orElseThrow();
         assertEquals(a.id, got.get("from").getAsString());
         assertTrue(got.get("seq").getAsLong() > 0);
-        b.next("synced");
-        long seq = got.get("seq").getAsLong();
-        b.send("{\"t\":\"sync\",\"since\":" + seq + "}");
-        Thread.sleep(200);
-        assertFalse(b.frames.stream().anyMatch(f -> "route".equals(f.get("t").getAsString())), "nothing twice");
+        b.send("{\"t\":\"sync\",\"since\":" + got.get("seq").getAsLong() + "}");
+        assertFalse(b.until("synced").stream().anyMatch(f -> f.toString().contains("\"oi\"")), "nothing twice");
     }
 
     @Test
-    void theSameMessageSentAgainIsOneRow() {
-        long first = MessageStore.store("x:same", "publico", "", "x", 1, "{}");
-        long before = MessageStore.count();
-        assertEquals(first, MessageStore.store("x:same", "publico", "", "x", 1, "{}"));
-        assertEquals(before, MessageStore.count());
+    void aLegacyMessageReachesNewAppsInTheNewFormatAndIsStoredOnce() throws Exception {
+        TestClient old = TestClient.legacy("Ana", "[]").ready();
+        TestClient fresh = TestClient.modern("Bia", "[]").ready();
+        TestClient oldPeer = TestClient.legacy("Cid", "[]").ready();
+        String frame = legacyMessage(old, "", "publico", "ola de longe");
+        old.send(frame);
+        old.next("stored");
+        JsonObject message = fresh.next("chat.new").getAsJsonObject("message");
+        assertEquals("ola de longe", message.get("text").getAsString());
+        assertEquals(old.id, message.get("from").getAsString());
+        assertEquals("publico", message.get("chat").getAsString());
+        assertFalse(message.has("frame"), "the legacy frame never reaches a new app");
+        assertEquals("ola de longe", oldPeer.next("route").getAsJsonObject("f").get("text").getAsString());
+
+        old.send(frame);
+        old.next("stored");
+        assertFalse(fresh.received("chat.new", 300), "a resend after a lost acknowledgement is not a second message");
+
+        JsonObject page = fresh.ask("chat.history", "\"chat\":\"publico\",\"limit\":100");
+        long copies = page.getAsJsonArray("messages").asList().stream()
+                .filter(m -> m.getAsJsonObject().get("text").getAsString().equals("ola de longe")).count();
+        assertEquals(1, copies);
     }
 
     @Test
-    void purgeRemovesOldMessagesAndKeepsRecentOnes() {
-        long now = System.currentTimeMillis();
-        String old = "old:" + UUID.randomUUID();
-        String recent = "new:" + UUID.randomUUID();
-        MessageStore.store(old, "publico", "", "x", now - 40L * 86_400_000, "{}");
-        MessageStore.store(recent, "publico", "", "x", now, "{}");
-        MessageStore.purge(now);
-        assertFalse(br.com.angatusistemas.lib.database.Saveable.exists(br.com.angatusistemas.voicerelay.entities.StoredMessage.class, old));
-        assertTrue(br.com.angatusistemas.lib.database.Saveable.exists(br.com.angatusistemas.voicerelay.entities.StoredMessage.class, recent));
-    }
-
-    @Test
-    void aChatKeepsOnlyItsNewestMessages() {
-        long now = System.currentTimeMillis();
-        String chat = "dm:cap" + UUID.randomUUID();
-        String first = "cap:" + UUID.randomUUID();
-        MessageStore.store(first, chat, "", "x", now, "{}");
-        for (int i = 0; i < 1000; i++) {
-            MessageStore.store("cap:" + UUID.randomUUID(), chat, "", "x", now, "{}");
-        }
-        MessageStore.purge(now);
-        assertFalse(br.com.angatusistemas.lib.database.Saveable.exists(br.com.angatusistemas.voicerelay.entities.StoredMessage.class, first));
-        assertEquals(1000, br.com.angatusistemas.lib.database.Saveable.query(br.com.angatusistemas.voicerelay.entities.StoredMessage.class,
-                "SELECT data FROM " + br.com.angatusistemas.lib.database.Saveable.tableName(br.com.angatusistemas.voicerelay.entities.StoredMessage.class)
-                        + " WHERE json_extract(data,'$.chat')=?", chat).size());
+    void newMessagesAreNotSentToLegacyApps() throws Exception {
+        TestClient old = TestClient.legacy("Ana", "[]").ready();
+        TestClient fresh = TestClient.modern("Bia", "[]").ready();
+        JsonObject res = fresh.ask("chat.send", "\"chat\":\"publico\",\"nonce\":\"n" + UUID.randomUUID().toString().substring(0, 8)
+                + "\",\"text\":\"so para novos\"");
+        assertTrue(res.get("ok").getAsBoolean());
+        assertFalse(old.received("route", 300));
+        old.send("{\"t\":\"sync\",\"since\":0}");
+        assertFalse(old.until("synced").stream().anyMatch(f -> f.toString().contains("so para novos")));
     }
 }

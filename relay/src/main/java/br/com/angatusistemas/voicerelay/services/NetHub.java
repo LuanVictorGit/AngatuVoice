@@ -3,12 +3,16 @@ package br.com.angatusistemas.voicerelay.services;
 import br.com.angatusistemas.lib.console.Console;
 import br.com.angatusistemas.lib.database.Saveable;
 import br.com.angatusistemas.lib.gson.GsonAPI;
+import br.com.angatusistemas.lib.javalin.IP;
 import br.com.angatusistemas.voicerelay.entities.GroupRecord;
-import br.com.angatusistemas.voicerelay.entities.StoredMessage;
+import br.com.angatusistemas.voicerelay.utils.TextRules;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
+import io.javalin.http.Context;
+import io.javalin.http.ForbiddenResponse;
+import io.javalin.http.UnauthorizedResponse;
 import io.javalin.websocket.WsConfig;
 import io.javalin.websocket.WsContext;
 import java.nio.charset.StandardCharsets;
@@ -18,20 +22,25 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.security.Signature;
 import java.security.spec.X509EncodedKeySpec;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
 /**
- * Who is online, and getting frames from one person to another. It reads only what routing needs: who a frame is for.
- * The rest is passed along as it came, and every app still checks the signature on each message it receives.
+ * Who is online and on which devices, and getting frames to them. Chat requests are answered by the chat and admin
+ * services; call signalling is passed along as it came to the person's most recent connection, and every app still
+ * checks the signature on what it receives.
  *
  * @author Angatu Sistemas
  */
@@ -40,18 +49,20 @@ public final class NetHub {
     public static final String PUBLIC_GROUP = "publico";
     public static final int CLOSE_REFUSED = 4403;
     public static final int CLOSE_REPLACED = 4409;
+    public static final int CLOSE_KICKED = 4410;
     public static final int CLOSE_FLOOD = 4429;
 
+    static final Pattern PERSON_ID = Pattern.compile("[0-9a-f]{20}");
+    static final Pattern GROUP_ID = Pattern.compile("g_[0-9a-f]{16}");
+
     private static final String TURN_HOST = "voice.angatusistemas.com.br";
-    private static final Pattern PERSON_ID = Pattern.compile("[0-9a-f]{20}");
-    private static final Pattern GROUP_ID = Pattern.compile("g_[0-9a-f]{16}");
     private static final Pattern TOKEN = Pattern.compile("[0-9a-f]{64}");
+    private static final Pattern DEVICE = Pattern.compile("[0-9a-f]{16}");
     private static final int MAX_SESSIONS = 512;
     private static final int MAX_CONNECTIONS_PER_ADDRESS = 32;
     private static final int MAX_GROUPS = 64;
     private static final int MAX_TEXT_BYTES = 128 * 1024;
-    private static final int MAX_NAME = 32;
-    private static final int FLOOD_FRAMES_PER_SECOND = 200;
+    private static final int MAX_REQUEST_ID = 64;
     private static final long HELLO_TIMEOUT_MS = 10_000;
     private static final long PING_SECONDS = 25;
     private static final long IDLE_SECONDS = 90;
@@ -60,8 +71,10 @@ public final class NetHub {
     private static final long TURN_TTL_SECONDS = 7 * 86_400;
     private static final SecureRandom RANDOM = new SecureRandom();
 
-    private static final Map<String, Session> ONLINE = new ConcurrentHashMap<>();
+    // Each person's connections, oldest first, as immutable lists replaced whole so readers never see a half-made change.
+    private static final Map<String, List<Session>> PEOPLE = new ConcurrentHashMap<>();
     private static final Map<String, Session> BY_SOCKET = new ConcurrentHashMap<>();
+    private static final Map<String, Session> BY_HTTP = new ConcurrentHashMap<>();
     private static final Map<String, Pending> PENDING = new ConcurrentHashMap<>();
     private static final Map<String, Integer> CONNECTIONS = new ConcurrentHashMap<>();
 
@@ -76,7 +89,7 @@ public final class NetHub {
     }
 
     public static int onlineCount() {
-        return ONLINE.size();
+        return PEOPLE.size();
     }
 
     private static void onConnect(WsContext ctx) {
@@ -91,7 +104,7 @@ public final class NetHub {
             return;
         }
         ctx.session.setMaxTextMessageSize(MAX_TEXT_BYTES);
-        ctx.session.setIdleTimeout(java.time.Duration.ofSeconds(IDLE_SECONDS));
+        ctx.session.setIdleTimeout(Duration.ofSeconds(IDLE_SECONDS));
         ctx.enableAutomaticPings(PING_SECONDS, TimeUnit.SECONDS);
         byte[] nonce = new byte[32];
         RANDOM.nextBytes(nonce);
@@ -152,20 +165,45 @@ public final class NetHub {
             return;
         }
         String id = fingerprint(pub);
-        Session session = new Session(ctx, id, string(frame, "pub"), clean(string(frame, "name")));
+        String address = ctx.attribute("address");
+        if (AdminService.banned(id, address)) {
+            ctx.send("{\"t\":\"banned\"}");
+            ctx.closeSession(CLOSE_REFUSED, "banned");
+            return;
+        }
+        int proto = frame.has("proto") && frame.get("proto").isJsonPrimitive() && frame.get("proto").getAsJsonPrimitive().isNumber()
+                ? frame.get("proto").getAsInt() : 1;
+        String device = DEVICE.matcher(string(frame, "device")).matches() ? string(frame, "device") : "";
+        String http = proto >= 2 ? randomHex(32) : null;
+        Session session = new Session(ctx, id, string(frame, "pub"), device, proto, address, http, TextRules.name(string(frame, "name")));
         session.groups.addAll(provenGroups(frame));
-        Session previous = ONLINE.put(id, session);
+        List<Session> replaced = new ArrayList<>();
+        boolean[] first = new boolean[1];
+        PEOPLE.compute(id, (key, list) -> {
+            List<Session> next = new ArrayList<>();
+            first[0] = list == null || list.isEmpty();
+            if (list != null) {
+                for (Session old : list) {
+                    (old.device.equals(device) ? replaced : next).add(old);
+                }
+            }
+            next.add(session);
+            return List.copyOf(next);
+        });
         BY_SOCKET.put(ctx.sessionId(), session);
-        boolean wasGone = previous == null;
-        if (previous != null) {
-            BY_SOCKET.remove(previous.ctx.sessionId());
-            if (previous.ctx.session.isOpen()) {
-                previous.ctx.closeSession(CLOSE_REPLACED, "connected elsewhere");
+        if (http != null) {
+            BY_HTTP.put(http, session);
+        }
+        for (Session old : replaced) {
+            forget(old);
+            if (old.open()) {
+                old.ctx.closeSession(CLOSE_REPLACED, "connected elsewhere");
             }
         }
         ctx.send(welcome(session).toString());
-        Console.log("%s connected, version %s, %d online", id.substring(0, 8), clean(string(frame, "version")), ONLINE.size());
-        if (wasGone) {
+        Console.log("%s connected, version %s, proto %d, %d online", id.substring(0, 8), TextRules.name(string(frame, "version")), proto,
+                PEOPLE.size());
+        if (first[0]) {
             broadcastPresence(session);
         } else {
             announceChange(session);
@@ -174,7 +212,12 @@ public final class NetHub {
 
     private static JsonObject welcome(Session session) {
         JsonArray peers = new JsonArray();
-        ONLINE.values().stream().filter(other -> other != session).forEach(other -> peers.add(presence(other, session)));
+        for (String other : PEOPLE.keySet()) {
+            Session latest = latest(other);
+            if (!other.equals(session.id) && latest != null) {
+                peers.add(presence(latest, session));
+            }
+        }
         JsonObject welcome = new JsonObject();
         welcome.addProperty("t", "welcome");
         welcome.addProperty("id", session.id);
@@ -182,6 +225,12 @@ public final class NetHub {
         JsonObject turn = turnCredentials(session.id);
         if (turn != null) {
             welcome.add("turn", turn);
+        }
+        if (session.modern()) {
+            welcome.addProperty("proto", 2);
+            welcome.addProperty("http", session.http);
+            welcome.add("admin", AdminService.status(session.id));
+            welcome.addProperty("mutedUntil", AdminService.mutedUntil(session.id));
         }
         return welcome;
     }
@@ -240,24 +289,29 @@ public final class NetHub {
     }
 
     private static void dispatch(Session session, JsonObject frame) {
-        switch (string(frame, "t")) {
+        String type = string(frame, "t");
+        if (type.startsWith("chat.") || type.startsWith("admin.")) {
+            request(session, type, frame);
+            return;
+        }
+        switch (type) {
             case "route" -> route(session, frame);
-            case "msg" -> message(session, frame);
-            case "sync" -> sync(session, frame);
+            case "msg" -> ChatService.legacyMessage(session, frame);
+            case "sync" -> ChatService.legacySync(session, frame);
             case "groups" -> {
                 session.groups.clear();
                 session.groups.addAll(provenGroups(frame));
                 announceChange(session);
             }
             case "name" -> {
-                session.name = clean(string(frame, "name"));
+                session.name = TextRules.name(string(frame, "name"));
                 announceChange(session);
             }
             case "ping" -> {
                 JsonObject pong = new JsonObject();
                 pong.addProperty("t", "pong");
                 pong.add("n", frame.get("n"));
-                session.ctx.send(pong.toString());
+                session.send(pong.toString());
             }
             case "bye" -> {
                 session.saidBye = true;
@@ -265,6 +319,44 @@ public final class NetHub {
             }
             default -> { }
         }
+    }
+
+    /* Every request is answered with the same shape, and a refusal carries the Portuguese text the app shows as it is. */
+    private static void request(Session session, String type, JsonObject frame) {
+        if (!session.modern()) {
+            return;
+        }
+        String r = string(frame, "r");
+        if (r.length() > MAX_REQUEST_ID) {
+            r = r.substring(0, MAX_REQUEST_ID);
+        }
+        JsonObject answer;
+        try {
+            answer = type.startsWith("chat.") ? ChatService.handle(session, type, frame) : AdminService.handle(session, type, frame);
+        } catch (Refusal refusal) {
+            answer = failure(refusal.getMessage());
+        } catch (RuntimeException e) {
+            Console.error("Request " + type + " from " + session.id.substring(0, 8) + " failed: " + e);
+            answer = failure("Não foi possível concluir o pedido. Tente de novo.");
+        }
+        if (answer == null || r.isEmpty()) {
+            return;
+        }
+        JsonObject res = new JsonObject();
+        res.addProperty("t", "res");
+        res.addProperty("r", r);
+        if (!answer.has("ok")) {
+            res.addProperty("ok", true);
+        }
+        answer.entrySet().forEach(entry -> res.add(entry.getKey(), entry.getValue()));
+        session.send(res.toString());
+    }
+
+    private static JsonObject failure(String message) {
+        JsonObject failure = new JsonObject();
+        failure.addProperty("ok", false);
+        failure.addProperty("error", message);
+        return failure;
     }
 
     private static void route(Session from, JsonObject frame) {
@@ -275,67 +367,21 @@ public final class NetHub {
         }
         String out = envelope(from.id, payload, 0).toString();
         if (PERSON_ID.matcher(to).matches()) {
-            Session target = ONLINE.get(to);
-            if (target != null && target.ctx.session.isOpen()) {
-                target.ctx.send(out);
+            Session target = latest(to);
+            if (target != null) {
+                target.send(out);
             }
         } else if ("*".equals(to) || from.groups.contains(to)) {
-            for (Session other : ONLINE.values()) {
-                if (other != from && other.ctx.session.isOpen() && ("*".equals(to) || other.groups.contains(to))) {
-                    other.ctx.send(out);
+            for (String person : PEOPLE.keySet()) {
+                Session target = latest(person);
+                if (target != null && !person.equals(from.id) && ("*".equals(to) || target.groups.contains(to))) {
+                    target.send(out);
                 }
             }
         }
     }
 
-    /* The sender's fields are only trusted for routing; the app at the other end verifies the signature over all of them. */
-    private static void message(Session from, JsonObject frame) {
-        JsonElement payload = frame.get("f");
-        if (payload == null || !payload.isJsonObject()) {
-            return;
-        }
-        JsonObject f = payload.getAsJsonObject();
-        String chat = string(f, "chat");
-        String to = string(f, "to");
-        String id = string(f, "id");
-        boolean direct = "dm".equals(chat);
-        boolean routable = direct ? PERSON_ID.matcher(to).matches() : from.groups.contains(chat);
-        if (!routable || !id.startsWith(from.id + ":") || id.length() > 80 || !from.id.equals(string(f, "from")) || !f.has("ts")) {
-            return;
-        }
-        String stored = direct ? "dm:" + (from.id.compareTo(to) < 0 ? from.id + "+" + to : to + "+" + from.id) : chat;
-        long seq = MessageStore.store(id, stored, direct ? to : "", from.id, f.get("ts").getAsLong(), f.toString());
-        JsonObject confirmation = new JsonObject();
-        confirmation.addProperty("t", "stored");
-        confirmation.addProperty("id", id);
-        from.ctx.send(confirmation.toString());
-        String out = envelope(from.id, f, seq).toString();
-        if (direct) {
-            Session target = ONLINE.get(to);
-            if (target != null && target.ctx.session.isOpen()) {
-                target.ctx.send(out);
-            }
-        } else {
-            for (Session other : ONLINE.values()) {
-                if (other != from && other.ctx.session.isOpen() && other.groups.contains(chat)) {
-                    other.ctx.send(out);
-                }
-            }
-        }
-    }
-
-    private static void sync(Session session, JsonObject frame) {
-        long since = frame.has("since") ? frame.get("since").getAsLong() : 0;
-        for (StoredMessage m : MessageStore.since(since, session.id, Set.copyOf(session.groups))) {
-            JsonObject f = GsonAPI.get().fromJson(m.getFrame(), JsonObject.class);
-            session.ctx.send(envelope(m.getSender(), f, m.getSeq()).toString());
-        }
-        JsonObject done = new JsonObject();
-        done.addProperty("t", "synced");
-        session.ctx.send(done.toString());
-    }
-
-    private static JsonObject envelope(String from, JsonElement payload, long seq) {
+    static JsonObject envelope(String from, JsonElement payload, long seq) {
         JsonObject out = new JsonObject();
         out.addProperty("t", "route");
         out.addProperty("from", from);
@@ -346,6 +392,94 @@ public final class NetHub {
         return out;
     }
 
+    /* Every open connection that may read the chat, legacy ones included: callers decide what each kind receives. */
+    static void forEachMember(String chat, Consumer<Session> action) {
+        if (chat.startsWith("dm:")) {
+            int plus = chat.indexOf('+');
+            if (plus < 0) {
+                return;
+            }
+            String a = chat.substring(3, plus);
+            String b = chat.substring(plus + 1);
+            sessionsOf(a).stream().filter(Session::open).forEach(action);
+            if (!a.equals(b)) {
+                sessionsOf(b).stream().filter(Session::open).forEach(action);
+            }
+            return;
+        }
+        for (List<Session> sessions : PEOPLE.values()) {
+            for (Session session : sessions) {
+                if (session.open() && session.canRead(chat)) {
+                    action.accept(session);
+                }
+            }
+        }
+    }
+
+    static void toChat(String chat, String json, String exceptPerson) {
+        forEachMember(chat, session -> {
+            if (session.modern() && !session.id.equals(exceptPerson)) {
+                session.send(json);
+            }
+        });
+    }
+
+    static void toEveryone(String json) {
+        for (List<Session> sessions : PEOPLE.values()) {
+            for (Session session : sessions) {
+                if (session.modern()) {
+                    session.send(json);
+                }
+            }
+        }
+    }
+
+    static void toPerson(String person, String json, Session except) {
+        for (Session session : sessionsOf(person)) {
+            if (session != except && session.modern()) {
+                session.send(json);
+            }
+        }
+    }
+
+    static List<Session> sessionsOf(String person) {
+        return PEOPLE.getOrDefault(person, List.of());
+    }
+
+    static Session latest(String person) {
+        List<Session> sessions = sessionsOf(person);
+        for (int i = sessions.size() - 1; i >= 0; i--) {
+            if (sessions.get(i).open()) {
+                return sessions.get(i);
+            }
+        }
+        return null;
+    }
+
+    /* Ends every connection of a person at once, telling each why first; nobody waits out the grace to see them gone. */
+    static void dismiss(String person, String notice, int code, String reason) {
+        for (Session session : sessionsOf(person)) {
+            session.saidBye = true;
+            session.send(notice);
+            if (session.open()) {
+                session.ctx.closeSession(code, reason);
+            }
+        }
+    }
+
+    /* The gate of the relay's HTTP routes: the token a live protocol-2 connection received in its welcome, never in the URL. */
+    public static Session httpSession(Context ctx) {
+        if (IpBlocklist.isBlocked(IP.get(ctx))) {
+            throw new ForbiddenResponse();
+        }
+        String token = ctx.header("X-AV-Token");
+        Session session = token == null || !TOKEN.matcher(token).matches() ? null : BY_HTTP.get(token);
+        if (session == null || !session.open()) {
+            throw new UnauthorizedResponse("Sua conexão com o servidor expirou. Aguarde o app reconectar.");
+        }
+        return session;
+    }
+
     private static void onGone(WsContext ctx) {
         String address = ctx.attribute("address");
         if (address != null && ctx.attribute("counted") == null) {
@@ -353,10 +487,11 @@ public final class NetHub {
             CONNECTIONS.computeIfPresent(address, (a, count) -> count <= 1 ? null : count - 1);
         }
         PENDING.remove(ctx.sessionId());
-        Session session = BY_SOCKET.remove(ctx.sessionId());
-        if (session == null || ONLINE.get(session.id) != session) {
+        Session session = BY_SOCKET.get(ctx.sessionId());
+        if (session == null) {
             return;
         }
+        forget(session);
         Thread.startVirtualThread(() -> {
             if (!session.saidBye) {
                 try {
@@ -366,34 +501,68 @@ public final class NetHub {
                     return;
                 }
             }
-            if (ONLINE.remove(session.id, session)) {
-                JsonObject offline = new JsonObject();
-                offline.addProperty("t", "offline");
-                offline.addProperty("id", session.id);
-                String out = offline.toString();
-                ONLINE.values().stream().filter(s -> s.ctx.session.isOpen()).forEach(s -> s.ctx.send(out));
-            }
+            leave(session);
         });
     }
 
+    private static void forget(Session session) {
+        BY_SOCKET.remove(session.ctx.sessionId(), session);
+        if (session.http != null) {
+            BY_HTTP.remove(session.http, session);
+        }
+    }
+
+    private static void leave(Session session) {
+        boolean[] last = new boolean[1];
+        PEOPLE.computeIfPresent(session.id, (key, list) -> {
+            if (!list.contains(session)) {
+                return list;
+            }
+            List<Session> next = new ArrayList<>(list);
+            next.remove(session);
+            last[0] = next.isEmpty();
+            return next.isEmpty() ? null : List.copyOf(next);
+        });
+        if (last[0]) {
+            JsonObject offline = new JsonObject();
+            offline.addProperty("t", "offline");
+            offline.addProperty("id", session.id);
+            everyoneBut(session.id, offline.toString());
+        }
+    }
+
+    private static void everyoneBut(String person, String json) {
+        for (List<Session> sessions : PEOPLE.values()) {
+            for (Session other : sessions) {
+                if (!other.id.equals(person)) {
+                    other.send(json);
+                }
+            }
+        }
+    }
+
     private static void broadcastPresence(Session session) {
-        for (Session other : ONLINE.values()) {
-            if (other != session && other.ctx.session.isOpen()) {
-                JsonObject online = new JsonObject();
-                online.addProperty("t", "online");
-                online.add("peer", presence(session, other));
-                other.ctx.send(online.toString());
+        for (List<Session> sessions : PEOPLE.values()) {
+            for (Session other : sessions) {
+                if (!other.id.equals(session.id) && other.open()) {
+                    JsonObject online = new JsonObject();
+                    online.addProperty("t", "online");
+                    online.add("peer", presence(session, other));
+                    other.send(online.toString());
+                }
             }
         }
     }
 
     private static void announceChange(Session session) {
-        for (Session other : ONLINE.values()) {
-            if (other != session && other.ctx.session.isOpen()) {
-                JsonObject changed = new JsonObject();
-                changed.addProperty("t", "peer");
-                changed.add("peer", presence(session, other));
-                other.ctx.send(changed.toString());
+        for (List<Session> sessions : PEOPLE.values()) {
+            for (Session other : sessions) {
+                if (!other.id.equals(session.id) && other.open()) {
+                    JsonObject changed = new JsonObject();
+                    changed.addProperty("t", "peer");
+                    changed.add("peer", presence(session, other));
+                    other.send(changed.toString());
+                }
             }
         }
     }
@@ -429,48 +598,16 @@ public final class NetHub {
         }
     }
 
-    private static String clean(String name) {
-        String stripped = name.replaceAll("[\\p{Cntrl}\\u202A-\\u202E\\u2066-\\u2069]", "").strip();
-        if (stripped.isEmpty()) {
-            return "Sem nome";
-        }
-        return stripped.length() > MAX_NAME ? stripped.substring(0, MAX_NAME) : stripped;
+    static String randomHex(int bytes) {
+        byte[] random = new byte[bytes];
+        RANDOM.nextBytes(random);
+        return HexFormat.of().formatHex(random);
     }
 
-    private static String string(JsonObject o, String key) {
-        JsonElement el = o.get(key);
-        return el != null && el.isJsonPrimitive() ? el.getAsString() : "";
+    static String string(JsonObject o, String key) {
+        return TextRules.string(o, key);
     }
 
     private record Pending(String challenge) {
-    }
-
-    private static final class Session {
-
-        private final WsContext ctx;
-        private final String id;
-        private final String pub;
-        private final Set<String> groups = ConcurrentHashMap.newKeySet();
-        private volatile String name;
-        private volatile boolean saidBye;
-        private long windowStart;
-        private int windowFrames;
-
-        Session(WsContext ctx, String id, String pub, String name) {
-            this.ctx = ctx;
-            this.id = id;
-            this.pub = pub;
-            this.name = name;
-        }
-
-        /* One socket delivers its frames one at a time, so this counter needs no lock. */
-        boolean allow() {
-            long now = System.currentTimeMillis();
-            if (now - windowStart >= 1_000) {
-                windowStart = now;
-                windowFrames = 0;
-            }
-            return ++windowFrames <= FLOOD_FRAMES_PER_SECOND;
-        }
     }
 }

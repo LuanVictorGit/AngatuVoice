@@ -42,6 +42,7 @@ final class ServerLink implements WebSocket.Listener {
     private volatile long lastRx;
     private volatile String lastFailure = "";
     private volatile int rtt = NO_RTT;
+    private volatile long holdUntil;
     private CompletableFuture<?> tail = CompletableFuture.completedFuture(null);
     private CompletableFuture<Void> finished = new CompletableFuture<>();
 
@@ -69,6 +70,10 @@ final class ServerLink implements WebSocket.Listener {
         long wait = FIRST_RETRY_MS;
         while (!stopping) {
             try {
+                long hold = holdUntil - System.currentTimeMillis();
+                if (hold > 0) {
+                    Thread.sleep(hold);
+                }
                 finished = new CompletableFuture<>();
                 tail = CompletableFuture.completedFuture(null);
                 lastRx = System.currentTimeMillis();
@@ -102,6 +107,11 @@ final class ServerLink implements WebSocket.Listener {
         if (was) {
             onLost.run();
         }
+    }
+
+    /* After being kicked or banned, coming straight back would only be refused again. */
+    void holdOff(long ms) {
+        holdUntil = System.currentTimeMillis() + ms;
     }
 
     synchronized void send(JsonObject frame) {

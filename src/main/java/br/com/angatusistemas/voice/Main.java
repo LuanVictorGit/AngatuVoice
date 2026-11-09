@@ -50,7 +50,6 @@ public final class Main {
                 return;
             }
             Migrations.run();
-            Migrations.indexes();
             int port = freePort();
             configure(port);
             new AngatuLib("localhost", port, false);

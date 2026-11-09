@@ -20,22 +20,41 @@
     </div>
   </aside>
 
-  <main class="flex min-h-0 min-w-0 flex-col bg-bg0">
+  <main id="main-col" class="flex min-h-0 min-w-0 flex-col bg-bg0">
     <div id="banners"></div>
-    <header class="flex h-14 flex-none items-center gap-3 border-b border-line px-5">
+    <header class="flex h-14 flex-none items-center gap-2 border-b border-line px-3 md:gap-3 md:px-5">
       <div id="chat-title" class="min-w-0 flex-1 truncate text-base font-bold"></div>
-      <div id="chat-tools" class="flex items-center gap-2"></div>
+      <div id="chat-tools" class="flex flex-none items-center gap-1 md:gap-2"></div>
     </header>
     <section id="call-panel" class="hidden max-h-[55vh] flex-none overflow-y-auto border-b border-line bg-bg1 p-4"></section>
-    <section id="messages" class="min-h-0 flex-1 overflow-y-auto py-3" aria-live="polite"></section>
-    <footer id="composer-area" class="flex-none px-5 pb-4 pt-2">
-      <div class="card flex items-end gap-2 p-2">
-        <button id="btn-emoji" class="btn btn-ghost btn-icon" title="Emojis" aria-label="Emojis"><svg class="ic"><use href="#i-smile"/></svg></button>
-        <textarea id="composer" class="input flex-1 border-0 bg-transparent" rows="1" maxlength="4000" placeholder="Escreva uma mensagem" aria-label="Mensagem"></textarea>
-        <button id="btn-send" class="btn btn-primary btn-icon" title="Enviar" aria-label="Enviar"><svg class="ic"><use href="#i-send"/></svg></button>
-      </div>
-      <div id="composer-hint" class="mt-1 px-1 text-xs text-faint">Enter envia, Shift + Enter cria uma nova linha.</div>
-    </footer>
+    <div id="chat-pane">
+      <section id="pins-panel" class="pins-panel" aria-label="Mensagens fixadas" hidden></section>
+      <section id="messages" class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden pb-2 pt-3" aria-label="Mensagens">
+        <div id="msg-list" role="log" aria-live="polite" aria-relevant="additions"></div>
+      </section>
+      <div id="chat-jump" class="jump-bar" role="status" hidden></div>
+      <footer id="composer-area" class="flex-none px-3 pb-2 pt-1 md:px-5">
+        <div id="emoji-panel" class="emoji-panel card" hidden></div>
+        <div id="composer-suggest" class="suggest card" role="listbox" aria-label="Sugestões" hidden></div>
+        <div id="composer-box" class="card composer-box">
+          <div id="composer-reply" class="composer-reply" hidden></div>
+          <div id="composer-files" class="composer-files" hidden></div>
+          <div id="composer-row" class="flex items-end gap-1 p-1.5">
+            <div id="voice-strip" class="voice-strip" aria-live="polite"></div>
+            <button id="btn-attach" class="btn btn-ghost btn-icon" title="Anexar arquivo" aria-label="Anexar arquivo"><svg class="ic"><use href="#i-paperclip"/></svg></button>
+            <textarea id="composer" class="input min-w-0 flex-1 border-0 bg-transparent" rows="1" maxlength="200000" placeholder="Escreva uma mensagem" aria-label="Mensagem"></textarea>
+            <button id="btn-emoji" class="btn btn-ghost btn-icon" title="Emojis" aria-label="Emojis"><svg class="ic"><use href="#i-smile"/></svg></button>
+            <button id="btn-send" class="btn btn-primary btn-icon" title="Enviar" aria-label="Enviar"><svg class="ic"><use href="#i-send"/></svg></button>
+            <button id="btn-mic" class="btn btn-ghost btn-icon voice-mic-btn" title="Segure para gravar uma mensagem de voz, ou clique para gravar sem segurar" aria-label="Gravar mensagem de voz"><svg class="ic"><use href="#i-mic"/></svg></button>
+          </div>
+        </div>
+        <div class="flex h-5 items-center gap-3 px-1 text-xs text-faint">
+          <div id="typing-line" class="typing-line min-w-0 flex-1 truncate" aria-live="polite"></div>
+          <div class="hidden lg:block">Enter envia · Shift + Enter quebra linha · Ctrl + K troca de conversa</div>
+        </div>
+        <input id="file-input" type="file" multiple hidden>
+      </footer>
+    </div>
   </main>
 
   <aside id="members" class="hidden min-h-0 flex-col overflow-y-auto border-l border-line bg-bg1 p-3 xl:flex" aria-label="Participantes"></aside>

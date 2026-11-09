@@ -673,13 +673,18 @@
     }
   }
 
+  /* Who came and went is judged against the room's previous member list, not the open connections: a connection can
+     exist before the room says the person is in, and then nobody would ever be announced. */
   rtc.handleRoom = function ({ room, members }) {
+    const previous = (AV.state.calls[room] || []).filter((id) => id !== myId());
     AV.state.calls[room] = members;
     if (room !== rtc.room) return;
     const others = members.filter((id) => id !== myId());
-    const before = [...peers.keys()];
-    if (others.some((id) => !before.includes(id))) AV.sound("peerJoin");
-    if (before.some((id) => !others.includes(id))) AV.sound("peerLeave");
+    const joined = others.filter((id) => !previous.includes(id));
+    const left = previous.filter((id) => !others.includes(id));
+    const name = (id) => (AV.state.peers.find((p) => p.id === id) || { name: "Alguém" }).name;
+    if (joined.length) { AV.sound("peerJoin"); AV.toast(joined.map(name).join(", ") + (joined.length > 1 ? " entraram" : " entrou") + " na chamada."); }
+    if (left.length) { AV.sound("peerLeave"); AV.toast(left.map(name).join(", ") + (left.length > 1 ? " saíram" : " saiu") + " da chamada."); }
     if (others.length) stopCalling();
     others.forEach((id) => { if (!peers.has(id) && myId() < id) ensurePeer(id); });
     [...peers.keys()].filter((id) => !others.includes(id)).forEach(closePeer);

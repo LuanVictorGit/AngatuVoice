@@ -60,10 +60,6 @@ public final class Migrations {
         }
     }
 
-    public static void indexes() {
-        MessageService.indexes();
-    }
-
     private static void backup(int version) {
         Path dir = AppDirs.ensure(AppDirs.backups());
         String stamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));

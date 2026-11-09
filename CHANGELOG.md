@@ -7,6 +7,35 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [2.2.0] - 2026-11-08
+
+### Adicionado
+- Chat novo, com as mensagens guardadas no servidor: a conversa é a mesma em qualquer computador com a sua identidade, e o que um aparelho lê, edita ou apaga aparece nos outros na hora.
+- Responder a uma mensagem, com a citação acima da resposta; clicar nela leva até a original.
+- Editar (seta para cima edita a última) e apagar as próprias mensagens; a edição mostra "(editada)".
+- Reações com emoji, menções com @ (com sugestões enquanto você digita) e emojis por :nome:.
+- Anexos de até 25 MB: imagens aparecem na conversa e abrem em tela grande, vídeos e áudios tocam ali mesmo, e qualquer arquivo pode ser salvo em Downloads. Arraste, cole ou use o clipe.
+- Mensagens de voz: segure o microfone para gravar e solte para enviar, arraste para a esquerda para cancelar ou para cima para continuar sem segurar (um clique também grava sem segurar, com pausa e lixeira). Na conversa, o áudio mostra a onda do som, dá para pular para qualquer ponto e ouvir em 1×, 1,5× ou 2×.
+- Texto longo (mais de 2.000 caracteres ou 40 linhas) vira um arquivo .md com o nome que você escolher, mostrado já formatado na conversa, com botões de copiar e baixar.
+- Fixar mensagens: qualquer pessoa da conversa fixa pelo menu da mensagem; a última fixada fica numa faixa no topo, e um clique leva até ela.
+- Aviso na tela quando alguém entra ou sai da chamada em que você está.
+- Barra "Ir para a mais recente" quando você sobe para ler mensagens antigas.
+- Prévia de links com título, descrição e imagem do site.
+- Formatação: negrito, itálico, sublinhado, riscado, código, blocos de código, citações, títulos, listas, spoiler e links com texto.
+- Indicador de quem está digitando, linha de "Novas" nas mensagens não lidas, aviso de mensagens novas quando você está lendo mais acima, e contador vermelho de menções na lista de conversas.
+- Menu de ações no botão direito da mensagem, barra de ações ao passar o mouse e Ctrl + K para trocar de conversa.
+- Botão de tela cheia no topo da conversa; Esc volta ao normal no mesmo ponto da leitura.
+- Dez avatares de monstrinhos para quem ainda não tem foto, sempre o mesmo para cada pessoa.
+- Modo administrador, liberado por senha nas configurações: apagar qualquer mensagem, limpar uma conversa, apagar todas as mensagens do servidor, silenciar, expulsar e banir.
+
+### Mudou
+- As mensagens não são mais apagadas depois de 30 dias: nada sai do servidor sozinho. O administrador tem a opção de apagar tudo nas configurações.
+- O layout se ajusta melhor em janelas estreitas, e a conversa não rouba mais espaço da tela compartilhada quando está escondida.
+- "Limpar mensagens" saiu da conversa privada; agora cada um apaga as próprias mensagens, e o administrador pode limpar uma conversa inteira.
+
+### Corrigido
+- A bolinha de online ao lado da foto não aparece mais cortada.
+
 ## [2.1.0] - 2026-11-06
 
 ### Mudou

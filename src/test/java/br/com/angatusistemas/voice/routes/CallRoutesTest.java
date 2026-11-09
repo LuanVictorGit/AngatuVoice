@@ -39,7 +39,6 @@ class CallRoutesTest {
         }
         Main.configure(port);
         Migrations.run();
-        Migrations.indexes();
         new AngatuLib("localhost", port, false);
         PeerNetwork.start();
         HttpResponse<String> boot = HTTP.send(HttpRequest.newBuilder(uri("/boot?t=" + SessionService.newBootToken())).GET().build(),

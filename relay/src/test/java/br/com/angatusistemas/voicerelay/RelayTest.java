@@ -4,8 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import br.com.angatusistemas.voicerelay.services.StreamHub;
-import java.net.InetAddress;
-import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
@@ -31,12 +29,8 @@ class RelayTest {
 
     @BeforeAll
     static void start() throws Exception {
-        int port;
-        try (ServerSocket probe = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
-            port = probe.getLocalPort();
-        }
-        Main.start(port, 0);
-        url = "ws://127.0.0.1:" + port + "/ws/stream";
+        TestClient.startServer();
+        url = "ws://" + TestClient.base + "/ws/stream";
     }
 
     private static String id() {

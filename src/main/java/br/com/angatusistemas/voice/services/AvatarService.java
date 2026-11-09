@@ -7,6 +7,7 @@ import br.com.angatusistemas.voice.utils.Crypto;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HexFormat;
@@ -21,6 +22,7 @@ import javax.imageio.ImageIO;
 public final class AvatarService {
 
     public static final int MAX_BYTES = 48 * 1024;
+    private static final int DEFAULT_PICTURES = 10;
     private static final int MAX_SIDE = 256;
     private static final String SELF = "self";
 
@@ -74,6 +76,29 @@ public final class AvatarService {
             raw = peer == null ? null : peer.getAvatar();
         }
         return Optional.ofNullable(raw).map(Crypto::unb64);
+    }
+
+    /* The photo when there is one, otherwise one of the ten default pictures, always the same one for the same id. */
+    public static Optional<byte[]> picture(String id) {
+        Optional<byte[]> photo = bytes(id);
+        if (photo.isPresent()) {
+            return photo;
+        }
+        try (InputStream in = AvatarService.class.getResourceAsStream("/public/assets/avatars/avatar-" + defaultIndex(id) + ".png")) {
+            return in == null ? Optional.empty() : Optional.of(in.readAllBytes());
+        } catch (IOException e) {
+            return Optional.empty();
+        }
+    }
+
+    /* FNV-1a over the id, as ui.js does it: the page and the native windows must pick the same picture. */
+    public static int defaultIndex(String id) {
+        int hash = 0x811c9dc5;
+        for (int i = 0; i < id.length(); i++) {
+            hash ^= id.charAt(i);
+            hash *= 0x01000193;
+        }
+        return Integer.remainderUnsigned(hash, DEFAULT_PICTURES);
     }
 
     public static String version(String base64) {

@@ -220,7 +220,7 @@ final class CallPopup {
             return;
         }
         photoOwner = id;
-        photo = AvatarService.bytes(id).map(bytes -> {
+        photo = AvatarService.picture(id).map(bytes -> {
             try {
                 return (Image) ImageIO.read(new ByteArrayInputStream(bytes));
             } catch (IOException e) {

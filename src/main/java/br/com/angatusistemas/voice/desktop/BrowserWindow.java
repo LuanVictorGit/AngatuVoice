@@ -74,6 +74,7 @@ final class BrowserWindow {
 
     public static final String APP_TITLE = "Angatu Voice v" + Version.current();
     private final JFrame frame = new JFrame(APP_TITLE);
+    private final FullScreen fullScreen = new FullScreen(frame);
     private final String origin;
     private CefApp cefApp;
     private CefClient client;
@@ -290,6 +291,11 @@ final class BrowserWindow {
 
     private void installHandlers() {
         client.addDisplayHandler(new org.cef.handler.CefDisplayHandlerAdapter() {
+            @Override
+            public void onFullscreenModeChange(CefBrowser b, boolean fullscreen) {
+                SwingUtilities.invokeLater(() -> fullScreen.set(fullscreen));
+            }
+
             @Override
             public boolean onConsoleMessage(CefBrowser b, org.cef.CefSettings.LogSeverity level, String message, String source, int line) {
                 // What goes wrong in calls and shares only shows up here: without this, the app log says nothing about them.

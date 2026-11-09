@@ -32,7 +32,6 @@ class ScreenShare1080p60Test {
         }
         Main.configure(port);
         Migrations.run();
-        Migrations.indexes();
         new AngatuLib("localhost", port, false);
         http = HttpClient.newHttpClient();
     }

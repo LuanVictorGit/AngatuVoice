@@ -4,7 +4,6 @@ import br.com.angatusistemas.lib.console.Console;
 import br.com.angatusistemas.lib.database.Saveable;
 import br.com.angatusistemas.lib.task.Task;
 import br.com.angatusistemas.voice.entities.Group;
-import br.com.angatusistemas.voice.entities.Message;
 import br.com.angatusistemas.voice.entities.Peer;
 import br.com.angatusistemas.voice.entities.Setting;
 import br.com.angatusistemas.voice.utils.Crypto;
@@ -20,7 +19,11 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
@@ -33,18 +36,23 @@ import java.util.regex.Pattern;
 public final class PeerNetwork {
 
     private static final String SERVER = System.getProperty("angatu.server", "wss://voice.angatusistemas.com.br");
-    private static final String SEQ_KEY = "_net.seq";
+    private static final String DEVICE_KEY = "_net.device";
+    private static final int PROTOCOL = 2;
+    private static final long REQUEST_TIMEOUT_MS = 15_000;
+    private static final long KICK_WAIT_MS = 60_000;
+    private static final long BAN_WAIT_MS = 600_000;
     private static final int MAX_SIGNAL_BYTES = 64 * 1024;
     private static final int MAX_ROOMS = 128;
     private static final long TICK_MS = 1_000;
     private static final long PING_EVERY_MS = 3_000;
-    private static final long FUTURE_TOLERANCE_MS = 10 * 60_000L;
-    private static final Pattern PEER_ID = Pattern.compile("[0-9a-f]{20}");
+    static final Pattern PEER_ID = Pattern.compile("[0-9a-f]{20}");
     private static final Pattern GROUP_ID = Pattern.compile("g_[0-9a-f]{16}");
     private static final Set<String> SIGNAL_KINDS = Set.of("offer", "answer", "candidate", "bye", "state");
 
     private static final Map<String, Person> ONLINE = new ConcurrentHashMap<>();
     private static final Set<String> AVATAR_ASKED = ConcurrentHashMap.newKeySet();
+    private static final Map<String, CompletableFuture<JsonObject>> WAITING = new ConcurrentHashMap<>();
+    private static final AtomicLong REQUESTS = new AtomicLong();
 
     private static volatile IdentityService.Self self;
     private static volatile ServerLink link;
@@ -77,6 +85,10 @@ public final class PeerNetwork {
         return current != null && current.isReady();
     }
 
+    public static String httpBase() {
+        return SERVER.replaceFirst("^ws", "http");
+    }
+
     public static String streamUrl() {
         return SERVER + "/ws/stream";
     }
@@ -85,37 +97,35 @@ public final class PeerNetwork {
         return turn;
     }
 
-    public static Message send(String chat, String text) {
-        String clean = MessageService.sanitize(text);
-        boolean direct = chat.startsWith("dm:");
-        String to = direct ? chat.substring(3) : "";
-        if (clean.isEmpty() || (direct ? !PEER_ID.matcher(to).matches() : GroupService.find(chat) == null)) {
-            throw new IllegalArgumentException("invalid message");
+    /* One question to the server and its answer. The server is the authority, so a refusal comes back as its own words. */
+    public static JsonObject request(JsonObject frame) {
+        ServerLink current = link;
+        if (current == null || !current.isReady()) {
+            throw new Offline();
         }
-        IdentityService.Self me = self;
-        long ts = System.currentTimeMillis();
-        String id = me.id() + ":" + UUID.randomUUID();
-        Message message = new Message();
-        message.setId(id);
-        message.setChatId(chat);
-        message.setSenderId(me.id());
-        message.setSenderName(me.name());
-        message.setText(clean);
-        message.setSentAt(ts);
-        message.setPending(true);
-        message.setRead(true);
-        message.setAuthorKey(Crypto.b64(me.publicKey()));
-        message.setSignature(Crypto.b64(me.sign(messageText(id, direct ? "dm" : chat, to, ts, me.name(), clean))));
-        message.save();
-        sendStored(message);
-        LiveHub.emit("message", MessageService.view(message, me.id()));
-        return message;
+        String r = Long.toString(REQUESTS.incrementAndGet(), 36);
+        CompletableFuture<JsonObject> answer = new CompletableFuture<>();
+        WAITING.put(r, answer);
+        frame.addProperty("r", r);
+        current.send(frame);
+        try {
+            JsonObject res = answer.get(REQUEST_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            if (!res.has("ok") || !res.get("ok").getAsBoolean()) {
+                throw new Refused(res.has("error") ? text(res, "error", 300) : "O servidor recusou o pedido.");
+            }
+            return res;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new Offline();
+        } catch (ExecutionException | TimeoutException e) {
+            throw new Offline();
+        } finally {
+            WAITING.remove(r);
+        }
     }
 
-    private static void sendStored(Message message) {
-        JsonObject frame = new JsonObject();
-        frame.addProperty("t", "msg");
-        frame.add("f", messageFrame(message));
+    /* Fire and forget: typing and read marks have no answer worth waiting for. */
+    public static void tell(JsonObject frame) {
         sendToServer(frame);
     }
 
@@ -233,8 +243,25 @@ public final class PeerNetwork {
         hello.addProperty("pub", Crypto.b64(me.publicKey()));
         hello.addProperty("name", me.name());
         hello.addProperty("version", Version.current().toString());
+        hello.addProperty("proto", PROTOCOL);
+        hello.addProperty("device", deviceId());
         hello.add("groups", groupProofs());
         return hello;
+    }
+
+    /* Fixed per installation: the same person on two computers keeps both connected, while a reconnection replaces itself. */
+    private static String deviceId() {
+        Setting stored = Saveable.findById(Setting.class, DEVICE_KEY);
+        if (stored != null && stored.getValue() != null && stored.getValue().matches("[0-9a-f]{16}")) {
+            return stored.getValue();
+        }
+        byte[] random = new byte[8];
+        new java.security.SecureRandom().nextBytes(random);
+        Setting device = new Setting();
+        device.setId(DEVICE_KEY);
+        device.setValue(HexFormat.of().formatHex(random));
+        device.save();
+        return device.getValue();
     }
 
     private static JsonArray groupProofs() {
@@ -283,6 +310,8 @@ public final class PeerNetwork {
     }
 
     private static void onServerLost() {
+        WAITING.values().forEach(waiting -> waiting.completeExceptionally(new Offline()));
+        WAITING.clear();
         LiveHub.emit("net", Map.of("connected", false));
     }
 
@@ -310,9 +339,21 @@ public final class PeerNetwork {
                 LiveHub.emit("peer.changed", Map.of("id", person.id));
             }
             case "offline" -> onPersonGone(text(frame, "id", 20));
-            case "stored" -> onStored(text(frame, "id", 80));
             case "route" -> onRouted(frame);
-            default -> { }
+            case "res" -> {
+                CompletableFuture<JsonObject> waiting = WAITING.get(text(frame, "r", 16));
+                if (waiting != null) {
+                    waiting.complete(frame);
+                }
+            }
+            case "kicked", "banned" -> {
+                ServerLink current = link;
+                if (current != null) {
+                    current.holdOff("kicked".equals(text(frame, "t", 16)) ? KICK_WAIT_MS : BAN_WAIT_MS);
+                }
+                LiveHub.emit("net.refused", Map.of("reason", text(frame, "t", 16)));
+            }
+            default -> ChatService.onServerFrame(frame);
         }
     }
 
@@ -341,13 +382,7 @@ public final class PeerNetwork {
                 dropFromRooms(id);
             }
         }
-        JsonObject sync = new JsonObject();
-        sync.addProperty("t", "sync");
-        sync.addProperty("since", lastSeq());
-        sendToServer(sync);
-        for (Message pending : MessageService.pending()) {
-            sendStored(pending);
-        }
+        ChatService.onWelcome(frame);
         LiveHub.emit("net", Map.of("connected", true));
         Console.log("Conectado ao servidor, %d online", present.size());
     }
@@ -363,10 +398,6 @@ public final class PeerNetwork {
         if (rooms != null) {
             route(person.id, rooms);
         }
-        // Lost acknowledgements end here: whatever they have not confirmed is offered again, and they ignore what they already have.
-        for (Message pending : MessageService.pendingFor("dm:" + person.id)) {
-            sendStored(pending);
-        }
         askForAvatar(person);
     }
 
@@ -376,6 +407,14 @@ public final class PeerNetwork {
             JsonObject ask = new JsonObject();
             ask.addProperty("t", "profile?");
             route(person.id, ask);
+        }
+    }
+
+    /* Someone who wrote while this app was closed may never have been seen online: the chat needs them listed. */
+    static void rememberSender(String id, String name) {
+        if (!id.equals(self.id()) && PEER_ID.matcher(id).matches() && !Saveable.exists(Peer.class, id)) {
+            storePeer(new Person(id, IdentityService.clean(name), "", Set.of()));
+            LiveHub.emit("peer.changed", Map.of("id", id));
         }
     }
 
@@ -432,19 +471,11 @@ public final class PeerNetwork {
     private static void onRouted(JsonObject envelope) {
         String from = text(envelope, "from", 20);
         JsonObject frame = envelope.getAsJsonObject("f");
-        if (envelope.has("seq")) {
-            noteSeq(envelope.get("seq").getAsLong());
-        }
-        if ("msg".equals(text(frame, "t", 16))) {
-            onMessage(from, frame);
-            return;
-        }
         Person person = ONLINE.get(from);
         if (person == null) {
             return;
         }
         switch (text(frame, "t", 16)) {
-            case "ack" -> onAck(person, frame);
             case "call" -> onCall(person, frame);
             case "rooms" -> onRooms(person, frame);
             case "decline" -> onDecline(person, frame);
@@ -452,91 +483,6 @@ public final class PeerNetwork {
             case "profile" -> onProfile(person, frame);
             case "profile?" -> sendProfile(person.id);
             default -> { }
-        }
-    }
-
-    private static long lastSeq() {
-        Setting stored = Saveable.findById(Setting.class, SEQ_KEY);
-        return stored == null || stored.getValue() == null ? 0 : Long.parseLong(stored.getValue());
-    }
-
-    private static void noteSeq(long seq) {
-        if (seq > lastSeq()) {
-            Setting setting = new Setting();
-            setting.setId(SEQ_KEY);
-            setting.setValue(String.valueOf(seq));
-            setting.save();
-        }
-    }
-
-    private static void onMessage(String sender, JsonObject f) {
-        try {
-            String chat = text(f, "chat", 40);
-            String from = text(f, "from", 20);
-            String to = text(f, "to", 20);
-            String id = text(f, "id", 80);
-            String name = text(f, "name", 64);
-            String body = text(f, "text", MessageService.MAX_TEXT);
-            long ts = f.get("ts").getAsLong();
-            String pub = text(f, "pub", 80);
-            byte[] key = Crypto.unb64(pub);
-            boolean direct = chat.equals("dm");
-            boolean routable = from.equals(sender) && (direct ? to.equals(self.id()) : GroupService.find(chat) != null);
-            boolean valid = routable && id.startsWith(from + ":") && Crypto.fingerprint(key).equals(from)
-                    && body.equals(MessageService.sanitize(body)) && !body.isEmpty()
-                    && ts <= System.currentTimeMillis() + FUTURE_TOLERANCE_MS
-                    && Crypto.verify(key, messageText(id, chat, to, ts, name, body), Crypto.unb64(text(f, "sig", 128)));
-            if (!valid) {
-                return;
-            }
-            String cleanName = IdentityService.clean(name);
-            // Someone who wrote while this app was closed may never have been seen online: the chat needs them listed.
-            if (!Saveable.exists(Peer.class, from)) {
-                storePeer(new Person(from, cleanName, pub, Set.of()));
-                LiveHub.emit("peer.changed", Map.of("id", from));
-            }
-            Message m = new Message();
-            m.setId(id);
-            m.setChatId(direct ? "dm:" + from : chat);
-            m.setSenderId(from);
-            m.setSenderName(cleanName);
-            m.setText(body);
-            m.setSentAt(ts);
-            m.setRead(false);
-            m.setAuthorKey(pub);
-            m.setSignature(text(f, "sig", 128));
-            if (MessageService.store(m)) {
-                LiveHub.emit("message", MessageService.view(m, self.id()));
-                String preview = !SettingsService.flag("privacy.preview") ? "Nova mensagem"
-                        : body.length() > 120 ? body.substring(0, 120) + "…" : body;
-                Notifications.notify(m.getSenderName(), preview);
-            }
-            if (direct) {
-                JsonObject ack = new JsonObject();
-                ack.addProperty("t", "ack");
-                ack.addProperty("id", id);
-                route(from, ack);
-            }
-        } catch (RuntimeException e) {
-            Console.debug("message refused: " + e.getClass().getSimpleName());
-        }
-    }
-
-    private static void onAck(Person person, JsonObject f) {
-        String id = text(f, "id", 80);
-        Message m = id.startsWith(self.id() + ":") ? Saveable.findById(Message.class, id) : null;
-        if (m != null && m.isPending() && m.getChatId().equals("dm:" + person.id)) {
-            MessageService.delivered(id);
-            LiveHub.emit("message.delivered", Map.of("id", id, "chat", m.getChatId()));
-        }
-    }
-
-    /* In a group nobody in particular confirms: it is delivered once the server holds it for everyone. */
-    private static void onStored(String id) {
-        Message m = id.startsWith(self.id() + ":") ? Saveable.findById(Message.class, id) : null;
-        if (m != null && m.isPending() && !m.getChatId().startsWith("dm:")) {
-            MessageService.delivered(id);
-            LiveHub.emit("message.delivered", Map.of("id", id, "chat", m.getChatId()));
         }
     }
 
@@ -666,26 +612,6 @@ public final class PeerNetwork {
         Notifications.notify(call.callerName(), "Chamada perdida.");
     }
 
-    private static JsonObject messageFrame(Message m) {
-        boolean direct = m.getChatId().startsWith("dm:");
-        JsonObject o = new JsonObject();
-        o.addProperty("t", "msg");
-        o.addProperty("id", m.getId());
-        o.addProperty("chat", direct ? "dm" : m.getChatId());
-        o.addProperty("to", direct ? m.getChatId().substring(3) : "");
-        o.addProperty("from", m.getSenderId());
-        o.addProperty("name", m.getSenderName());
-        o.addProperty("pub", m.getAuthorKey());
-        o.addProperty("ts", m.getSentAt());
-        o.addProperty("text", m.getText());
-        o.addProperty("sig", m.getSignature());
-        return o;
-    }
-
-    private static byte[] messageText(String id, String chat, String to, long ts, String name, String body) {
-        return String.join("|", "AV1", "msg", id, chat, to, String.valueOf(ts), name, body).getBytes(StandardCharsets.UTF_8);
-    }
-
     private static String text(JsonObject o, String key, int max) {
         JsonElement el = o.get(key);
         if (el == null || !el.isJsonPrimitive()) {
@@ -711,5 +637,21 @@ public final class PeerNetwork {
     }
 
     private record Person(String id, String name, String pub, Set<String> groups) {
+    }
+
+    /** The server could not be asked: not connected, or no answer in time. */
+    public static final class Offline extends RuntimeException {
+
+        Offline() {
+            super("server unreachable", null, false, false);
+        }
+    }
+
+    /** The server answered no, with the words to show. */
+    public static final class Refused extends RuntimeException {
+
+        Refused(String message) {
+            super(message, null, false, false);
+        }
     }
 }

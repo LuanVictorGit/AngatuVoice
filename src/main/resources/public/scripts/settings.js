@@ -358,7 +358,7 @@
     body.append(E("div", { class: "mb-3" },
       E("div", { class: "font-semibold" }, "Servidor do Angatu Voice"),
       E("div", { class: "text-sm text-muted" }, n.connected ? "Conectado. Mensagens, voz e tela passam pelo servidor." : "Sem conexão. O aplicativo continua tentando sozinho.")));
-    body.append(row("Mensagens no servidor", "Guardadas para quem está offline por até 30 dias, e até as 1.000 mais recentes de cada conversa. No seu computador, o histórico continua.", E("span", { class: "chip" }, n.connected ? "Conectado" : "Offline")));
+    body.append(row("Mensagens no servidor", "Todas as conversas ficam no servidor e aparecem igual em qualquer computador com a sua identidade. As mais antigas só saem quando o espaço de mensagens chega a 1 GB.", E("span", { class: "chip" }, n.connected ? "Conectado" : "Offline")));
 
     const peers = AV.state.peers;
     body.append(E("h3", { class: "mt-6 mb-2 font-bold" }, "Participantes conhecidos (" + peers.filter((p) => p.online).length + " online)"),
@@ -416,8 +416,61 @@
       E("button", { class: "btn btn-danger mt-4", onclick: async () => { if (await AV.confirm("Sair do Angatu Voice?", "Você deixará de receber mensagens e chamadas até abrir o aplicativo de novo.", "Sair", true)) AV.api("POST", "/api/app/quit").catch(() => {}); } }, AV.icon("power", "ic-sm"), "Sair do aplicativo")));
   }
 
+  /* The password and every power are checked by the server; this tab only asks and shows what the server answered. */
+  async function adminTab(body) {
+    const a = AV.state.me.admin || { admin: false, active: false };
+    if (!a.admin) {
+      const password = E("input", { class: "input w-56", type: "password", autocomplete: "off", maxlength: 200, "aria-label": "Senha de administrador" });
+      const enter = async () => {
+        const r = await AV.admin("login", { password: password.value });
+        password.value = "";
+        if (r && r.admin) { AV.state.me.admin = r.admin; AV.toast("Modo administrador liberado.", "ok"); render(); }
+      };
+      password.addEventListener("keydown", (e) => { if (e.key === "Enter") enter(); });
+      body.append(E("p", { class: "mb-2 text-sm text-muted" }, "Administradores apagam mensagens de qualquer pessoa, limpam conversas, silenciam, expulsam e banem participantes."),
+        row("Senha de administrador", "Conferida pelo servidor. Depois de cinco tentativas erradas, espere dez minutos.", E("div", { class: "flex gap-2" }, password, E("button", { class: "btn btn-primary", onclick: enter }, "Entrar"))));
+      return;
+    }
+    const mode = E("input", { type: "checkbox", "aria-label": "Modo administrador", onchange: async (e) => {
+      const r = await AV.admin("mode", { active: e.target.checked });
+      if (r && r.admin) AV.state.me.admin = r.admin;
+      render();
+    } });
+    mode.checked = a.active;
+    body.append(row("Modo administrador", a.active ? "Ligado: as ações de moderação aparecem no menu das mensagens e no topo das conversas." : "Desligado: você usa o Angatu Voice como qualquer participante.", E("label", { class: "switch" }, mode, E("span"))));
+    if (!a.active) return;
+    const [stats, bans] = await Promise.all([AV.admin("stats", {}), AV.admin("bans", {})]);
+    if (stats) {
+      body.append(E("h3", { class: "mt-6 mb-2 font-bold" }, "Armazenamento do servidor"), E("div", { class: "card p-4" },
+        E("div", { class: "flex justify-between text-sm" }, E("span", {}, "Mensagens (" + (stats.messageCount || 0).toLocaleString("pt-BR") + ")"), E("span", { class: "text-muted" }, AV.bytes(stats.messageBytes || 0))),
+        E("div", { class: "mt-3 flex justify-between text-sm" }, E("span", {}, "Anexos"), E("span", { class: "text-muted" }, AV.bytes(stats.attachmentBytes || 0) + " de " + AV.bytes(stats.attachmentLimit || 0))),
+        E("small", { class: "mt-3 block text-faint" }, "Nenhuma mensagem é apagada sozinha. Só os anexos mais antigos saem quando passam do limite.")),
+      row("Apagar todas as mensagens", "Remove do servidor todas as mensagens e anexos de todas as conversas, para todos. Não dá para desfazer.",
+        E("button", { class: "btn btn-danger", onclick: wipeDialog }, AV.icon("trash", "ic-sm"), "Apagar tudo")));
+    }
+    const list = (bans && bans.bans) || [];
+    body.append(E("h3", { class: "mt-6 mb-2 font-bold" }, "Banidos"), list.length ? E("div", { class: "card px-4" }, list.map((b) => E("div", { class: "row" },
+      E("div", { class: "min-w-0" }, E("div", { class: "font-semibold" }, b.name || b.id), E("small", { class: "text-muted" }, (b.reason ? b.reason + " · " : "") + new Date(b.at).toLocaleString("pt-BR"))),
+      E("button", { class: "btn", onclick: async () => { if (await AV.admin("unban", { id: b.id }, "Banimento removido.")) render(); } }, "Desbanir")))) : E("p", { class: "text-muted" }, "Ninguém está banido."));
+  }
+
+  /* Typing the words is the confirmation: the server refuses the request without them. */
+  function wipeDialog() {
+    const PHRASE = "APAGAR TUDO";
+    const input = E("input", { class: "input", autocomplete: "off", "aria-label": "Confirmação" });
+    AV.modal("Apagar todas as mensagens?", (body) => body.append(
+      E("p", { class: "mb-3 text-sm text-muted" }, "Todas as conversas ficam vazias para todos, com os anexos. Para confirmar, digite ", E("b", {}, PHRASE), "."), input), [
+      { label: "Cancelar", run: (close) => close() },
+      { label: "Apagar tudo", danger: true, run: async (close) => {
+        if (input.value.trim() !== PHRASE) { AV.toast("Digite " + PHRASE + " para confirmar.", "error"); return; }
+        close();
+        const r = await AV.admin("wipe", { confirm: PHRASE });
+        if (r) { AV.toast((r.removed || 0).toLocaleString("pt-BR") + " mensagens apagadas.", "ok"); render(); }
+      } }]);
+  }
+
   const TABS = [["app", "Aplicativo", appTab], ["audio", "Áudio", audioTab], ["hotkeys", "Atalhos", hotkeysTab], ["video", "Vídeo", videoTab],
-    ["network", "Rede", networkTab], ["update", "Atualizações", updateTab], ["about", "Sobre", aboutTab]];
+    ["network", "Rede", networkTab], ["admin", "Administração", adminTab], ["update", "Atualizações", updateTab], ["about", "Sobre", aboutTab]];
 
   async function render() {
     if (!panel) return;

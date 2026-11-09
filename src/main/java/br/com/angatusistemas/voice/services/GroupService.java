@@ -3,7 +3,6 @@ package br.com.angatusistemas.voice.services;
 import br.com.angatusistemas.lib.database.Saveable;
 import br.com.angatusistemas.lib.gson.GsonAPI;
 import br.com.angatusistemas.voice.entities.Group;
-import br.com.angatusistemas.voice.entities.Message;
 import br.com.angatusistemas.voice.utils.Crypto;
 import com.google.gson.JsonParseException;
 import java.nio.charset.StandardCharsets;
@@ -42,9 +41,6 @@ public final class GroupService {
     /* The chat everyone used to share carries on as the one everyone shares on the server. */
     public static void moveOldPublicGroup() {
         ensurePublic();
-        List<Message> moved = Saveable.findByField(Message.class, "chatId", OLD_PUBLIC);
-        moved.forEach(m -> m.setChatId(PUBLIC));
-        Saveable.saveAll(moved);
         Saveable.deleteById(Group.class, OLD_PUBLIC);
         Saveable.query(Group.class, "DROP TABLE IF EXISTS " + OLD_PUBLIC + "networks");
     }
@@ -101,7 +97,6 @@ public final class GroupService {
         if (group == null || PUBLIC.equals(id)) {
             throw new IllegalArgumentException("cannot leave " + id);
         }
-        MessageService.clear(id);
         group.delete();
     }
 

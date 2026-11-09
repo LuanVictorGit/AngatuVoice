@@ -5,8 +5,8 @@ services:
     mem_limit: 256m
     environment:
       - TURN_SECRET=${TURN_SECRET}
-      - MESSAGE_RETENTION_DAYS=${MESSAGE_RETENTION_DAYS:-30}
-      - MESSAGE_MAX_PER_CHAT=${MESSAGE_MAX_PER_CHAT:-1000}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ATTACHMENT_STORAGE_LIMIT_BYTES=${ATTACHMENT_STORAGE_LIMIT_BYTES:-10737418240}
     volumes:
       - voice-relay-data:/data
     healthcheck:

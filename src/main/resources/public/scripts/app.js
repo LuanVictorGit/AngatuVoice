@@ -2,16 +2,12 @@
 /* The application: reads state from the local server, renders it, and reacts to live events. */
 (function () {
   const E = AV.el;
-  const PAGE = 50;
-  const EMOJIS = ["😀", "😁", "😂", "🤣", "😊", "😍", "😎", "🤔", "😅", "😉", "😢", "😭", "😡", "🥳", "😴", "🙄", "👍", "👎", "👏", "🙏", "💪", "👀", "🔥", "✨", "🎉", "🎮", "🎧", "☕", "🍕", "❤️", "💔", "💯", "✅", "❌", "⚠️", "🚀", "💡", "📌", "🎵", "👋"];
   const LATENCY_STALE_MS = 8000;
   const CALL_RTT_STALE_MS = 6000;
   let callView = null;
   let focusedTile = null;
   let chatOverStage = false;
   let incomingKey = "";
-  let messages = [];
-  let hasMore = false;
   let linkDown = false;
   let lastUpdateState = "";
   let activeFullscreenTile = null;
@@ -31,6 +27,7 @@
   const roomOf = (chat) => (isDm(chat) ? dmRoom(me().id, chat.slice(3)) : chat);
   const chatOfRoom = (room) => (room.startsWith("dm:") ? "dm:" + room.slice(3).split("+").find((id) => id !== me().id) : room);
   const nameOf = (id) => (id === me().id ? me().name : (peerOf(id) || { name: "Participante" }).name);
+  const adminOn = () => !!(me().admin && me().admin.active);
 
   AV.refresh = async function () {
     AV.state = await AV.api("GET", "/api/state");
@@ -68,10 +65,13 @@
     renderIncoming();
   }
 
-  function navItem(id, label, iconOrAvatar, unread, extra) {
-    return E("button", { class: "nav-item", "aria-current": String(AV.chat === id), title: label, onclick: () => selectChat(id) },
+  /* Mentions get a count in their own colour; other unread messages get a plain count and a brighter name. */
+  function navItem(id, label, iconOrAvatar, extra) {
+    const u = (AV.state.unread || {})[id];
+    const count = u ? (u.mentions || u.count) : 0;
+    return E("button", { class: "nav-item" + (u && u.count ? " nav-unread" : ""), "aria-current": String(AV.chat === id), title: label + (u && u.count ? " (" + u.count + " não lidas)" : ""), onclick: () => selectChat(id) },
       iconOrAvatar, E("span", { class: "hidden min-w-0 flex-1 truncate md:inline" }, label),
-      unread > 0 && E("span", { class: "badge" }, unread > 99 ? "99+" : unread), extra);
+      count > 0 && E("span", { class: "badge" + (u.mentions ? " badge-mention" : "") }, count >= 100 ? "99+" : count), extra);
   }
 
   function renderNav() {
@@ -83,17 +83,17 @@
     const peers = [...AV.state.peers].sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name));
     AV.fill(nav, 
       E("div", { class: "nav-title hidden md:block" }, "Rede"),
-      network.map((g) => navItem(g.id, g.name, AV.icon("network"), g.unread, callMark(g.id))),
+      network.map((g) => navItem(g.id, g.name, AV.icon("network"), callMark(g.id))),
       E("div", { class: "nav-title hidden md:flex items-center justify-between" }, "Grupos",
         E("span", { class: "flex gap-1" },
           E("button", { class: "btn btn-ghost btn-icon !h-6 !w-6", title: "Entrar com um convite", "aria-label": "Entrar com um convite", onclick: joinGroupDialog }, AV.icon("lock", "ic-sm")),
           E("button", { class: "btn btn-ghost btn-icon !h-6 !w-6", title: "Criar grupo", "aria-label": "Criar grupo", onclick: createGroupDialog }, AV.icon("plus", "ic-sm")))),
       E("div", { class: "flex justify-center gap-1 md:hidden" },
         E("button", { class: "btn btn-ghost btn-icon", title: "Criar grupo", "aria-label": "Criar grupo", onclick: createGroupDialog }, AV.icon("plus"))),
-      groups.map((g) => navItem(g.id, g.name, AV.icon("users"), g.unread, callMark(g.id))),
+      groups.map((g) => navItem(g.id, g.name, AV.icon("users"), callMark(g.id))),
       E("div", { class: "nav-title hidden md:block" }, "Conversas privadas"),
       peers.length === 0 && E("div", { class: "hidden px-2 py-2 text-xs text-faint md:block" }, "Quando alguém entrar na rede, aparece aqui."),
-      peers.map((p) => navItem("dm:" + p.id, p.name, AV.avatar(p.id, p.name, "avatar-sm", p.online), AV.state.directUnread["dm:" + p.id] || 0, callMark("dm:" + p.id))));
+      peers.map((p) => navItem("dm:" + p.id, p.name, AV.avatar(p.id, p.name, "avatar-sm", p.online), callMark("dm:" + p.id))));
   }
 
   function chatTitle() {
@@ -113,18 +113,35 @@
     const inThisCall = AV.rtc.room === room;
     AV.fill($("chat-title"), dm && peer ? AV.avatar(peer.id, peer.name, "avatar-sm mr-2 inline-grid align-middle", peer.online) : null,
       E("span", {}, chatTitle()),
-      group && group.kind === "public" && E("span", { class: "chip ml-3 align-middle" }, E("span", { class: "dot " + (AV.state.net.connected ? "dot-on" : "dot-off") }), AV.state.net.connected ? "Conectado" : "Sem conexão"),
-      dm && peer && E("span", { class: "chip ml-3 align-middle" }, peer.online ? "Online" : "Offline"));
+      group && group.kind === "public" && E("span", { class: "chip ml-3 hidden align-middle sm:inline-flex" }, E("span", { class: "dot " + (AV.state.net.connected ? "dot-on" : "dot-off") }), AV.state.net.connected ? "Conectado" : "Sem conexão"),
+      dm && peer && E("span", { class: "chip ml-3 hidden align-middle sm:inline-flex" }, peer.online ? "Online" : "Offline"));
     AV.fill($("chat-tools"), 
       group && group.hasInvite && E("button", { class: "btn", onclick: () => inviteDialog(group) }, AV.icon("copy", "ic-sm"), E("span", { class: "hidden lg:inline" }, "Convidar")),
-      group && group.kind !== "public" && E("button", { class: "btn btn-ghost btn-icon text-muted hover:text-danger", title: "Excluir grupo", "aria-label": "Excluir grupo", onclick: () => deleteGroup(group) }, AV.icon("trash")),
-      dm && peer && E("button", { class: "btn btn-ghost btn-icon text-muted hover:text-danger", title: "Limpar ou excluir conversa", "aria-label": "Limpar ou excluir conversa", onclick: () => dmOptionsDialog(peer) }, AV.icon("trash")),
-      E("button", { id: "stage-chat", class: "btn hidden", onclick: toggleChatOverStage }, AV.icon("chat", "ic-sm"), chatOverStage ? "Ocultar conversa" : "Mostrar conversa"),
+      adminOn() && E("button", { class: "btn btn-ghost btn-icon text-muted hover:text-danger", title: "Apagar todas as mensagens desta conversa", "aria-label": "Apagar todas as mensagens desta conversa", onclick: clearChat }, AV.icon("eraser")),
+      group && group.kind !== "public" && E("button", { class: "btn btn-ghost btn-icon text-muted hover:text-danger", title: "Sair do grupo", "aria-label": "Sair do grupo", onclick: () => deleteGroup(group) }, AV.icon("trash")),
+      dm && peer && E("button", { class: "btn btn-ghost btn-icon text-muted hover:text-danger", title: "Remover da lista", "aria-label": "Remover da lista", onclick: () => removePeer(peer) }, AV.icon("trash")),
+      E("button", { class: "btn btn-ghost btn-icon" + (AV.conv.pinsOpen() ? " btn-on" : ""), title: "Mensagens fixadas", "aria-label": "Mensagens fixadas", "aria-pressed": String(AV.conv.pinsOpen()), onclick: () => AV.conv.togglePins() }, AV.icon("pin")),
+      E("button", { class: "btn btn-ghost btn-icon", title: document.fullscreenElement ? "Sair da tela cheia (Esc)" : "Tela cheia", "aria-label": document.fullscreenElement ? "Sair da tela cheia" : "Tela cheia", onclick: toggleChatFullscreen }, AV.icon(document.fullscreenElement ? "minimize" : "maximize")),
+      E("button", { id: "stage-chat", class: "btn hidden", title: chatOverStage ? "Ocultar conversa" : "Mostrar conversa", "aria-label": chatOverStage ? "Ocultar conversa" : "Mostrar conversa", onclick: toggleChatOverStage }, AV.icon("chat", "ic-sm"), E("span", { class: "hidden lg:inline" }, chatOverStage ? "Ocultar conversa" : "Mostrar conversa")),
       E("button", { class: "btn btn-ghost btn-icon xl:hidden", title: "Participantes", "aria-label": "Participantes", onclick: membersDialog }, AV.icon("users")),
-      E("button", { class: "btn " + (inThisCall ? "btn-danger" : "btn-primary"), disabled: dm && peer && !peer.online && !inThisCall,
+      E("button", { class: "btn " + (inThisCall ? "btn-danger" : "btn-primary"), title: inThisCall ? "Sair da chamada" : "Chamar", "aria-label": inThisCall ? "Sair da chamada" : "Chamar", disabled: dm && peer && !peer.online && !inThisCall,
         onclick: () => (inThisCall ? AV.rtc.leave() : startCall(AV.chat)) },
-      AV.icon(inThisCall ? "phone-off" : "phone", "ic-sm"), inThisCall ? "Sair da chamada" : "Chamar"));
-    $("composer").placeholder = "Mensagem para " + (dm ? "" : "#") + chatTitle();
+      AV.icon(inThisCall ? "phone-off" : "phone", "ic-sm"), E("span", { class: "hidden sm:inline" }, inThisCall ? "Sair da chamada" : "Chamar")));
+    AV.conv.placeholder("Mensagem para " + (dm ? "" : "#") + chatTitle());
+  }
+
+  /* The whole interface goes full screen, not a box drawn inside it; Esc is the browser's own way out. */
+  function toggleChatFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else document.documentElement.requestFullscreen().catch(() => AV.toast("Não foi possível entrar em tela cheia."));
+  }
+
+  async function clearChat() {
+    if (!(await AV.confirm("Apagar todas as mensagens de " + chatTitle() + "?", "Elas somem para todos e não podem ser recuperadas.", "Apagar tudo", true))) return;
+    try {
+      const r = await AV.api("POST", "/api/admin/clear", { chat: AV.chat });
+      AV.toast((r && r.removed ? r.removed : 0) + " mensagens apagadas.", "ok");
+    } catch (e) { AV.fail(e); }
   }
 
   function toggleChatOverStage() {
@@ -167,7 +184,7 @@
     const r = AV.state.net;
     // The connection takes a moment after opening: that is not an outage worth a red banner.
     if (!r.connected && performance.now() > CONNECT_GRACE_MS) {
-      banners.push(E("div", { class: "banner error" }, AV.icon("alert"), E("div", { class: "flex-1" }, E("b", {}, "Sem conexão com o servidor. "), "Tentando de novo. Enquanto isso, só as conversas salvas ficam disponíveis."),
+      banners.push(E("div", { class: "banner error" }, AV.icon("alert"), E("div", { class: "flex-1" }, E("b", {}, "Sem conexão com o servidor. "), "Tentando de novo. As mensagens ficam no servidor e aparecem assim que a conexão voltar."),
         E("button", { class: "btn", onclick: () => AV.openSettings("network") }, "Ver rede")));
     }
     if (linkDown) banners.push(E("div", { class: "banner" }, AV.icon("refresh"), "Reconectando ao aplicativo…"));
@@ -722,186 +739,91 @@
     } catch (e) { AV.fail(e); }
   }
 
-  function dmOptionsDialog(peer) {
-    AV.modal("Conversa com " + peer.name, (body, close) => {
-      body.append(
-        E("p", { class: "mb-4 text-sm text-muted" }, "Escolha o que deseja fazer com esta conversa privada:"),
-        E("div", { class: "flex flex-col gap-3" },
-          E("div", { class: "card flex items-center justify-between p-3" },
-            E("div", { class: "pr-3" },
-              E("div", { class: "font-semibold text-sm" }, "Limpar mensagens"),
-              E("div", { class: "text-xs text-muted" }, "Apaga todo o histórico de mensagens trocadas com este participante no seu computador.")),
-            E("button", { class: "btn btn-danger btn-sm whitespace-nowrap", onclick: async () => {
-              close();
-              if (await AV.confirm("Limpar mensagens de " + peer.name + "?", "Todas as mensagens desta conversa serão apagadas permanentemente deste computador.", "Limpar mensagens", true)) {
-                try {
-                  await AV.api("DELETE", "/api/messages?chat=" + encodeURIComponent("dm:" + peer.id));
-                  messages = [];
-                  renderMessages(true);
-                  AV.toast("Mensagens apagadas.", "ok");
-                } catch (e) { AV.fail(e); }
-              }
-            } }, "Limpar")),
-          E("div", { class: "card flex items-center justify-between p-3" },
-            E("div", { class: "pr-3" },
-              E("div", { class: "font-semibold text-sm" }, "Excluir conversa"),
-              E("div", { class: "text-xs text-muted" }, "Apaga todas as mensagens e remove o participante da sua lista lateral.")),
-            E("button", { class: "btn btn-danger btn-sm whitespace-nowrap", onclick: async () => {
-              close();
-              if (await AV.confirm("Excluir conversa com " + peer.name + "?", "A conversa e todas as mensagens serão apagadas permanentemente deste computador.", "Excluir conversa", true)) {
-                try {
-                  await AV.api("DELETE", "/api/peers/" + peer.id);
-                  messages = [];
-                  AV.chat = "publico";
-                  await AV.refresh();
-                  selectChat("publico");
-                  AV.toast("Conversa excluída.", "ok");
-                } catch (e) { AV.fail(e); }
-              }
-            } }, "Excluir"))
-        )
-      );
-    }, [{ label: "Fechar", run: (close) => close() }]);
+  async function removePeer(peer) {
+    if (!(await AV.confirm("Remover " + peer.name + " da lista?", "A conversa continua no servidor e volta para a lista quando essa pessoa escrever de novo.", "Remover", true))) return;
+    try {
+      await AV.api("DELETE", "/api/peers/" + peer.id);
+      AV.chat = "publico";
+      await AV.refresh();
+      selectChat("publico");
+    } catch (e) { AV.fail(e); }
   }
 
   async function deleteGroup(group) {
-    if (!(await AV.confirm("Excluir " + group.name + "?", "Você sairá do grupo e todas as mensagens dele serão apagadas deste computador.", "Excluir grupo", true))) return;
+    if (!(await AV.confirm("Sair de " + group.name + "?", "Você deixa de receber as mensagens dele. Para voltar, use um convite.", "Sair do grupo", true))) return;
     try {
       await AV.api("DELETE", "/api/groups/" + group.id);
       AV.chat = "publico";
       await AV.refresh();
       selectChat("publico");
-      AV.toast("Grupo excluído com sucesso.", "ok");
+      AV.toast("Você saiu do grupo.", "ok");
     } catch (e) { AV.fail(e); }
   }
 
-  /* ---- messages ---- */
+  /* ---- messages: the conversation pane lives in chat.js ---- */
 
-  async function selectChat(chat) {
+  function selectChat(chat) {
     AV.chat = chat;
-    messages = [];
     renderAll();
-    await loadMessages();
+    AV.conv.select(chat);
     AV.api("PUT", "/api/settings", { "ui.lastChat": chat }).catch(() => {});
     $("composer").focus();
-  }
-
-  async function loadMessages() {
-    const chat = AV.chat;
-    try {
-      const page = await AV.api("GET", "/api/messages?chat=" + encodeURIComponent(chat) + "&limit=" + PAGE);
-      if (chat !== AV.chat) return;
-      messages = page;
-      hasMore = page.length === PAGE;
-      renderMessages(true);
-      markRead();
-    } catch (e) { AV.fail(e); }
-  }
-
-  async function loadOlder() {
-    if (!messages.length) return;
-    const chat = AV.chat;
-    const page = await AV.api("GET", "/api/messages?chat=" + encodeURIComponent(chat) + "&limit=" + PAGE + "&before=" + messages[0].ts).catch(AV.fail);
-    if (!page || chat !== AV.chat) return;
-    hasMore = page.length === PAGE;
-    messages = [...page, ...messages];
-    const box = $("messages");
-    const before = box.scrollHeight;
-    renderMessages(false);
-    box.scrollTop = box.scrollHeight - before;
-  }
-
-  function markRead() {
-    if (!document.hasFocus()) return;
-    const chat = AV.chat;
-    const g = groupOf(chat);
-    const unread = g ? g.unread : AV.state.directUnread[chat] || 0;
-    if (unread === 0) return;
-    if (g) g.unread = 0; else delete AV.state.directUnread[chat];
-    renderNav();
-    AV.api("POST", "/api/messages/read", { chat }).catch(() => {});
-  }
-
-  function linkify(text) {
-    const parts = text.split(/(https?:\/\/[^\s<>"']+)/g);
-    return parts.map((part, i) => (i % 2 === 1
-      ? E("a", { tabindex: 0, role: "link", title: "Abrir no navegador", onclick: () => openLink(part), onkeydown: (e) => { if (e.key === "Enter") openLink(part); } }, part)
-      : part));
   }
 
   async function openLink(url) {
     if (await AV.confirm("Abrir este link?", url, "Abrir no navegador")) AV.api("POST", "/api/system/open", { url }).catch(AV.fail);
   }
 
-  function messageNode(m, prev) {
-    const sameDay = prev && new Date(prev.ts).toDateString() === new Date(m.ts).toDateString();
-    const compact = prev && sameDay && prev.from === m.from && m.ts - prev.ts < 300000;
-    const body = E("div", { class: "min-w-0 flex-1" },
-      !compact && E("div", { class: "msg-head" }, E("span", { class: "msg-name", style: "color:" + AV.colorFor(m.from) }, m.name), E("span", { class: "msg-time" }, AV.time(m.ts)),
-        m.pending && E("span", { class: "msg-time" }, "· aguardando entrega")),
-      E("div", { class: "msg-text selectable" }, linkify(m.text)));
-    return E("div", { class: "msg" + (compact ? " msg-compact" : "") + (m.pending ? " msg-pending" : ""), dataset: { id: m.id } },
-      compact ? E("div", { class: "w-9 flex-none" }) : AV.avatar(m.from, m.name), body);
-  }
-
-  function renderMessages(stickBottom) {
-    const box = $("messages");
-    const nodes = [];
-    if (hasMore) nodes.push(E("div", { class: "flex justify-center py-2" }, E("button", { class: "btn btn-ghost", onclick: loadOlder }, "Carregar mensagens anteriores")));
-    if (messages.length === 0) {
-      nodes.push(E("div", { class: "empty" }, AV.icon("chat", "!h-8 !w-8"), E("div", { class: "font-semibold text-ink" }, "Nenhuma mensagem ainda"), E("div", {}, "Diga olá para começar a conversa.")));
-    }
-    messages.forEach((m, i) => {
-      const prev = messages[i - 1];
-      if (!prev || new Date(prev.ts).toDateString() !== new Date(m.ts).toDateString()) nodes.push(E("div", { class: "day-sep" }, AV.day(m.ts)));
-      nodes.push(messageNode(m, prev));
-    });
-    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
-    AV.fill(box, ...nodes);
-    if (stickBottom || nearBottom) box.scrollTop = box.scrollHeight;
-  }
-
-  function onMessage(m) {
-    if (m.chat === AV.chat) {
-      if (!messages.some((x) => x.id === m.id)) { messages.push(m); renderMessages(false); }
-      if (!m.mine) markRead();
-    }
-    if (!m.mine && (m.chat !== AV.chat || !document.hasFocus())) { refreshSoon(); AV.sound("message"); }
-  }
-
-  async function send() {
-    const box = $("composer");
-    const text = box.value.trim();
-    if (!text) return;
-    box.value = "";
-    autosize();
+  /* Administrator actions go to the server, which decides; the page only says what happened. */
+  async function admin(action, body, done) {
     try {
-      const m = await AV.api("POST", "/api/messages", { chat: AV.chat, text });
-      if (m.chat === AV.chat && !messages.some((x) => x.id === m.id)) { messages.push(m); renderMessages(true); }
-    } catch (e) {
-      box.value = text;
-      AV.fail(e);
-    }
+      const r = await AV.api("POST", "/api/admin/" + action, body || {});
+      if (done) AV.toast(done, "ok");
+      return r;
+    } catch (e) { AV.fail(e); return null; }
   }
 
-  function autosize() {
-    const box = $("composer");
-    box.style.height = "auto";
-    box.style.height = Math.min(box.scrollHeight, 140) + "px";
+  function banDialog(id) {
+    const reason = E("input", { class: "input", maxlength: 200, placeholder: "Motivo (opcional)", "aria-label": "Motivo do banimento" });
+    AV.modal("Banir " + nameOf(id) + "?", (body) => body.append(
+      E("p", { class: "mb-3 text-sm text-muted" }, "A pessoa é desconectada e não consegue voltar, nem por esta identidade nem pelo endereço de internet de onde conectou."), reason), [
+      { label: "Cancelar", run: (close) => close() },
+      { label: "Banir", danger: true, run: async (close) => { close(); await admin("ban", { id, reason: reason.value.trim() }, nameOf(id) + " foi banido."); } }]);
   }
 
-  function emojiPicker() {
-    const existing = document.getElementById("emoji-pop");
-    if (existing) { existing.remove(); return; }
-    const pop = E("div", { id: "emoji-pop", class: "card fixed bottom-24 left-4 z-30 grid grid-cols-8 gap-1 p-2 md:left-72" },
-      EMOJIS.map((emoji) => E("button", { class: "btn btn-ghost btn-icon text-lg", type: "button", "aria-label": "Inserir " + emoji,
-        onclick: () => { const c = $("composer"); c.setRangeText(emoji, c.selectionStart, c.selectionEnd, "end"); c.focus(); autosize(); } }, emoji)));
-    document.body.append(pop);
-    setTimeout(() => document.addEventListener("click", function close(e) {
-      if (!pop.contains(e.target) && e.target.closest("#btn-emoji") === null) { pop.remove(); document.removeEventListener("click", close); }
-      else if (!document.body.contains(pop)) document.removeEventListener("click", close);
-    }), 0);
+  /* Ctrl+K: jump to any conversation by typing part of its name. */
+  function quickSwitcher() {
+    const targets = [...AV.state.groups.map((g) => ({ id: g.id, name: g.name, icon: () => AV.icon(g.kind === "public" ? "network" : "users", "ic-sm") })),
+      ...AV.state.peers.map((p) => ({ id: "dm:" + p.id, name: p.name, icon: () => AV.avatar(p.id, p.name, "avatar-xs", p.online) }))];
+    let index = 0;
+    let close = null;
+    const list = E("div", { class: "mt-3 flex max-h-80 flex-col gap-1 overflow-y-auto", role: "listbox" });
+    const input = E("input", { class: "input", placeholder: "Para onde você quer ir?", "aria-label": "Buscar conversa" });
+    const matches = () => targets.filter((t) => AV.emoji.fold(t.name).includes(AV.emoji.fold(input.value.trim())));
+    const go = (t) => { close(); selectChat(t.id); };
+    const draw = () => {
+      const found = matches();
+      index = Math.min(index, Math.max(0, found.length - 1));
+      AV.fill(list, found.length ? found.map((t, i) => E("button", { class: "nav-item", role: "option", "aria-current": String(i === index), onclick: () => go(t) }, t.icon(), E("span", { class: "truncate" }, t.name)))
+        : E("div", { class: "px-2 py-3 text-sm text-muted" }, "Nenhuma conversa com esse nome."));
+    };
+    input.addEventListener("input", () => { index = 0; draw(); });
+    input.addEventListener("keydown", (e) => {
+      const found = matches();
+      if (e.key === "ArrowDown") { e.preventDefault(); index = Math.min(index + 1, found.length - 1); draw(); }
+      if (e.key === "ArrowUp") { e.preventDefault(); index = Math.max(index - 1, 0); draw(); }
+      if (e.key === "Enter" && found[index]) { e.preventDefault(); go(found[index]); }
+    });
+    close = AV.modal("Ir para uma conversa", (body) => { body.append(input, list); draw(); }, []);
+    input.focus();
   }
+
+  AV.renderNav = () => renderNav();
+  AV.renderHeaderSoon = () => renderHeader();
+  AV.openLink = openLink;
+  AV.selectChat = selectChat;
+  AV.admin = admin;
+  AV.banDialog = banDialog;
 
   /* ---- live events ---- */
 
@@ -963,11 +885,9 @@
   }
 
   function wire() {
-    AV.on("open", () => { linkDown = false; AV.refresh().then(loadMessages).catch(AV.fail); });
+    AV.on("open", () => { linkDown = false; AV.refresh().then(() => AV.conv.render()).catch(AV.fail); });
     AV.on("link", (up) => { if (!up) { linkDown = true; renderBanners(); } });
     AV.on("expired", () => AV.modal("Sessão encerrada", (b) => b.append(E("p", { class: "text-muted" }, "Feche e abra o Angatu Voice de novo para continuar.")), []));
-    AV.on("message", onMessage);
-    AV.on("message.delivered", ({ id }) => { const m = messages.find((x) => x.id === id); if (m) { m.pending = false; renderMessages(false); } });
     AV.on("peer.online", ({ id, name }) => { AV.toast(name + " entrou na rede."); AV.rtc.resync(id); refreshSoon(); });
     AV.on("peer.offline", ({ name }) => { AV.toast(name + " saiu da rede."); refreshSoon(); });
     AV.on("peer.changed", () => refreshSoon());
@@ -976,7 +896,11 @@
     AV.on("net", () => refreshSoon());
     AV.on("group.changed", () => refreshSoon());
     AV.on("peer.profile", () => refreshSoon());
-    AV.on("messages.cleared", ({ chat }) => { if (chat === AV.chat) { messages = []; renderMessages(true); } });
+    AV.on("admin", (a) => { AV.state.me.admin = a; renderHeader(); AV.refreshSettings(); });
+    AV.on("net.refused", ({ reason }) => AV.modal(reason === "banned" ? "Você foi banido" : "Você foi desconectado",
+      (b) => b.append(E("p", { class: "text-muted" }, reason === "banned" ? "Um administrador baniu você do servidor do Angatu Voice." : "Um administrador desconectou você. O aplicativo tenta voltar em um minuto.")),
+      [{ label: "Entendi", primary: true, run: (close) => close() }]));
+    AV.on("chat.new", (m) => { if (m.chat.startsWith("dm:") && !peerOf(m.chat.slice(3))) refreshSoon(); });
     AV.on("peer.removed", ({ id }) => { if (AV.chat === "dm:" + id) { selectChat("publico"); } refreshSoon(); });
     AV.on("call.state", (d) => { AV.rtc.handleRoom(d); renderHeader(); renderCall(); renderNav(); renderMembers(); renderBanners(); });
     AV.on("call.incoming", ({ calls }) => { AV.state.incoming = calls; renderIncoming(); });
@@ -993,21 +917,21 @@
         renderCall();
       }
     });
+    /* Leaving full screen (Esc, or the button) must leave the conversation exactly where it was: only the header icon changes. */
     document.addEventListener("fullscreenchange", () => {
       if (!document.fullscreenElement && activeFullscreenTile) {
         activeFullscreenTile = null;
         renderCall();
       }
+      document.documentElement.classList.toggle("is-fullscreen", !!document.fullscreenElement);
+      renderHeader();
+    });
+    document.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k" && !document.querySelector(".overlay") && !AV.settingsOpen()) { e.preventDefault(); quickSwitcher(); }
     });
     $("btn-open-settings").addEventListener("click", () => AV.openSettings("app"));
     $("brand-link").addEventListener("click", AV.openBrandSite);
-    $("btn-send").addEventListener("click", send);
-    $("btn-emoji").addEventListener("click", emojiPicker);
-    $("composer").addEventListener("input", autosize);
-    $("composer").addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
-    });
-    window.addEventListener("focus", markRead);
+    AV.conv.wire();
     setInterval(renderPing, 3000);
   }
 

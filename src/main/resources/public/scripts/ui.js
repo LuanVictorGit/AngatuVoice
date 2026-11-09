@@ -61,10 +61,15 @@ AV.icon = function (name, extra) {
   return svg;
 };
 
-AV.colorFor = function (id) {
-  let hash = 0;
-  for (const ch of String(id)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  return "hsl(" + (hash % 360) + " 52% 62%)";
+/* One of the ten default pictures, chosen by FNV-1a of the id: the same in AvatarService, so the page and the native
+   windows always agree, and the same on every load. */
+AV.avatarIndex = function (id) {
+  let hash = 0x811c9dc5;
+  for (const ch of String(id)) {
+    hash ^= ch.charCodeAt(0);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash % 10;
 };
 
 AV.avatarVersion = function (id) {
@@ -77,9 +82,9 @@ AV.avatarVersion = function (id) {
 
 AV.avatar = function (id, name, size, online) {
   const version = AV.avatarVersion(id);
-  const node = AV.el("div", { class: "avatar " + (size || ""), style: "background:" + AV.colorFor(id), "aria-hidden": "true" },
-    version ? AV.el("img", { src: "/api/avatar/" + id + "?v=" + version, alt: "", draggable: "false", class: "avatar-img" })
-      : (name || "?").trim().charAt(0).toUpperCase());
+  const src = version ? "/api/avatar/" + id + "?v=" + version : "/assets/avatars/avatar-" + AV.avatarIndex(id) + ".svg";
+  const node = AV.el("div", { class: "avatar " + (size || ""), "aria-hidden": "true", title: name || "" },
+    AV.el("img", { src, alt: "", draggable: "false", class: "avatar-img" }));
   if (online !== undefined) node.append(AV.el("span", { class: "presence" + (online ? " on" : "") + ("") }));
   return node;
 };

@@ -155,7 +155,7 @@ public final class Overlay {
     }
 
     private static Image photo(String id) {
-        return AvatarService.bytes(id).map(bytes -> {
+        return AvatarService.picture(id).map(bytes -> {
             try {
                 return (Image) ImageIO.read(new ByteArrayInputStream(bytes));
             } catch (IOException e) {
