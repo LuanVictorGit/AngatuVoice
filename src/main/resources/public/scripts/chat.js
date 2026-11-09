@@ -443,18 +443,21 @@
     const body = E("div", { class: "md-file-body msg-text selectable" }, E("div", { class: "chat-more" }, E("div", { class: "spinner", "aria-hidden": "true" }), "Abrindo o texto…"));
     const more = E("button", { class: "linkish md-file-more", hidden: true }, "Mostrar tudo");
     let text = null;
+    const shown = (t) => (md ? AV.md.document(t, fmt) : E("pre", { class: "md-plain" }, t));
+    const readBtn = E("button", { class: "btn btn-ghost btn-sm", title: "Ler em tela cheia", "aria-label": "Ler " + a.name + " em tela cheia", disabled: true,
+      onclick: () => reader(a, text, md) }, AV.icon("maximize", "ic-sm"), E("span", { class: "hidden lg:inline" }, "Tela cheia"));
     const editBtn = m && canEdit(m) ? E("button", { class: "btn btn-ghost btn-sm", title: "Editar o arquivo", "aria-label": "Editar " + a.name, disabled: true, onclick: () => openEditor() }, AV.icon("edit", "ic-sm"), E("span", { class: "hidden sm:inline" }, "Editar")) : null;
     const copy = E("button", { class: "btn btn-ghost btn-sm", title: "Copiar o texto", "aria-label": "Copiar o texto", disabled: true, onclick: () => navigator.clipboard.writeText(text).then(() => AV.toast("Texto copiado.", "ok")) }, AV.icon("copy", "ic-sm"), E("span", { class: "hidden sm:inline" }, "Copiar"));
     const card = E("div", { class: "md-file card" },
       E("div", { class: "md-file-head" }, AV.icon("file", "ic-sm"), E("div", { class: "min-w-0 flex-1" }, E("div", { class: "truncate font-semibold" }, a.name), E("small", { class: "text-muted" }, AV.bytes(a.size) + (md ? " · Markdown" : " · Texto"))),
-        editBtn, copy, E("button", { class: "btn btn-ghost btn-sm", title: "Salvar em Downloads", "aria-label": "Baixar " + a.name, onclick: () => saveFile(a) }, AV.icon("download", "ic-sm"), E("span", { class: "hidden sm:inline" }, "Baixar"))),
+        readBtn, editBtn, copy, E("button", { class: "btn btn-ghost btn-sm", title: "Salvar em Downloads", "aria-label": "Baixar " + a.name, onclick: () => saveFile(a) }, AV.icon("download", "ic-sm"), E("span", { class: "hidden sm:inline" }, "Baixar"))),
       body, more);
     /* Editing in place: the new text goes up as a new version of the same file, which replaces the old one for everyone. */
     function openEditor() {
       const area = E("textarea", { class: "input md-file-editor", spellcheck: "true", "aria-label": "Editar " + a.name });
       area.value = text;
       const status = E("small", { class: "text-muted" }, "Ctrl + Enter salva, Esc cancela.");
-      const cancel = () => { card.classList.remove("editing"); AV.fill(body, md ? AV.md.render(text, fmt) : text); editBtn.disabled = false; };
+      const cancel = () => { card.classList.remove("editing"); AV.fill(body, shown(text)); editBtn.disabled = false; };
       const save = async () => {
         if (area.value === text) { cancel(); return; }
         if (!area.value.trim()) { AV.toast("O arquivo não pode ficar vazio.", "error"); return; }
@@ -489,10 +492,37 @@
       text = t;
       copy.disabled = false;
       if (editBtn) editBtn.disabled = false;
-      AV.fill(body, md ? AV.md.render(t, fmt) : t);
+      AV.fill(body, shown(t));
+      readBtn.disabled = false;
       requestAnimationFrame(() => { more.hidden = body.scrollHeight <= body.clientHeight + 4; });
     }).catch(() => AV.fill(body, E("div", { class: "text-sm text-muted" }, "Não foi possível abrir o texto.")));
     return card;
+  }
+
+  /* The file on the whole screen, in a reading column: the window goes full screen too, and Esc or Fechar comes back. */
+  function reader(a, text, md) {
+    if (text == null) return;
+    const before = !!document.fullscreenElement;
+    const close = () => {
+      overlay.remove();
+      document.removeEventListener("keydown", onKey, true);
+      if (!before && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    };
+    const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
+    const copy = E("button", { class: "btn btn-ghost btn-sm", onclick: () => navigator.clipboard.writeText(text).then(() => AV.toast("Texto copiado.", "ok")) }, AV.icon("copy", "ic-sm"), E("span", { class: "hidden sm:inline" }, "Copiar"));
+    const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+    const overlay = E("div", { class: "reader", role: "dialog", "aria-modal": "true", "aria-label": a.name },
+      E("div", { class: "reader-bar" }, AV.icon("file", "ic-sm"),
+        E("div", { class: "min-w-0 flex-1" }, E("div", { class: "truncate font-semibold" }, a.name),
+          E("small", { class: "text-muted" }, AV.bytes(a.size) + " · " + words.toLocaleString("pt-BR") + " palavras · cerca de " + Math.max(1, Math.round(words / 200)) + " min de leitura")),
+        copy,
+        E("button", { class: "btn btn-ghost btn-sm", onclick: () => saveFile(a) }, AV.icon("download", "ic-sm"), E("span", { class: "hidden sm:inline" }, "Baixar")),
+        E("button", { class: "btn btn-ghost btn-icon", title: "Fechar (Esc)", "aria-label": "Fechar", onclick: close }, AV.icon("x"))),
+      E("div", { class: "reader-scroll" }, E("article", { class: "reader-page msg-text selectable" }, md ? AV.md.document(text, fmt) : E("pre", { class: "md-plain" }, text))));
+    document.getElementById("overlay-root").append(overlay);
+    document.addEventListener("keydown", onKey, true);
+    overlay.querySelector(".reader-scroll").focus();
+    if (!before) document.documentElement.requestFullscreen().catch(() => {});
   }
 
   async function saveFile(a) {

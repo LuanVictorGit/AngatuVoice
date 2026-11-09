@@ -10,6 +10,7 @@
     { re: /\\([*_~`|\\<>#[\]()-])/, build: (m) => m[1] },
     { re: /`([^`\n]+)`/, build: (m) => E("code", { class: "md-code" }, m[1]) },
     { re: /<@([0-9a-f]{20})>/, build: (m, o) => mention(m[1], o) },
+    { re: /!\[([^\]\n]{0,200})\]\((https?:\/\/[^\s)]+)\)/, build: (m, o) => link(m[2], ["Imagem: " + (m[1] || m[2])], o) },
     { re: /\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]+)\)/, build: (m, o) => link(m[2], inline(m[1], o), o) },
     { re: URL_RE, build: (m, o) => link(m[0], [m[0]], o) },
     { re: /\*\*([\s\S]+?)\*\*/, build: (m, o) => E("strong", {}, inline(m[1], o)) },
@@ -99,23 +100,185 @@
     return out;
   }
 
-  /* Code blocks first, so no other rule runs inside them. An unclosed fence is just text. */
-  function render(text, o) {
+  /* ---- code blocks: a header with the language and a copy button, and light colouring done on text nodes ---- */
+
+  const KEYWORDS = new Set(("if else for while do return function const let var class interface enum public private protected static final "
+    + "void new import from export default def lambda async await try catch finally throw throws extends implements package record "
+    + "switch case break continue in of not and or is as with yield struct fn pub mut use impl match where select insert update "
+    + "delete into values create table set null true false none None True False nil this self super echo local then fi done end "
+    + "int long double float boolean bool string char byte short var val type typeof instanceof sealed permits module").split(" "));
+  const TOKEN = /(\/\/[^\n]*|#(?![{!])[^\n]*|--[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][\w]*\b)/g;
+  const COMMENT_HASH = /^(py|python|sh|bash|shell|yaml|yml|ruby|rb|r|toml|ini|conf|dockerfile|make|makefile|powershell|ps1)$/i;
+  const COMMENT_DASH = /^(sql|lua|haskell|hs)$/i;
+
+  function highlight(code, lang) {
+    const out = [];
+    let last = 0;
+    for (const m of code.matchAll(TOKEN)) {
+      const t = m[0];
+      let cls = null;
+      if (t.startsWith("//") || t.startsWith("/*")) cls = "tk-com";
+      else if (t.startsWith("#")) cls = COMMENT_HASH.test(lang) ? "tk-com" : null;
+      else if (t.startsWith("--")) cls = COMMENT_DASH.test(lang) ? "tk-com" : null;
+      else if (/^["'`]/.test(t)) cls = "tk-str";
+      else if (/^\d/.test(t)) cls = "tk-num";
+      else if (KEYWORDS.has(t)) cls = "tk-key";
+      else if (/^[A-Z][a-z0-9]+[A-Z]?\w*$/.test(t)) cls = "tk-type";
+      if (!cls) continue;
+      if (m.index > last) out.push(code.slice(last, m.index));
+      out.push(E("span", { class: cls }, t));
+      last = m.index + t.length;
+    }
+    if (last < code.length) out.push(code.slice(last));
+    return out;
+  }
+
+  function codeBlock(body, lang) {
+    const copy = E("button", { class: "md-code-copy", type: "button", "aria-label": "Copiar código" }, AV.icon("copy", "ic-sm"), "Copiar");
+    copy.addEventListener("click", (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(body).then(() => {
+        AV.fill(copy, AV.icon("check", "ic-sm"), "Copiado");
+        setTimeout(() => AV.fill(copy, AV.icon("copy", "ic-sm"), "Copiar"), 1600);
+      });
+    });
+    return E("div", { class: "md-codeblock" },
+      E("div", { class: "md-codeblock-head" }, E("span", {}, lang || "código"), copy),
+      E("pre", { class: "md-pre" }, E("code", {}, body.length <= 60000 ? highlight(body, lang) : body)));
+  }
+
+  /* Fences first, so no other rule runs inside them. An unclosed fence is just text. */
+  function splitFences(text, prose) {
     const out = [];
     const parts = text.split("```");
     parts.forEach((part, i) => {
       const closed = i % 2 === 1 && i < parts.length - 1;
       if (!closed) {
         const t = i % 2 === 1 ? "```" + part : part;
-        if (t) out.push(...blocks(t, o));
+        if (t) out.push(...prose(t));
         return;
       }
       let body = part;
+      let lang = "";
       const nl = part.indexOf("\n");
-      if (nl >= 0 && /^[\w+#.-]{0,20}$/.test(part.slice(0, nl))) body = part.slice(nl + 1);
-      out.push(E("pre", { class: "md-pre" }, E("code", {}, body.replace(/\n$/, ""))));
+      if (nl >= 0 && /^[\w+#.-]{0,20}$/.test(part.slice(0, nl).trim())) { lang = part.slice(0, nl).trim(); body = part.slice(nl + 1); }
+      out.push(codeBlock(body.replace(/\n$/, ""), lang));
     });
     return out;
+  }
+
+  /* A chat message: the Discord-like subset, line breaks kept as written. */
+  function render(text, o) {
+    return splitFences(text, (t) => blocks(t, o));
+  }
+
+  /* ---- documents (.md files): the full Markdown people paste from assistants and wikis ---- */
+
+  const LIST = /^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$/;
+  const TABLE_SEP = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+
+  function cells(line) {
+    return line.trim().replace(/^\|/, "").replace(/\|$/, "").split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
+  }
+
+  function table(lines, o) {
+    const head = cells(lines[0]);
+    const align = cells(lines[1]).map((c) => (c.startsWith(":") && c.endsWith(":") ? "center" : c.endsWith(":") ? "right" : "left"));
+    const cell = (tag, text, i) => E(tag, { style: "text-align:" + (align[i] || "left") }, inline(text, o));
+    return E("div", { class: "md-table-wrap" }, E("table", { class: "md-table" },
+      E("thead", {}, E("tr", {}, head.map((h, i) => cell("th", h, i)))),
+      E("tbody", {}, lines.slice(2).map((row) => E("tr", {}, head.map((_, i) => cell("td", cells(row)[i] || "", i)))))));
+  }
+
+  /* Indentation decides nesting; a "[ ]" or "[x]" right after the marker makes a task. */
+  function list(lines, o) {
+    const root = { children: [], indent: -1 };
+    const stack = [root];
+    for (const line of lines) {
+      const m = LIST.exec(line);
+      if (!m) {
+        const top = stack[stack.length - 1];
+        if (top.items && top.items.length) top.items[top.items.length - 1].text += "\n" + line.trim();
+        continue;
+      }
+      const indent = m[1].replace(/\t/g, "    ").length;
+      const ordered = /\d/.test(m[2]);
+      while (stack.length > 1 && indent < stack[stack.length - 1].indent) stack.pop();
+      let top = stack[stack.length - 1];
+      if (indent > top.indent && (top === root || top.items.length)) {
+        const parentItem = top === root ? null : top.items[top.items.length - 1];
+        const level = { indent, ordered, items: [], start: ordered ? parseInt(m[2], 10) : 1 };
+        (parentItem ? parentItem.sub : root.children).push(level);
+        stack.push(level);
+        top = level;
+      }
+      top.items.push({ text: m[3], sub: [] });
+    }
+    const build = (level) => E(level.ordered ? "ol" : "ul", { class: "md-list", start: level.ordered && level.start !== 1 ? String(level.start) : false },
+      level.items.map((item) => {
+        const task = /^\[([ xX])\]\s+(.*)$/s.exec(item.text);
+        const box = task && E("input", { type: "checkbox", disabled: true, class: "md-task", "aria-label": task[1] === " " ? "Pendente" : "Feito" });
+        if (box) box.checked = task[1] !== " ";
+        return E("li", { class: task ? "md-task-item" : false }, box, lines2(task ? task[2] : item.text, o), item.sub.map(build));
+      }));
+    return root.children.map(build);
+  }
+
+  function lines2(text, o) {
+    const parts = text.split("\n");
+    return parts.flatMap((p, i) => (i ? [E("br"), ...inline(p, o)] : inline(p, o)));
+  }
+
+  function docBlocks(text, o) {
+    const out = [];
+    const lines = text.split("\n");
+    let para = [];
+    const flush = () => { if (para.length) { out.push(E("p", {}, lines2(para.join("\n"), o))); para = []; } };
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      let m;
+      if (!line.trim()) { flush(); continue; }
+      if ((m = /^(#{1,6})\s+(.+?)\s*#*$/.exec(line))) {
+        flush();
+        out.push(E("h" + m[1].length, { class: "md-doc-h" }, inline(m[2], o)));
+      } else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+        flush();
+        out.push(E("hr", { class: "md-hr" }));
+      } else if (line.includes("|") && i + 1 < lines.length && TABLE_SEP.test(lines[i + 1])) {
+        flush();
+        const rows = [line, lines[i + 1]];
+        i += 2;
+        while (i < lines.length && lines[i].includes("|") && lines[i].trim()) rows.push(lines[i++]);
+        i--;
+        out.push(table(rows, o));
+      } else if (/^\s*>/.test(line)) {
+        flush();
+        const quoted = [];
+        while (i < lines.length && /^\s*>/.test(lines[i])) quoted.push(lines[i++].replace(/^\s*>\s?/, ""));
+        i--;
+        const callout = /^\[!(\w+)\]\s*(.*)$/.exec(quoted[0] || "");
+        if (callout) {
+          out.push(E("div", { class: "md-callout md-callout-" + callout[1].toLowerCase() },
+            E("div", { class: "md-callout-title" }, callout[2] || callout[1]), docBlocks(quoted.slice(1).join("\n"), o)));
+        } else {
+          out.push(E("blockquote", { class: "md-quote" }, docBlocks(quoted.join("\n"), o)));
+        }
+      } else if (LIST.test(line)) {
+        flush();
+        const items = [];
+        while (i < lines.length && lines[i].trim() && (LIST.test(lines[i]) || /^\s{2,}\S/.test(lines[i]))) items.push(lines[i++]);
+        i--;
+        out.push(...list(items, o));
+      } else {
+        para.push(line);
+      }
+    }
+    flush();
+    return out;
+  }
+
+  function document(text, o) {
+    return E("div", { class: "md-doc" }, splitFences(text, (t) => docBlocks(t, o)));
   }
 
   /* A single line for reply previews and notifications: no formatting, mentions as names. */
@@ -193,6 +356,6 @@
     });
   }
 
-  AV.md = { render, plain };
+  AV.md = { render, plain, document };
   AV.emoji = { all: EMOJIS, search, shortcodes, fold };
 })();

@@ -7,6 +7,13 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [2.2.2] - 2026-11-09
+
+### Adicionado
+- Arquivos Markdown aparecem formatados como em respostas de assistentes: títulos com hierarquia, parágrafos com respiro, listas numeradas e aninhadas, listas de tarefas, citações, avisos coloridos (> [!warning]), divisórias e tabelas com alinhamento.
+- Blocos de código com o nome da linguagem, cores e botão Copiar, nos arquivos e nas mensagens.
+- Botão "Tela cheia" no cartão do arquivo: abre o texto numa coluna de leitura ocupando a tela, com contagem de palavras, copiar e baixar. Esc fecha.
+
 ## [2.2.1] - 2026-11-09
 
 ### Adicionado
