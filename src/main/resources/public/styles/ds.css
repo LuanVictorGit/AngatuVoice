@@ -268,6 +268,9 @@ ol.md-list { list-style: decimal; }
 .md-file-head { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--av-line); background: var(--av-bg1); }
 .md-file-body { max-height: 260px; overflow: hidden; padding: 10px 12px; -webkit-mask-image: linear-gradient(to bottom, #000 75%, transparent); mask-image: linear-gradient(to bottom, #000 75%, transparent); }
 .md-file.open .md-file-body { max-height: none; -webkit-mask-image: none; mask-image: none; }
+.md-file.editing .md-file-body { max-height: none; overflow: visible; -webkit-mask-image: none; mask-image: none; }
+.md-file.editing .md-file-more { display: none; }
+.md-file-editor { min-height: 280px; max-height: 60vh; font-family: var(--av-mono); font-size: 12.5px; resize: vertical; }
 .md-file-more { align-self: flex-start; margin: 0 12px 10px; }
 .md-file-more[hidden] { display: none; }
 

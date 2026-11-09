@@ -17,6 +17,7 @@ O texto de cada seção vira as notas da versão no GitHub e na tela de Atualiza
 - Anexos de até 25 MB: imagens aparecem na conversa e abrem em tela grande, vídeos e áudios tocam ali mesmo, e qualquer arquivo pode ser salvo em Downloads. Arraste, cole ou use o clipe.
 - Mensagens de voz: segure o microfone para gravar e solte para enviar, arraste para a esquerda para cancelar ou para cima para continuar sem segurar (um clique também grava sem segurar, com pausa e lixeira). Na conversa, o áudio mostra a onda do som, dá para pular para qualquer ponto e ouvir em 1×, 1,5× ou 2×.
 - Texto longo (mais de 2.000 caracteres ou 40 linhas) vira um arquivo .md com o nome que você escolher, mostrado já formatado na conversa, com botões de copiar e baixar.
+- Arquivos .md e .txt já enviados podem ser editados no próprio cartão, sem apagar e mandar de novo, por quem enviou ou pelo administrador.
 - Fixar mensagens: qualquer pessoa da conversa fixa pelo menu da mensagem; a última fixada fica numa faixa no topo, e um clique leva até ela.
 - Aviso na tela quando alguém entra ou sai da chamada em que você está.
 - Barra "Ir para a mais recente" quando você sobe para ler mensagens antigas.
@@ -26,7 +27,7 @@ O texto de cada seção vira as notas da versão no GitHub e na tela de Atualiza
 - Menu de ações no botão direito da mensagem, barra de ações ao passar o mouse e Ctrl + K para trocar de conversa.
 - Botão de tela cheia no topo da conversa; Esc volta ao normal no mesmo ponto da leitura.
 - Dez avatares de monstrinhos para quem ainda não tem foto, sempre o mesmo para cada pessoa.
-- Modo administrador, liberado por senha nas configurações: apagar qualquer mensagem, limpar uma conversa, apagar todas as mensagens do servidor, silenciar, expulsar e banir.
+- Modo administrador, liberado por senha nas configurações: editar e apagar qualquer mensagem, limpar uma conversa, apagar todas as mensagens do servidor, silenciar, expulsar e banir.
 
 ### Mudou
 - As mensagens não são mais apagadas depois de 30 dias: nada sai do servidor sozinho. O administrador tem a opção de apagar tudo nas configurações.

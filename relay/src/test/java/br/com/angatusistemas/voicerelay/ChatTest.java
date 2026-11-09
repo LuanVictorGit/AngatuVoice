@@ -116,6 +116,38 @@ class ChatTest {
     }
 
     @Test
+    void textFilesAreEditedInPlaceAndAdminsEditAnyMessage() throws Exception {
+        String group = group();
+        TestClient a = TestClient.modern("Ana", groups(group)).ready();
+        TestClient b = TestClient.modern("Bia", groups(group)).ready();
+        TestClient admin = TestClient.modern("Adm", groups(group)).ready();
+        String first = TestClient.json(a.upload("ata.md", "text/markdown", "# Ata\nversao 1".getBytes(StandardCharsets.UTF_8)).body()).get("id").getAsString();
+        JsonObject sent = a.ask("chat.send", "\"chat\":\"" + group + "\",\"nonce\":\"" + nonce() + "\",\"text\":\"\",\"attachments\":[\"" + first + "\"]")
+                .getAsJsonObject("message");
+        String id = sent.get("id").getAsString();
+        b.next("chat.new");
+
+        String second = TestClient.json(a.upload("ata.md", "text/markdown", "# Ata\nversao 2".getBytes(StandardCharsets.UTF_8)).body()).get("id").getAsString();
+        assertFalse(b.ask("chat.replaceFile", "\"id\":\"" + id + "\",\"file\":\"" + first + "\",\"with\":\"" + second + "\"").get("ok").getAsBoolean());
+        JsonObject replaced = a.ask("chat.replaceFile", "\"id\":\"" + id + "\",\"file\":\"" + first + "\",\"with\":\"" + second + "\"")
+                .getAsJsonObject("message");
+        JsonObject file = replaced.getAsJsonArray("attachments").get(0).getAsJsonObject();
+        assertEquals(second, file.get("id").getAsString());
+        assertEquals("ata.md", file.get("name").getAsString());
+        assertTrue(replaced.get("edited").getAsLong() > 0);
+        assertEquals(second, b.next("chat.update").getAsJsonObject("message").getAsJsonArray("attachments").get(0).getAsJsonObject().get("id").getAsString());
+        assertEquals("# Ata\nversao 2", new String(b.get("/api/files/" + second).body(), StandardCharsets.UTF_8));
+        assertEquals(404, b.get("/api/files/" + first).statusCode());
+
+        String note = send(b, group, "texto da Bia").get("id").getAsString();
+        assertFalse(admin.ask("chat.edit", "\"id\":\"" + note + "\",\"text\":\"mudado\"").get("ok").getAsBoolean());
+        admin.ask("admin.login", "\"password\":\"" + PASSWORD + "\"");
+        JsonObject moderated = admin.ask("chat.edit", "\"id\":\"" + note + "\",\"text\":\"texto corrigido pelo admin\"").getAsJsonObject("message");
+        assertEquals("texto corrigido pelo admin", moderated.get("text").getAsString());
+        assertEquals(b.id, moderated.get("from").getAsString());
+    }
+
+    @Test
     void anyMemberPinsAndThePinListFollows() throws Exception {
         String group = group();
         TestClient a = TestClient.modern("Ana", groups(group)).ready();

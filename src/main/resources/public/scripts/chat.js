@@ -45,6 +45,8 @@
   const peerOf = (id) => AV.state.peers.find((p) => p.id === id);
   const nameOf = (id) => (id === me().id ? me().name : (peerOf(id) || { name: "Participante" }).name);
   const adminOn = () => !!(me().admin && me().admin.active);
+  /* The author edits their own; an administrator in admin mode edits anyone's. The server checks the same rule. */
+  const canEdit = (m) => m.from === me().id || adminOn();
   const fmt = { me: null, nameOf, openLink: (url) => AV.openLink(url) };
 
   function state(c) {
@@ -354,7 +356,7 @@
     return E("div", { class: "msg-toolbar card" },
       b("smile", "Adicionar reação", () => openPicker(m)),
       b("reply", "Responder", () => startReply(m)),
-      mine && b("edit", "Editar", () => startEdit(m)),
+      canEdit(m) && m.text && b("edit", "Editar", () => startEdit(m)),
       b("more", "Mais opções", (e) => { const r = e.currentTarget.getBoundingClientRect(); openMenu(m, r.left, r.bottom + 4); }));
   }
 
@@ -374,7 +376,7 @@
         const size = fit(a.width || 640, a.height || 360, 400, 320);
         return E("div", { class: "att-media" }, E("video", { src, controls: true, preload: "metadata", width: size.w, height: size.h }), fileCard(a, true));
       }
-      if (/\.(md|markdown|txt)$/i.test(a.name) || /^text\/(markdown|plain)/.test(a.type)) return textCard(a);
+      if (/\.(md|markdown|txt)$/i.test(a.name) || /^text\/(markdown|plain)/.test(a.type)) return textCard(a, m);
       if (a.type.startsWith("audio/")) {
         const voice = a.name.startsWith("Mensagem de voz");
         return E("div", { class: "att-audio" }, AV.voice.player(a, { id: m.from, name: nameOf(m.from) }), !voice && fileCard(a, true));
@@ -390,16 +392,48 @@
   }
 
   /* A text file shows inside the conversation: Markdown formatted, plain text as it is, long ones folded. */
-  function textCard(a) {
+  function textCard(a, m) {
     const md = /\.(md|markdown)$/i.test(a.name) || a.type.startsWith("text/markdown");
     const body = E("div", { class: "md-file-body msg-text selectable" }, E("div", { class: "chat-more" }, E("div", { class: "spinner", "aria-hidden": "true" }), "Abrindo o texto…"));
     const more = E("button", { class: "linkish md-file-more", hidden: true }, "Mostrar tudo");
     let text = null;
+    const editBtn = m && canEdit(m) ? E("button", { class: "btn btn-ghost btn-sm", title: "Editar o arquivo", "aria-label": "Editar " + a.name, disabled: true, onclick: () => openEditor() }, AV.icon("edit", "ic-sm"), E("span", { class: "hidden sm:inline" }, "Editar")) : null;
     const copy = E("button", { class: "btn btn-ghost btn-sm", title: "Copiar o texto", "aria-label": "Copiar o texto", disabled: true, onclick: () => navigator.clipboard.writeText(text).then(() => AV.toast("Texto copiado.", "ok")) }, AV.icon("copy", "ic-sm"), E("span", { class: "hidden sm:inline" }, "Copiar"));
     const card = E("div", { class: "md-file card" },
       E("div", { class: "md-file-head" }, AV.icon("file", "ic-sm"), E("div", { class: "min-w-0 flex-1" }, E("div", { class: "truncate font-semibold" }, a.name), E("small", { class: "text-muted" }, AV.bytes(a.size) + (md ? " · Markdown" : " · Texto"))),
-        copy, E("button", { class: "btn btn-ghost btn-sm", title: "Salvar em Downloads", "aria-label": "Baixar " + a.name, onclick: () => saveFile(a) }, AV.icon("download", "ic-sm"), E("span", { class: "hidden sm:inline" }, "Baixar"))),
+        editBtn, copy, E("button", { class: "btn btn-ghost btn-sm", title: "Salvar em Downloads", "aria-label": "Baixar " + a.name, onclick: () => saveFile(a) }, AV.icon("download", "ic-sm"), E("span", { class: "hidden sm:inline" }, "Baixar"))),
       body, more);
+    /* Editing in place: the new text goes up as a new version of the same file, which replaces the old one for everyone. */
+    function openEditor() {
+      const area = E("textarea", { class: "input md-file-editor", spellcheck: "true", "aria-label": "Editar " + a.name });
+      area.value = text;
+      const status = E("small", { class: "text-muted" }, "Ctrl + Enter salva, Esc cancela.");
+      const cancel = () => { card.classList.remove("editing"); AV.fill(body, md ? AV.md.render(text, fmt) : text); editBtn.disabled = false; };
+      const save = async () => {
+        if (area.value === text) { cancel(); return; }
+        if (!area.value.trim()) { AV.toast("O arquivo não pode ficar vazio.", "error"); return; }
+        status.textContent = "Salvando…";
+        area.disabled = true;
+        try {
+          const up = await upload(new File([area.value], a.name, { type: md ? "text/markdown" : "text/plain" }), () => {});
+          accept(await AV.api("PUT", "/api/messages/" + encodeURIComponent(m.id) + "/files/" + encodeURIComponent(a.id), { with: up.id }));
+          AV.toast(a.name + " foi atualizado.", "ok");
+        } catch (e) {
+          area.disabled = false;
+          status.textContent = "Ctrl + Enter salva, Esc cancela.";
+          AV.fail(e);
+        }
+      };
+      area.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancel(); }
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
+      });
+      card.classList.add("editing", "open");
+      editBtn.disabled = true;
+      AV.fill(body, area, E("div", { class: "mt-2 flex flex-wrap items-center gap-2" }, status, E("span", { class: "flex-1" }),
+        E("button", { class: "btn btn-sm", onclick: cancel }, "Cancelar"), E("button", { class: "btn btn-primary btn-sm", onclick: save }, "Salvar")));
+      area.focus();
+    }
     more.addEventListener("click", () => { const open = card.classList.toggle("open"); more.textContent = open ? "Mostrar menos" : "Mostrar tudo"; });
     if (a.size > PREVIEW_BYTES) {
       AV.fill(body, E("div", { class: "text-sm text-muted" }, "Arquivo grande demais para mostrar aqui. Baixe para ler."));
@@ -408,6 +442,7 @@
     fetch("/api/files/" + encodeURIComponent(a.id)).then((r) => { if (!r.ok) throw new Error(); return r.text(); }).then((t) => {
       text = t;
       copy.disabled = false;
+      if (editBtn) editBtn.disabled = false;
       AV.fill(body, md ? AV.md.render(t, fmt) : t);
       requestAnimationFrame(() => { more.hidden = body.scrollHeight <= body.clientHeight + 4; });
     }).catch(() => AV.fill(body, E("div", { class: "text-sm text-muted" }, "Não foi possível abrir o texto.")));
@@ -679,7 +714,7 @@
   }
 
   function startEdit(m) {
-    if (m.from !== me().id) return;
+    if (!canEdit(m)) return;
     editing = m.id;
     render();
     const area = document.querySelector('.msg[data-id="' + CSS.escape(m.id) + '"] textarea');
@@ -915,7 +950,7 @@
       quick,
       item("smile", "Adicionar reação", () => openPicker(m)),
       item("reply", "Responder", () => startReply(m)),
-      mine && item("edit", "Editar mensagem", () => startEdit(m)),
+      canEdit(m) && m.text && item("edit", mine ? "Editar mensagem" : "Editar mensagem (administrador)", () => startEdit(m)),
       item("pin", m.pinned ? "Desafixar mensagem" : "Fixar mensagem", () => pinMessage(m, !(m.pinned > 0))),
       m.text && item("copy", "Copiar texto", () => navigator.clipboard.writeText(AV.md.plain(m.text, nameOf)).then(() => AV.toast("Texto copiado.", "ok"))),
       item("copy", "Copiar ID da mensagem", () => navigator.clipboard.writeText(m.id).then(() => AV.toast("ID copiado.", "ok"))),

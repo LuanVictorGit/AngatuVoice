@@ -127,6 +127,14 @@ public final class ChatService {
         return forInterface(PeerNetwork.request(ask).getAsJsonObject("message"));
     }
 
+    public static JsonObject replaceFile(String id, String file, String with) {
+        JsonObject ask = frame("chat.replaceFile");
+        ask.addProperty("id", id);
+        ask.addProperty("file", file);
+        ask.addProperty("with", with);
+        return forInterface(PeerNetwork.request(ask).getAsJsonObject("message"));
+    }
+
     public static JsonArray pins(String chat) {
         JsonObject ask = frame("chat.pins");
         ask.addProperty("chat", chat);

@@ -4,6 +4,7 @@ import br.com.angatusistemas.lib.database.Saveable;
 import br.com.angatusistemas.lib.gson.GsonAPI;
 import br.com.angatusistemas.voicerelay.entities.ReadState;
 import br.com.angatusistemas.voicerelay.entities.StoredMessage;
+import br.com.angatusistemas.voicerelay.entities.StoredMessage.AttachmentRef;
 import br.com.angatusistemas.voicerelay.entities.StoredMessage.Embed;
 import br.com.angatusistemas.voicerelay.utils.TextRules;
 import com.google.gson.JsonArray;
@@ -50,6 +51,7 @@ public final class ChatService {
             case "chat.delete" -> delete(session, frame);
             case "chat.react" -> react(session, frame);
             case "chat.pin" -> pin(session, frame);
+            case "chat.replaceFile" -> replaceFile(session, frame);
             case "chat.pins" -> pins(session, frame);
             case "chat.history" -> history(session, frame);
             case "chat.read" -> read(session, frame);
@@ -168,7 +170,7 @@ public final class ChatService {
     private static JsonObject edit(Session session, JsonObject frame) {
         AdminService.requireNotMuted(session.id);
         StoredMessage message = readable(session, string(frame, "id"));
-        if (!session.id.equals(message.getSender())) {
+        if (!session.id.equals(message.getSender()) && !AdminService.powers(session.id)) {
             throw new Refusal("Só quem escreveu pode editar a mensagem.");
         }
         String text = TextRules.clean(string(frame, "text"));
@@ -192,6 +194,47 @@ public final class ChatService {
         broadcastUpdate(updated);
         LinkPreview.schedule(updated);
         return messageAnswer(updated);
+    }
+
+    /* A text file already sent (.md, .txt) gets new content without a new message: the author or an administrator in
+       admin mode uploads the new version, which takes the old one's place; the old file is deleted. */
+    private static JsonObject replaceFile(Session session, JsonObject frame) {
+        AdminService.requireNotMuted(session.id);
+        StoredMessage message = readable(session, string(frame, "id"));
+        if (!session.id.equals(message.getSender()) && !AdminService.powers(session.id)) {
+            throw new Refusal("Só quem enviou pode editar o arquivo.");
+        }
+        String oldId = string(frame, "file");
+        String newId = string(frame, "with");
+        AttachmentRef old = message.getAttachments().stream().filter(a -> a.id().equals(oldId)).findFirst()
+                .orElseThrow(() -> new Refusal("Arquivo não encontrado nesta mensagem."));
+        if (!isText(old.type(), old.name())) {
+            throw new Refusal("Só arquivos de texto podem ser editados.");
+        }
+        AttachmentRef fresh = AttachmentStore.claim(List.of(newId), session.id).getFirst();
+        if (!isText(fresh.type(), fresh.name())) {
+            throw new Refusal("A nova versão precisa ser um arquivo de texto.");
+        }
+        long now = Math.max(System.currentTimeMillis(), message.getEdited() + 1);
+        StoredMessage updated = MessageStore.update(message.getId(), stored -> {
+            List<AttachmentRef> refs = new ArrayList<>(stored.getAttachments());
+            refs.replaceAll(a -> a.id().equals(oldId) ? new AttachmentRef(fresh.id(), old.name(), fresh.type(), fresh.size(), 0, 0, false) : a);
+            stored.setAttachments(refs);
+            stored.setEdited(now);
+        });
+        if (updated == null) {
+            throw new Refusal("Mensagem não encontrada.");
+        }
+        AttachmentStore.bind(List.of(newId), updated.getId(), updated.getChat());
+        AttachmentStore.deleteRows(List.of(oldId));
+        AttachmentStore.deleteFiles(List.of(oldId));
+        broadcastUpdate(updated);
+        return messageAnswer(updated);
+    }
+
+    private static boolean isText(String type, String name) {
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
+        return type.startsWith("text/") || lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".txt");
     }
 
     private static JsonObject delete(Session session, JsonObject frame) {
