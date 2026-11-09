@@ -266,7 +266,17 @@ final class BrowserWindow {
         if (!frame.isVisible()) {
             browser.createImmediately();
         }
-        // The native child window only paints after a real size change, so nudge the frame once it is attached.
+        nudgeLayout();
+        if (frame.isVisible()) {
+            Foreground.raise(frame);
+        }
+        focusBrowser();
+    }
+
+    /* The native child window only takes a new size after a real size change of the frame: attaching it, or leaving full
+       screen, would otherwise leave Chromium at its old size and the bottom of the page hidden behind the taskbar. */
+    private void nudgeLayout() {
+        frame.getContentPane().revalidate();
         Dimension size = frame.getSize();
         if (frame.getExtendedState() != JFrame.MAXIMIZED_BOTH) {
             frame.setSize(size.width + 1, size.height);
@@ -275,10 +285,6 @@ final class BrowserWindow {
             frame.setExtendedState(JFrame.NORMAL);
             frame.setExtendedState(JFrame.MAXIMIZED_BOTH);
         }
-        if (frame.isVisible()) {
-            Foreground.raise(frame);
-        }
-        focusBrowser();
     }
 
     void hide() {
@@ -293,7 +299,13 @@ final class BrowserWindow {
         client.addDisplayHandler(new org.cef.handler.CefDisplayHandlerAdapter() {
             @Override
             public void onFullscreenModeChange(CefBrowser b, boolean fullscreen) {
-                SwingUtilities.invokeLater(() -> fullScreen.set(fullscreen));
+                SwingUtilities.invokeLater(() -> {
+                    fullScreen.set(fullscreen);
+                    if (!fullscreen) {
+                        // The restored placement reaches Swing through window messages; relayout once they have arrived.
+                        SwingUtilities.invokeLater(BrowserWindow.this::nudgeLayout);
+                    }
+                });
             }
 
             @Override

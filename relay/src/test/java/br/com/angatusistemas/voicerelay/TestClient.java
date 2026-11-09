@@ -56,6 +56,7 @@ final class TestClient implements WebSocket.Listener {
         System.setProperty("angatu.db", dir.resolve("database.db").toString());
         System.setProperty("angatu.attachments", dir.resolve("attachments").toString());
         System.setProperty("angatu.offline.grace", "200");
+        System.setProperty("angatu.max.per.address", "512");
         int port;
         try (ServerSocket probe = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
             port = probe.getLocalPort();
@@ -181,6 +182,13 @@ final class TestClient implements WebSocket.Listener {
                 .header("X-AV-Name", java.net.URLEncoder.encode(name, StandardCharsets.UTF_8))
                 .header("Content-Type", type)
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body)).build();
+        return HTTP.send(request, HttpResponse.BodyHandlers.ofByteArray());
+    }
+
+    /* As the proxy in production asks: a compressed answer must still be complete. */
+    HttpResponse<byte[]> getGzip(String path) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(URI.create("http://" + base + path))
+                .header("X-AV-Token", welcome.get("http").getAsString()).header("Accept-Encoding", "gzip").GET().build();
         return HTTP.send(request, HttpResponse.BodyHandlers.ofByteArray());
     }
 

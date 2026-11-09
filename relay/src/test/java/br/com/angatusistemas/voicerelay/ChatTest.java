@@ -137,6 +137,13 @@ class ChatTest {
         assertTrue(replaced.get("edited").getAsLong() > 0);
         assertEquals(second, b.next("chat.update").getAsJsonObject("message").getAsJsonArray("attachments").get(0).getAsJsonObject().get("id").getAsString());
         assertEquals("# Ata\nversao 2", new String(b.get("/api/files/" + second).body(), StandardCharsets.UTF_8));
+        // In production the proxy asks for gzip: a text file must still arrive whole (it used to break the connection).
+        String longText = "# Ata\n" + "linha de texto que se repete e comprime bem\n".repeat(300);
+        String big = TestClient.json(a.upload("longo.md", "text/markdown", longText.getBytes(StandardCharsets.UTF_8)).body()).get("id").getAsString();
+        a.ask("chat.send", "\"chat\":\"" + group + "\",\"nonce\":\"" + nonce() + "\",\"text\":\"\",\"attachments\":[\"" + big + "\"]");
+        HttpResponse<byte[]> gz = b.getGzip("/api/files/" + big);
+        assertEquals(200, gz.statusCode());
+        assertEquals(longText, new String(gz.body(), StandardCharsets.UTF_8));
         assertEquals(404, b.get("/api/files/" + first).statusCode());
 
         String note = send(b, group, "texto da Bia").get("id").getAsString();
@@ -145,6 +152,49 @@ class ChatTest {
         JsonObject moderated = admin.ask("chat.edit", "\"id\":\"" + note + "\",\"text\":\"texto corrigido pelo admin\"").getAsJsonObject("message");
         assertEquals("texto corrigido pelo admin", moderated.get("text").getAsString());
         assertEquals(b.id, moderated.get("from").getAsString());
+    }
+
+    @Test
+    void ticksGoFromSentToDeliveredToRead() throws Exception {
+        TestClient a = TestClient.modern("Ana", "[]").ready();
+        TestClient b = TestClient.modern("Bia", "[]").ready();
+        String chat = "dm:" + (a.id.compareTo(b.id) < 0 ? a.id + "+" + b.id : b.id + "+" + a.id);
+        long seq = send(a, "dm:" + b.id, "chegou?").get("seq").getAsLong();
+        b.next("chat.new");
+        JsonObject delivered = receiptOf(a.next("chat.receipts"), b.id);
+        assertEquals(seq, delivered.get("d").getAsLong());
+        assertEquals(0, delivered.get("r").getAsLong());
+
+        b.ask("chat.read", "\"chat\":\"dm:" + a.id + "\",\"seq\":" + seq);
+        assertEquals(seq, receiptOf(a.next("chat.receipts"), b.id).get("r").getAsLong());
+        JsonArray history = a.ask("chat.history", "\"chat\":\"dm:" + b.id + "\"").getAsJsonArray("receipts");
+        assertEquals(seq, receiptOfArray(history, b.id).get("r").getAsLong());
+
+        // Someone offline when it was sent: delivered only once they come back and catch up.
+        TestClient c = TestClient.modern("Caio", "[]").ready();
+        String cId = c.id;
+        c.send("{\"t\":\"bye\"}");
+        Thread.sleep(400);
+        long later = send(a, "dm:" + cId, "quando voltar, leia").get("seq").getAsLong();
+        assertFalse(a.received("chat.receipts", 400));
+        TestClient back = new TestClient(c.keys, c.device).connect("Caio", "[]", true, true).ready();
+        back.ask("chat.unread", "");
+        JsonObject caught = receiptOf(a.next("chat.receipts"), cId);
+        assertEquals(later, caught.get("d").getAsLong());
+        assertTrue(chat.startsWith("dm:"));
+    }
+
+    private static JsonObject receiptOf(JsonObject event, String person) {
+        return receiptOfArray(event.getAsJsonArray("receipts"), person);
+    }
+
+    private static JsonObject receiptOfArray(JsonArray receipts, String person) {
+        for (var el : receipts) {
+            if (person.equals(el.getAsJsonObject().get("person").getAsString())) {
+                return el.getAsJsonObject();
+            }
+        }
+        throw new AssertionError("no receipt for " + person + " in " + receipts);
     }
 
     @Test

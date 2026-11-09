@@ -65,7 +65,8 @@ public final class ChatService {
 
     /* ---- questions to the server ---- */
 
-    public static JsonArray history(String chat, long before, long after, long around, int limit) {
+    /* One page and, beside it, how far each person received and read this conversation: the ticks are drawn from that. */
+    public static JsonObject history(String chat, long before, long after, long around, int limit) {
         JsonObject ask = frame("chat.history");
         ask.addProperty("chat", chat);
         if (before > 0) {
@@ -78,10 +79,14 @@ public final class ChatService {
             ask.addProperty("around", around);
         }
         ask.addProperty("limit", Math.clamp(limit, 1, MAX_PAGE));
-        JsonArray out = new JsonArray();
-        for (JsonElement el : PeerNetwork.request(ask).getAsJsonArray("messages")) {
-            out.add(forInterface(el.getAsJsonObject()));
+        JsonObject res = PeerNetwork.request(ask);
+        JsonArray messages = new JsonArray();
+        for (JsonElement el : res.getAsJsonArray("messages")) {
+            messages.add(forInterface(el.getAsJsonObject()));
         }
+        JsonObject out = new JsonObject();
+        out.add("messages", messages);
+        out.add("receipts", res.has("receipts") && res.get("receipts").isJsonArray() ? res.getAsJsonArray("receipts") : new JsonArray());
         return out;
     }
 
@@ -226,6 +231,8 @@ public final class ChatService {
                 UNREAD.remove(chat);
                 LiveHub.emit("chat.read", Map.of("chat", chat, "seq", frame.get("seq").getAsLong()));
             }
+            case "chat.receipts" -> LiveHub.emit("chat.receipts", Map.of("chat", forInterface(string(frame, "chat")),
+                    "receipts", frame.has("receipts") && frame.get("receipts").isJsonArray() ? frame.getAsJsonArray("receipts") : new JsonArray()));
             case "chat.wiped" -> {
                 UNREAD.clear();
                 LiveHub.emit("chat.wiped", Map.of());

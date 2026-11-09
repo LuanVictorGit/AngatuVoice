@@ -59,7 +59,8 @@ public final class NetHub {
     private static final Pattern TOKEN = Pattern.compile("[0-9a-f]{64}");
     private static final Pattern DEVICE = Pattern.compile("[0-9a-f]{16}");
     private static final int MAX_SESSIONS = 512;
-    private static final int MAX_CONNECTIONS_PER_ADDRESS = 32;
+    // One office or home behind one address is a handful of people; the tests open many more from loopback, hence the property.
+    private static final int MAX_CONNECTIONS_PER_ADDRESS = Integer.getInteger("angatu.max.per.address", 32);
     private static final int MAX_GROUPS = 64;
     private static final int MAX_TEXT_BYTES = 128 * 1024;
     private static final int MAX_REQUEST_ID = 64;

@@ -7,6 +7,7 @@ import br.com.angatusistemas.voicerelay.services.AdminService;
 import br.com.angatusistemas.voicerelay.services.AttachmentStore;
 import br.com.angatusistemas.voicerelay.services.IpBlocklist;
 import br.com.angatusistemas.voicerelay.services.MessageStore;
+import br.com.angatusistemas.voicerelay.services.Receipts;
 
 /**
  * Starts the server every Angatu Voice connects to: who is online, the chat and its files, call signalling and shared screens.
@@ -37,6 +38,7 @@ public final class Main {
         AttachmentStore.start();
         AdminService.start();
         MessageStore.start();
+        Receipts.start();
         new AngatuLib("voice.angatusistemas.com.br", port, false);
     }
 }

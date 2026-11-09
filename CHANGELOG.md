@@ -7,6 +7,19 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [2.2.1] - 2026-11-09
+
+### Adicionado
+- Tiques nas suas mensagens, como no WhatsApp: relógio enquanto envia, um tique quando o servidor guardou, dois quando chegou ao aparelho da outra pessoa e dois azuis quando ela leu. Quem estava offline recebe os dois tiques assim que volta. Nos grupos, os tiques ficam azuis quando alguém lê, e passar o mouse mostra quem viu.
+- "Digitando…" com animação também no topo da conversa e na lista lateral.
+
+### Corrigido
+- Arquivos .md e .txt enviados davam "Não foi possível abrir o texto" e "Arquivo indisponível".
+- Na tela cheia da transmissão, os controles e o cursor somem quando o mouse para e voltam ao mexer.
+- Ao sair da tela cheia, a barra de baixo (microfone, fone, compartilhar) sumia atrás da barra de tarefas.
+- O menu da mensagem (botão direito) saía pela parte de baixo da tela e escondia "Apagar mensagem": agora ele abre para cima quando não cabe e fica sempre por cima de tudo.
+- A lixeira também aparece na barra de ações ao passar o mouse, para quem escreveu e para o administrador com o modo ligado.
+
 ## [2.2.0] - 2026-11-08
 
 ### Adicionado

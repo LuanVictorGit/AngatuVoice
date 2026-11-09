@@ -292,8 +292,25 @@ ol.md-list { list-style: decimal; }
 .msg-pin { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; color: var(--av-accent); }
 .msg-pin .ic { width: 12px; height: 12px; }
 
+/* Ticks on one's own messages, as in phone messengers: a turning clock while sending, then one, two, two blue. */
+.tick { display: inline-flex; vertical-align: -3px; margin-left: 6px; color: var(--av-faint); transition: color var(--av-normal) var(--av-ease); }
+.tick .ic { width: 17px; height: 17px; stroke-width: 2.4; }
+.tick-delivered .ic, .tick-read .ic { width: 20px; }
+.tick-delivered { color: var(--av-muted); }
+.tick-read { color: var(--av-info); }
+.tick-failed { color: var(--av-danger); }
+.tick-sending .ic { animation: tick-spin 1.4s linear infinite; }
+.tick-pop .ic { animation: tick-pop 360ms var(--av-ease); }
+@keyframes tick-spin { to { transform: rotate(360deg); } }
+@keyframes tick-pop { 0% { transform: scale(0.6); opacity: 0.4; } 60% { transform: scale(1.25); opacity: 1; } 100% { transform: none; } }
+.msg-ticks { display: flex; justify-content: flex-start; margin-top: 2px; }
+.msg-ticks .tick { margin-left: 0; }
+.chip-typing { color: var(--av-ok); }
+.nav-typing { display: block; font-size: 11px; font-weight: 500; color: var(--av-ok); }
+.nav-typing .typing-dots i { background: var(--av-ok); width: 4px; height: 4px; }
+
 /* The one floating menu: positioned by script inside the window. */
-.ctx-menu { position: fixed; z-index: 55; display: flex; flex-direction: column; min-width: 220px; max-width: calc(100vw - 16px); padding: 6px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4); }
+.ctx-menu { position: fixed; z-index: 10001; display: flex; flex-direction: column; min-width: 220px; max-width: calc(100vw - 16px); overflow-y: auto; padding: 6px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4); }
 .ctx-item { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border: 0; border-radius: var(--av-radius-sm); background: transparent; color: var(--av-ink); font: inherit; text-align: left; cursor: pointer; }
 .ctx-item:hover, .ctx-item:focus-visible { background: var(--av-bg3); outline: none; }
 .ctx-item.danger { color: var(--av-danger); }
@@ -373,6 +390,10 @@ button.chip:hover { background: var(--av-bg2); }
 .tile-video.fullscreen { position: fixed !important; inset: 0 !important; z-index: 9999 !important; border-radius: 0 !important; border: none !important; background: #000 !important; padding: 0 !important; margin: 0 !important; width: 100vw !important; height: 100vh !important; max-height: none !important; }
 .tile-video.fullscreen video { width: 100% !important; height: 100% !important; max-height: none !important; border-radius: 0 !important; object-fit: contain !important; }
 .tile-video.fullscreen .tile-video-header { top: 16px; left: 16px; right: 16px; background: rgba(15, 14, 13, 0.85); }
+/* In full screen the pointer is always over the picture: the controls show only while the mouse moves, then fade with the cursor. */
+.tile-video.fullscreen .tile-video-header, .tile-video.fullscreen:hover .tile-video-header, .tile-video.fullscreen:focus-within .tile-video-header { opacity: 0; transition: opacity var(--av-normal) var(--av-ease); }
+.tile-video.fullscreen.hud .tile-video-header { opacity: 1; }
+.tile-video.fullscreen:not(.hud) { cursor: none; }
 
 .ping { display: inline-flex; align-items: center; gap: 6px; color: var(--av-muted); white-space: nowrap; }
 .ping-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }

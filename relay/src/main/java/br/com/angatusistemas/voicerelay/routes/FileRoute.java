@@ -43,6 +43,8 @@ public final class FileRoute extends Route {
             String disposition = MediaInfo.inline(attachment.getType()) ? "inline" : "attachment";
             ctx.header("X-Content-Type-Options", "nosniff");
             ctx.header("Cache-Control", "no-store");
+            // The proxy in front asks for gzip, and a compressed text body never matches the raw size: send it as it is on disk.
+            ctx.disableCompression();
             ctx.header("Content-Length", Long.toString(size));
             ctx.header("Content-Disposition", disposition + "; filename*=UTF-8''" + encoded);
             ctx.contentType(attachment.getType());

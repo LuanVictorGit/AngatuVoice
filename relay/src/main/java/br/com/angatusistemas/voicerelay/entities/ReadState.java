@@ -14,5 +14,8 @@ import lombok.Setter;
 public final class ReadState extends Saveable {
 
     private String id;
+    private String chat;
+    private String person;
     private long lastSeq;
+    private long deliveredSeq;
 }

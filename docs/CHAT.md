@@ -44,6 +44,7 @@ Todo pedido do cliente leva `r` (texto curto). A resposta é `{t:"res", r, ok:tr
 | `chat.delete` | `id` | — | `chat.delete {id, chat}` |
 | `chat.react` | `id`, `emoji`, `on` | `message` | `chat.update {message}` |
 | `chat.replaceFile` | `id`, `file` (anexo de texto atual), `with` (nova versão já enviada) | `message` | `chat.update {message}` |
+| (recibos) | — | `chat.history` traz também `receipts: [{person, d, r}]` | `chat.receipts {chat, receipts}` quando alguém recebe (`d`) ou lê (`r`) |
 | `chat.pin` | `id`, `on` | `message` (com `pinned`, `pinnedBy`) | `chat.update {message}` |
 | `chat.pins` | `chat` | `messages` (fixadas, da mais recente para a mais antiga; até 50 por conversa) | — |
 | `chat.history` | `chat`, `before?`/`after?`/`around?` (seq), `limit` (≤100) | `messages` (seq crescente), `chat` | — |

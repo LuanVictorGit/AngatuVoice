@@ -70,7 +70,8 @@
     const u = (AV.state.unread || {})[id];
     const count = u ? (u.mentions || u.count) : 0;
     return E("button", { class: "nav-item" + (u && u.count ? " nav-unread" : ""), "aria-current": String(AV.chat === id), title: label + (u && u.count ? " (" + u.count + " não lidas)" : ""), onclick: () => selectChat(id) },
-      iconOrAvatar, E("span", { class: "hidden min-w-0 flex-1 truncate md:inline" }, label),
+      iconOrAvatar, E("span", { class: "hidden min-w-0 flex-1 truncate md:inline" }, label,
+        AV.conv.typingIn(id).length > 0 && E("span", { class: "nav-typing", title: "Digitando" }, E("span", { class: "typing-dots", "aria-hidden": "true" }, E("i"), E("i"), E("i")), "digitando")),
       count > 0 && E("span", { class: "badge" + (u.mentions ? " badge-mention" : "") }, count >= 100 ? "99+" : count), extra);
   }
 
@@ -114,7 +115,9 @@
     AV.fill($("chat-title"), dm && peer ? AV.avatar(peer.id, peer.name, "avatar-sm mr-2 inline-grid align-middle", peer.online) : null,
       E("span", {}, chatTitle()),
       group && group.kind === "public" && E("span", { class: "chip ml-3 hidden align-middle sm:inline-flex" }, E("span", { class: "dot " + (AV.state.net.connected ? "dot-on" : "dot-off") }), AV.state.net.connected ? "Conectado" : "Sem conexão"),
-      dm && peer && E("span", { class: "chip ml-3 hidden align-middle sm:inline-flex" }, peer.online ? "Online" : "Offline"));
+      dm && peer && (AV.conv.typingIn(AV.chat).length
+        ? E("span", { class: "chip chip-typing ml-3 hidden align-middle sm:inline-flex" }, E("span", { class: "typing-dots", "aria-hidden": "true" }, E("i"), E("i"), E("i")), "digitando…")
+        : E("span", { class: "chip ml-3 hidden align-middle sm:inline-flex" }, peer.online ? "Online" : "Offline")));
     AV.fill($("chat-tools"), 
       group && group.hasInvite && E("button", { class: "btn", onclick: () => inviteDialog(group) }, AV.icon("copy", "ic-sm"), E("span", { class: "hidden lg:inline" }, "Convidar")),
       adminOn() && E("button", { class: "btn btn-ghost btn-icon text-muted hover:text-danger", title: "Apagar todas as mensagens desta conversa", "aria-label": "Apagar todas as mensagens desta conversa", onclick: clearChat }, AV.icon("eraser")),
@@ -368,6 +371,19 @@
     });
   }
 
+  /* Full-screen video: controls appear on mouse movement and hide after a short pause, so only the picture stays. */
+  const HUD_IDLE_MS = 2200;
+  let hudTimer = 0;
+  function showHud(tile) {
+    tile.classList.add("hud");
+    clearTimeout(hudTimer);
+    hudTimer = setTimeout(() => { if (tile.querySelector(".tile-video-header:hover")) showHud(tile); else tile.classList.remove("hud"); }, HUD_IDLE_MS);
+  }
+  document.addEventListener("mousemove", () => {
+    const tile = document.querySelector(".tile-video.fullscreen");
+    if (tile) showHud(tile);
+  }, { passive: true });
+
   function toggleFullscreen(tileKey) {
     if (activeFullscreenTile === tileKey) {
       activeFullscreenTile = null;
@@ -534,6 +550,7 @@
       const open = !!tile.stream;
       view.root.classList.toggle("focused", tile.key === focusedTile);
       view.root.classList.toggle("fullscreen", full);
+      if (full) showHud(view.root);
       view.root.classList.toggle("closed", !open);
       view.title.textContent = tile.local ? "Sua tela" : "Tela de " + nameOf(tile.id);
       view.info.textContent = videoInfo(tile);

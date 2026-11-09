@@ -57,6 +57,7 @@ public final class EmbedRoute extends Route {
         ctx.header("X-Content-Type-Options", "nosniff");
         ctx.header("Cache-Control", "no-store");
         ctx.contentType(type);
+        ctx.disableCompression();
         ctx.result(new Capped(image.body(), MAX_IMAGE_BYTES));
     }
 

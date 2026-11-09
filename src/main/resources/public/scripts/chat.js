@@ -65,7 +65,51 @@
 
   async function page(c, params) {
     const q = new URLSearchParams({ chat: c, limit: String(PAGE), ...params });
-    return AV.api("GET", "/api/messages?" + q);
+    const res = await AV.api("GET", "/api/messages?" + q);
+    applyReceipts(c, res.receipts || []);
+    return res.messages || [];
+  }
+
+  /* ---- ticks: sending, sent, delivered, read ---- */
+
+  const receipts = new Map();
+  const shownTick = new Map();
+
+  function applyReceipts(c, list) {
+    if (!receipts.has(c)) receipts.set(c, new Map());
+    const map = receipts.get(c);
+    list.forEach((r) => {
+      if (!r || !r.person) return;
+      const old = map.get(r.person) || { d: 0, r: 0 };
+      map.set(r.person, { d: Math.max(old.d, r.d || 0), r: Math.max(old.r, r.r || 0) });
+    });
+  }
+
+  /* A direct message follows the other person; in a group, the ticks turn blue once someone has read it, and the
+     tooltip says who. Never shown on other people's messages. */
+  function tickOf(m) {
+    if (m.from !== me().id) return null;
+    const others = [...(receipts.get(m.chat) || new Map()).entries()].filter(([person]) => person !== me().id);
+    if (isDm(m.chat)) {
+      const o = (receipts.get(m.chat) || new Map()).get(m.chat.slice(3)) || { d: 0, r: 0 };
+      if (o.r >= m.seq) return { state: "read", title: "Lida" };
+      if (o.d >= m.seq) return { state: "delivered", title: "Entregue" };
+      return { state: "sent", title: "Enviada" };
+    }
+    const readers = others.filter(([, v]) => v.r >= m.seq).map(([person]) => nameOf(person));
+    const got = others.filter(([, v]) => v.d >= m.seq).length;
+    if (readers.length) return { state: "read", title: "Vista por " + readers.slice(0, 10).join(", ") + (readers.length > 10 ? " e mais " + (readers.length - 10) : "") };
+    if (got) return { state: "delivered", title: got === 1 ? "Entregue a 1 pessoa" : "Entregue a " + got + " pessoas" };
+    return { state: "sent", title: "Enviada" };
+  }
+
+  function tickNode(id, tick) {
+    if (!tick) return null;
+    const before = shownTick.get(id);
+    shownTick.set(id, tick.state);
+    const changed = before && before !== tick.state;
+    const icon = tick.state === "sending" ? "clock" : tick.state === "failed" ? "alert" : tick.state === "sent" ? "check" : "check2";
+    return E("span", { class: "tick tick-" + tick.state + (changed ? " tick-pop" : ""), title: tick.title, "aria-label": tick.title, role: "img" }, AV.icon(icon, "ic-sm"));
   }
 
   /* ---- selecting and loading ---- */
@@ -310,7 +354,7 @@
     const compact = !!(prev && prev.from === m.from && !m.replyTo && m.ts - prev.ts < GROUP_MS
       && new Date(prev.ts).toDateString() === new Date(m.ts).toDateString());
     const key = [compact, m.edited, m.text, JSON.stringify(m.reactions || []), JSON.stringify(m.embeds || []), JSON.stringify(m.attachments || []),
-      JSON.stringify(m.ref || null), m.pinned, editing === m.id, adminOn(), AV.avatarVersion(m.from), nameOf(m.from)].join("|");
+      JSON.stringify(m.ref || null), m.pinned, (tickOf(m) || {}).state, (tickOf(m) || {}).title, editing === m.id, adminOn(), AV.avatarVersion(m.from), nameOf(m.from)].join("|");
     const cached = rowCache.get(m.id);
     if (cached && cached.key === key) return cached.node;
     const node = buildRow(m, compact);
@@ -333,8 +377,9 @@
           m.pinned > 0 && E("span", { class: "msg-pin", title: "Fixada por " + nameOf(m.pinnedBy || m.from) }, AV.icon("pin", "ic-sm"), "Fixada")),
         compact && m.pinned > 0 && E("span", { class: "msg-pin", title: "Fixada por " + nameOf(m.pinnedBy || m.from) }, AV.icon("pin", "ic-sm"), "Fixada"),
         editing === m.id ? editBox(m) : m.text && E("div", { class: "msg-text selectable" }, AV.md.render(m.text, fmt),
-          m.edited ? E("span", { class: "msg-edited", title: "Editada em " + full(m.edited) }, " (editada)") : null),
-        attachmentsOf(m), embedsOf(m), reactionsOf(m))),
+          m.edited ? E("span", { class: "msg-edited", title: "Editada em " + full(m.edited) }, " (editada)") : null,
+          m.from === me().id && tickNode(m.id, tickOf(m))),
+        attachmentsOf(m), embedsOf(m), !m.text && m.from === me().id && E("div", { class: "msg-ticks" }, tickNode(m.id, tickOf(m))), reactionsOf(m))),
     toolbar(m));
     return node;
   }
@@ -357,6 +402,7 @@
       b("smile", "Adicionar reação", () => openPicker(m)),
       b("reply", "Responder", () => startReply(m)),
       canEdit(m) && m.text && b("edit", "Editar", () => startEdit(m)),
+      (mine || adminOn()) && b("trash", mine ? "Apagar mensagem" : "Apagar mensagem (administrador)", (e) => remove(m, e.shiftKey)),
       b("more", "Mais opções", (e) => { const r = e.currentTarget.getBoundingClientRect(); openMenu(m, r.left, r.bottom + 4); }));
   }
 
@@ -498,7 +544,8 @@
         compact ? E("span", { class: "msg-gutter-time" }, AV.time(p.ts)) : E("div", { class: "msg-avatar" }, AV.avatar(me().id, me().name)),
         E("div", { class: "msg-body" },
           !compact && E("div", { class: "msg-head" }, E("span", { class: "msg-name" }, me().name), E("span", { class: "msg-time" }, failed ? "Não enviada" : "Enviando…")),
-          p.text && E("div", { class: "msg-text" }, AV.md.render(p.text, fmt)),
+          p.text && E("div", { class: "msg-text" }, AV.md.render(p.text, fmt), tickNode("p:" + p.nonce, failed ? { state: "failed", title: "Não enviada" } : { state: "sending", title: "Enviando" })),
+          !p.text && E("div", { class: "msg-ticks" }, tickNode("p:" + p.nonce, failed ? { state: "failed", title: "Não enviada" } : { state: "sending", title: "Enviando" })),
           p.voice ? E("div", { class: "text-sm text-muted" }, AV.icon("mic", "ic-sm"), " Mensagem de voz")
             : p.upload ? E("div", { class: "text-sm text-muted" }, AV.icon("file", "ic-sm"), " Texto longo, enviado como " + p.upload.name)
             : p.files.length > 0 && E("div", { class: "text-sm text-muted" }, p.files.length === 1 ? "1 anexo" : p.files.length + " anexos"),
@@ -960,9 +1007,14 @@
         item("ban", "Banir " + nameOf(m.from), () => AV.banDialog(m.from), true)],
       (mine || adminOn()) && [sep(), item("trash", "Apagar mensagem", (e) => remove(m, e.shiftKey), true)]);
     document.body.append(menu);
+    /* Always fully on screen and above everything: it opens upwards when the space below is short, and scrolls if even
+       the whole height is not enough. The visible height comes from visualViewport when the browser reports it. */
+    const view = window.visualViewport || { width: window.innerWidth, height: window.innerHeight };
+    menu.style.maxHeight = Math.max(120, view.height - 16) + "px";
     const r = menu.getBoundingClientRect();
-    menu.style.left = Math.max(8, Math.min(x, window.innerWidth - r.width - 8)) + "px";
-    menu.style.top = Math.max(8, Math.min(y, window.innerHeight - r.height - 8)) + "px";
+    const top = y + r.height + 8 > view.height ? y - r.height : y;
+    menu.style.left = Math.max(8, Math.min(x, view.width - r.width - 8)) + "px";
+    menu.style.top = Math.max(8, Math.min(top, view.height - r.height - 8)) + "px";
     const first = menu.querySelector(".ctx-item");
     if (first) first.focus();
   }
@@ -1083,7 +1135,7 @@
     const here = m.chat === chat;
     if (!m.mine) {
       const t = typing.get(m.chat);
-      if (t) t.delete(m.from);
+      if (t && t.delete(m.from)) { AV.renderHeaderSoon(); AV.renderNav(); }
     }
     if (m.mine) { accept(m); return; }
     if (s && s.loaded && !s.hasNewer) merge(s, [m]);
@@ -1114,7 +1166,9 @@
     if (!typing.has(c)) typing.set(c, new Map());
     typing.get(c).set(from, { name, until: Date.now() + TYPING_SHOW_MS });
     if (c === chat) renderTyping();
-    setTimeout(() => { if (c === chat) renderTyping(); }, TYPING_SHOW_MS + 50);
+    AV.renderHeaderSoon();
+    AV.renderNav();
+    setTimeout(() => { if (c === chat) renderTyping(); AV.renderHeaderSoon(); AV.renderNav(); }, TYPING_SHOW_MS + 50);
   }
 
   function wire() {
@@ -1123,6 +1177,7 @@
     AV.on("chat.delete", ({ chat: c, id }) => { dropMessage(c, id); if (c === chat && Array.isArray(pinsList) && pinsList.some((p) => p.id === id)) loadPins(); });
     AV.on("chat.cleared", ({ chat: c }) => { states.delete(c); pending.delete(c); if (c === chat) { render(); load(c); } });
     AV.on("chat.typing", onTyping);
+    AV.on("chat.receipts", ({ chat: c, receipts: list }) => { applyReceipts(c, list); if (c === chat) render(); });
     AV.on("chat.wiped", () => { states.clear(); pending.clear(); rowCache.clear(); AV.state.unread = {}; AV.renderNav(); if (chat) load(chat); });
     AV.on("chat.read", ({ chat: c }) => { delete AV.state.unread[c]; AV.renderNav(); });
     AV.on("chat.unread", ({ chats }) => { AV.state.unread = chats; AV.renderNav(); });
@@ -1185,6 +1240,7 @@
     select,
     render: () => { rowCache.clear(); render(); renderComposer(); },
     current: () => chat,
+    typingIn: (c) => [...((typing.get(c) || new Map()).values())].filter((t) => t.until > Date.now()).map((t) => t.name),
     togglePins,
     pinsOpen: () => pinsOpen,
     placeholder: (text) => { if (!(me().mutedUntil > Date.now())) $("composer").placeholder = text; },

@@ -163,6 +163,7 @@ public final class ChatService {
             event.add("message", view(stored));
             NetHub.toChat(chat, event.toString(), null);
             LinkPreview.schedule(stored);
+            markDelivered(chat, stored.getSeq(), stored.getSender());
         }
         return messageAnswer(stored);
     }
@@ -356,25 +357,27 @@ public final class ChatService {
         JsonObject answer = new JsonObject();
         answer.addProperty("chat", chat);
         answer.add("messages", messages);
+        answer.add("receipts", Receipts.of(chat));
         return answer;
+    }
+
+    /* Everyone in the conversation with a device online received it now; the author's own devices do not count. */
+    private static void markDelivered(String chat, long seq, String author) {
+        Set<String> online = new LinkedHashSet<>();
+        NetHub.forEachMember(chat, s -> {
+            if (!s.id.equals(author)) {
+                online.add(s.id);
+            }
+        });
+        if (!online.isEmpty()) {
+            Thread.startVirtualThread(() -> Receipts.delivered(chat, seq, online));
+        }
     }
 
     private static JsonObject read(Session session, JsonObject frame) {
         String chat = canonical(session, string(frame, "chat"));
         long seq = Math.clamp(number(frame, "seq", 0), 0, MessageStore.currentSeq());
-        String id = session.id + "|" + chat;
-        long effective = Saveable.computeInTransaction(() -> {
-            ReadState state = Saveable.findById(ReadState.class, id);
-            if (state == null) {
-                state = new ReadState();
-                state.setId(id);
-            } else if (state.getLastSeq() >= seq) {
-                return state.getLastSeq();
-            }
-            state.setLastSeq(seq);
-            state.save();
-            return seq;
-        });
+        long effective = Receipts.read(session.id, chat, seq);
         JsonObject event = new JsonObject();
         event.addProperty("t", "chat.read");
         event.addProperty("chat", chat);
@@ -413,6 +416,7 @@ public final class ChatService {
         Saveable.query(ReadState.class, "SELECT data FROM " + Saveable.tableName(ReadState.class) + " WHERE id IN ("
                 + MessageStore.placeholders(ids.size()) + ")", ids.toArray()).forEach(state -> readSeqs.put(state.getId(), state.getLastSeq()));
         JsonObject summary = new JsonObject();
+        Map<String, Long> caughtUp = new HashMap<>();
         for (String chat : chats) {
             long readSeq = readSeqs.getOrDefault(session.id + "|" + chat, 0L);
             MessageStore.Unread unread = MessageStore.unread(chat, session.id, readSeq, UNREAD_CAP, MENTION_WINDOW);
@@ -422,7 +426,12 @@ public final class ChatService {
             entry.addProperty("lastSeq", unread.lastSeq());
             entry.addProperty("readSeq", readSeq);
             summary.add(chat, entry);
+            if (unread.lastSeq() > 0) {
+                caughtUp.put(chat, unread.lastSeq());
+            }
         }
+        // Coming back online hands this device everything it missed: those messages now count as delivered.
+        Thread.startVirtualThread(() -> caughtUp.forEach((chat, seq) -> Receipts.delivered(chat, seq, List.of(session.id))));
         JsonObject answer = new JsonObject();
         answer.add("chats", summary);
         return answer;
