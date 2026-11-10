@@ -372,7 +372,9 @@ AV.sound = (function () {
   // The settings test: plays even with the sounds turned off, because the person asked for it.
   sound.preview = (name) => { if (SOUND_FILES[name]) play(name); };
   return sound;
+})();
 
+(function () {
   /* The official credit: never a redrawn logo, and always leading to the site, in the person's own browser. */
   AV.openBrandSite = (e) => {
     e.preventDefault();
@@ -383,4 +385,5 @@ AV.sound = (function () {
     AV.el("span", { class: "brand-label" }, "Desenvolvido por"),
     AV.el("img", { class: "brand-on-dark brand-logo", src: "/assets/angatu-sistemas.png", width: 76, height: 26, alt: "Angatu Sistemas", draggable: "false" }),
     AV.el("img", { class: "brand-on-light brand-logo", src: "/assets/angatu-sistemas-escuro.png", width: 76, height: 26, alt: "Angatu Sistemas", draggable: "false" }));
+
 })();

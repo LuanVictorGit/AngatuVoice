@@ -7,6 +7,13 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [2.2.3] - 2026-11-10
+
+### Corrigido
+- A aba Sobre das configurações não abria.
+- O texto digitado aparecia todo sublinhado como erro: o corretor do navegador usava o dicionário em inglês e foi desligado nos campos de mensagem.
+- Na tela cheia da transmissão, os controles voltavam sozinhos mesmo com o mouse parado. Agora aparecem só quando o mouse se mexe e somem depois de dois segundos parado, junto com o cursor.
+
 ## [2.2.2] - 2026-11-09
 
 ### Adicionado

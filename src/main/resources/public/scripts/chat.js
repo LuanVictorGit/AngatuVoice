@@ -454,7 +454,7 @@
       body, more);
     /* Editing in place: the new text goes up as a new version of the same file, which replaces the old one for everyone. */
     function openEditor() {
-      const area = E("textarea", { class: "input md-file-editor", spellcheck: "true", "aria-label": "Editar " + a.name });
+      const area = E("textarea", { class: "input md-file-editor", spellcheck: "false", "aria-label": "Editar " + a.name });
       area.value = text;
       const status = E("small", { class: "text-muted" }, "Ctrl + Enter salva, Esc cancela.");
       const cancel = () => { card.classList.remove("editing"); AV.fill(body, shown(text)); editBtn.disabled = false; };
@@ -800,7 +800,7 @@
 
   function editBox(m) {
     const names = new Map();
-    const area = E("textarea", { class: "input msg-edit", rows: 1, maxlength: 4000, "aria-label": "Editar mensagem" });
+    const area = E("textarea", { class: "input msg-edit", spellcheck: "false", rows: 1, maxlength: 4000, "aria-label": "Editar mensagem" });
     area.value = decodeMentions(m.text || "", names);
     const size = () => { area.style.height = "auto"; area.style.height = Math.min(area.scrollHeight, 300) + "px"; };
     const cancel = () => { editing = null; render(); $("composer").focus(); };

@@ -379,10 +379,16 @@
     clearTimeout(hudTimer);
     hudTimer = setTimeout(() => { if (tile.querySelector(".tile-video-header:hover")) showHud(tile); else tile.classList.remove("hud"); }, HUD_IDLE_MS);
   }
-  document.addEventListener("mousemove", () => {
+  /* Only a real move counts: Chromium sends a still "mousemove" when the controls fade, which would bring them back forever. */
+  let lastPointer = "";
+  document.addEventListener("mousemove", (e) => {
+    const at = e.screenX + "," + e.screenY;
+    if (at === lastPointer) return;
+    lastPointer = at;
     const tile = document.querySelector(".tile-video.fullscreen");
     if (tile) showHud(tile);
   }, { passive: true });
+  document.addEventListener("mouseleave", () => { const tile = document.querySelector(".tile-video.fullscreen.hud"); if (tile) tile.classList.remove("hud"); });
 
   function toggleFullscreen(tileKey) {
     if (activeFullscreenTile === tileKey) {
