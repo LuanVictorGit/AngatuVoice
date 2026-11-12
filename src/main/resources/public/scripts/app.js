@@ -555,8 +555,10 @@
       const full = activeFullscreenTile === tile.key;
       const open = !!tile.stream;
       view.root.classList.toggle("focused", tile.key === focusedTile);
+      // Only entering full screen shows the controls; every later redraw (the FPS line updates each second) must not.
+      const entering = full && !view.root.classList.contains("fullscreen");
       view.root.classList.toggle("fullscreen", full);
-      if (full) showHud(view.root);
+      if (entering) showHud(view.root);
       view.root.classList.toggle("closed", !open);
       view.title.textContent = tile.local ? "Sua tela" : "Tela de " + nameOf(tile.id);
       view.info.textContent = videoInfo(tile);

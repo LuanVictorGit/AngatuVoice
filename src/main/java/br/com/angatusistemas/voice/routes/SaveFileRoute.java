@@ -1,5 +1,6 @@
 package br.com.angatusistemas.voice.routes;
 
+import br.com.angatusistemas.lib.gson.GsonAPI;
 import br.com.angatusistemas.lib.javalin.routes.Route;
 import br.com.angatusistemas.lib.javalin.routes.RouteType;
 import br.com.angatusistemas.voice.services.RelayFiles;
@@ -61,7 +62,7 @@ public final class SaveFileRoute extends Route {
         } catch (IOException e) {
             br.com.angatusistemas.lib.console.Console.warn("Could not show the saved file: %s", e.getMessage());
         }
-        ctx.json(Map.of("path", target.toString()));
+        ctx.contentType("application/json").result(GsonAPI.get().toJson(Map.of("path", target.toString())));
     }
 
     private static Path downloads() throws IOException {

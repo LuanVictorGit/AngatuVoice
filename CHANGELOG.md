@@ -7,6 +7,12 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [2.2.4] - 2026-11-12
+
+### Corrigido
+- Baixar um arquivo mostrava uma mensagem de erro técnica em inglês e não salvava: agora o arquivo vai para Downloads e a pasta abre.
+- Na tela cheia da transmissão, os controles continuavam na tela com o mouse parado, porque a linha de FPS, que atualiza a cada segundo, os trazia de volta. Agora somem dois segundos depois de o mouse parar, junto com o cursor.
+
 ## [2.2.3] - 2026-11-10
 
 ### Corrigido
