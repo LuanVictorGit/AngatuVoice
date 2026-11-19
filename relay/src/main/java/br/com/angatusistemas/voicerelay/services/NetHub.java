@@ -78,6 +78,10 @@ public final class NetHub {
     private static final Map<String, Session> BY_HTTP = new ConcurrentHashMap<>();
     private static final Map<String, Pending> PENDING = new ConcurrentHashMap<>();
     private static final Map<String, Integer> CONNECTIONS = new ConcurrentHashMap<>();
+    private static final Map<String, double[]> WRITE_BUCKETS = new ConcurrentHashMap<>();
+    private static final Set<String> WRITE_REQUESTS = Set.of("chat.send", "chat.edit", "chat.delete", "chat.react", "chat.pin", "chat.replaceFile");
+    private static final double WRITE_BURST = 30;
+    private static final double WRITES_PER_SECOND = 3;
 
     private NetHub() {
     }
@@ -333,6 +337,9 @@ public final class NetHub {
         }
         JsonObject answer;
         try {
+            if (WRITE_REQUESTS.contains(type) && !allowWrite(session.id)) {
+                throw new Refusal("Muitas ações em pouco tempo. Espere alguns segundos e tente de novo.");
+            }
             answer = type.startsWith("chat.") ? ChatService.handle(session, type, frame) : AdminService.handle(session, type, frame);
         } catch (Refusal refusal) {
             answer = failure(refusal.getMessage());
@@ -351,6 +358,23 @@ public final class NetHub {
         }
         answer.entrySet().forEach(entry -> res.add(entry.getKey(), entry.getValue()));
         session.send(res.toString());
+    }
+
+    /* A token bucket per person, shared by all of their sessions: a burst is fine, a script flooding the chat is not. */
+    private static boolean allowWrite(String person) {
+        long now = System.nanoTime();
+        double[] allowed = new double[1];
+        WRITE_BUCKETS.compute(person, (key, bucket) -> {
+            double[] b = bucket == null ? new double[]{WRITE_BURST, now} : bucket;
+            b[0] = Math.min(WRITE_BURST, b[0] + (now - (long) b[1]) / 1e9 * WRITES_PER_SECOND);
+            b[1] = now;
+            if (b[0] >= 1) {
+                b[0] -= 1;
+                allowed[0] = 1;
+            }
+            return b;
+        });
+        return allowed[0] == 1;
     }
 
     private static JsonObject failure(String message) {
@@ -471,7 +495,7 @@ public final class NetHub {
     /* The gate of the relay's HTTP routes: the token a live protocol-2 connection received in its welcome, never in the URL. */
     public static Session httpSession(Context ctx) {
         if (IpBlocklist.isBlocked(IP.get(ctx))) {
-            throw new ForbiddenResponse();
+            throw new ForbiddenResponse("Acesso recusado pelo servidor.");
         }
         String token = ctx.header("X-AV-Token");
         Session session = token == null || !TOKEN.matcher(token).matches() ? null : BY_HTTP.get(token);
@@ -525,6 +549,7 @@ public final class NetHub {
             return next.isEmpty() ? null : List.copyOf(next);
         });
         if (last[0]) {
+            WRITE_BUCKETS.remove(session.id);
             JsonObject offline = new JsonObject();
             offline.addProperty("t", "offline");
             offline.addProperty("id", session.id);

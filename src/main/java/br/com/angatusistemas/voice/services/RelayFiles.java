@@ -54,11 +54,14 @@ public final class RelayFiles {
     }
 
     /* The caller copies status, type and disposition, then streams the body; the body is closed by whoever writes it out. */
-    public static HttpResponse<InputStream> open(String path) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder(URI.create(PeerNetwork.httpBase() + path))
+    public static HttpResponse<InputStream> open(String path, String range) throws IOException, InterruptedException {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(PeerNetwork.httpBase() + path))
                 .timeout(Duration.ofMinutes(5))
-                .header("X-AV-Token", token())
-                .GET().build();
+                .header("X-AV-Token", token());
+        if (range != null && range.length() <= 64 && range.startsWith("bytes=")) {
+            builder.header("Range", range);
+        }
+        HttpRequest request = builder.GET().build();
         return HTTP.send(request, HttpResponse.BodyHandlers.ofInputStream());
     }
 

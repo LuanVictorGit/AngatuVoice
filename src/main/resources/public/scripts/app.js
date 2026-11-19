@@ -143,7 +143,7 @@
     if (!(await AV.confirm("Apagar todas as mensagens de " + chatTitle() + "?", "Elas somem para todos e não podem ser recuperadas.", "Apagar tudo", true))) return;
     try {
       const r = await AV.api("POST", "/api/admin/clear", { chat: AV.chat });
-      AV.toast((r && r.removed ? r.removed : 0) + " mensagens apagadas.", "ok");
+      AV.toast(AV.plural(r && r.removed ? r.removed : 0, "mensagem apagada", "mensagens apagadas") + ".", "ok");
     } catch (e) { AV.fail(e); }
   }
 
@@ -330,9 +330,10 @@
     const r = AV.state.net;
     const btn = (icon, title, onclick, cls, disabled) => E("button", { class: "btn btn-icon " + (cls || ""), title, "aria-label": title, onclick, disabled: disabled || false }, AV.icon(icon));
     AV.fill($("bottombar"), 
-      E("div", { class: "flex min-w-0 items-center gap-3" }, AV.avatar(me().id, me().name, "", true),
-        E("div", { class: "hidden min-w-0 sm:block" }, E("div", { class: "truncate font-semibold" }, me().name),
-          E("div", { class: "flex items-center gap-2 text-xs text-muted" }, E("span", { class: "dot " + (r.connected ? "dot-on" : "dot-off") }), r.connected ? "Conectado" : "Sem conexão"))),
+      E("button", { class: "me-card", title: "Editar perfil", "aria-label": "Editar perfil", onclick: openProfile }, AV.avatar(me().id, me().name, "", true),
+        E("div", { class: "hidden min-w-0 text-left sm:block" }, E("div", { class: "truncate font-semibold" }, me().name),
+          E("div", { class: "flex items-center gap-2 text-xs text-muted" }, E("span", { class: "dot " + (r.connected ? "dot-on" : "dot-off") }), r.connected ? "Conectado" : "Sem conexão")),
+        E("span", { class: "me-card-edit", "aria-hidden": "true" }, AV.icon("edit", "ic-sm"))),
       E("div", { class: "flex-1" }),
       E("div", { class: "flex items-center gap-2" },
         shareChip(),
@@ -344,30 +345,159 @@
         btn("settings", "Configurações", () => AV.openSettings("audio"))));
   }
 
+  /* ---- profile: nickname, a photo of one's own or one of the ten monsters ---- */
+
+  function openProfile() {
+    let busy = false;
+    const preview = E("div", { class: "profile-preview" });
+    const name = E("input", { class: "input", maxlength: 32, value: me().name, "aria-label": "Apelido", placeholder: "Como os outros vão ver você" });
+    const counter = E("small", { class: "text-faint" });
+    const file = E("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", hidden: true, "aria-label": "Escolher foto" });
+    const grid = E("div", { class: "monster-grid", role: "radiogroup", "aria-label": "Monstros" });
+    const actions = E("div", { class: "flex flex-wrap gap-2" });
+    const draw = () => {
+      AV.fill(preview, AV.avatar(me().id, me().name, "avatar-xl"),
+        E("div", { class: "min-w-0" }, E("div", { class: "truncate text-lg font-bold" }, me().name),
+          E("div", { class: "flex items-center gap-2 text-xs text-muted" }, E("span", { class: "mono" }, me().id),
+            E("button", { class: "btn btn-ghost btn-sm", onclick: () => navigator.clipboard.writeText(me().id).then(() => AV.toast("Código copiado.", "ok")) }, AV.icon("copy", "ic-sm"), "Copiar código"))));
+      counter.textContent = name.value.length + "/32";
+      AV.fill(actions,
+        E("button", { class: "btn", onclick: () => file.click() }, AV.icon("paperclip", "ic-sm"), "Enviar foto"),
+        me().avatar && E("button", { class: "btn btn-ghost", onclick: () => setPhoto("", "Foto removida. Você voltou ao seu monstro padrão.") }, AV.icon("trash", "ic-sm"), "Remover foto"));
+      const standard = AV.avatarIndex(me().id);
+      // A chosen monster is stored as a photo, so which one it was is remembered apart to keep it marked here.
+      const chosen = me().avatar ? Number(AV.state.settings["profile.monster"] === "" ? -1 : AV.state.settings["profile.monster"]) : standard;
+      AV.fill(grid, Array.from({ length: 10 }, (_, i) => E("button", { class: "monster" + (i === chosen ? " on" : ""), role: "radio",
+        "aria-checked": String(i === chosen), title: i === standard ? "Seu monstro padrão" : "Usar este monstro",
+        onclick: () => pickMonster(i) }, E("img", { src: "/assets/avatars/avatar-" + i + ".svg", alt: "Monstro " + (i + 1), draggable: "false" }),
+        i === standard && E("span", { class: "monster-tag" }, "padrão"))));
+    };
+    const setPhoto = async (data, done, monster) => {
+      if (busy) return;
+      busy = true;
+      try {
+        await AV.api("PUT", "/api/me/avatar", { data });
+        await AV.api("PUT", "/api/settings", { "profile.monster": monster === undefined ? "" : String(monster) });
+        await AV.refresh();
+        draw();
+        AV.toast(done, "ok");
+      } catch (e) { AV.fail(e); } finally { busy = false; }
+    };
+    /* The standard monster is simply no photo; any other one is drawn and sent as a photo, so everyone sees it. */
+    const pickMonster = async (i) => {
+      if (i === AV.avatarIndex(me().id)) { if (me().avatar) setPhoto("", "Você voltou ao seu monstro padrão."); return; }
+      const img = new Image();
+      img.src = "/assets/avatars/avatar-" + i + ".svg";
+      try {
+        await img.decode();
+        setPhoto(await AV.cropToWebp(img), "Monstro escolhido.", i);
+      } catch (e) { AV.toast("Não foi possível usar este monstro.", "error"); }
+    };
+    file.addEventListener("change", async () => {
+      const chosen = file.files[0];
+      file.value = "";
+      if (!chosen) return;
+      if (chosen.size > 5 * 1024 * 1024) { AV.toast("Escolha uma imagem de até 5 MB.", "error"); return; }
+      try { setPhoto(await AV.cropToWebp(chosen), "Foto atualizada."); } catch (e) { AV.toast("Não foi possível ler essa imagem.", "error"); }
+    });
+    name.addEventListener("input", () => { counter.textContent = name.value.length + "/32"; });
+    const saveName = async () => {
+      const next = name.value.trim();
+      if (!next) { AV.toast("Escreva um apelido.", "error"); return false; }
+      if (next === me().name) return true;
+      try {
+        await AV.api("PUT", "/api/me", { name: next });
+        await AV.refresh();
+        draw();
+        AV.toast("Apelido atualizado.", "ok");
+        return true;
+      } catch (e) { AV.fail(e); return false; }
+    };
+    name.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveName(); } });
+    AV.modal("Seu perfil", (body) => {
+      body.append(preview,
+        E("label", { class: "label mt-5" }, "Apelido"), E("div", { class: "flex items-center gap-2" }, name, counter),
+        E("small", { class: "mt-1 block text-faint" }, "É o nome que aparece para todos, nas conversas e nas chamadas."),
+        E("label", { class: "label mt-5" }, "Foto"), actions, file,
+        E("small", { class: "mt-1 block text-faint" }, "PNG, JPG, WebP ou GIF de até 5 MB. O centro da imagem vira um quadrado de 128 px."),
+        E("label", { class: "label mt-5" }, "Ou escolha um monstro"), grid);
+      draw();
+      body.dataset.wide = "1";
+    }, [
+      { label: "Fechar", run: (close) => close() },
+      { label: "Salvar apelido", primary: true, run: async (close) => { if (await saveName()) close(); } },
+    ]);
+  }
+  AV.openProfile = openProfile;
+
   async function shareToggle() {
     try {
       if (AV.rtc.localShare) { AV.rtc.stopShare(); return; }
-      const sources = AV.rtc.shareSources();
-      const source = sources.length > 1 ? await pickShareSource(sources) : sources[0];
-      if (source && AV.rtc.room && !AV.rtc.localShare) await AV.rtc.startShare(source.id);
+      const source = await pickShareSource(AV.rtc.shareSources());
+      if (source && AV.rtc.room && !AV.rtc.localShare) await AV.rtc.startShare(source.id, source.window);
     } catch (e) {
-      if (e && e.name !== "NotAllowedError" && e.name !== "AbortError") AV.toast("Não foi possível compartilhar a tela.", "error");
+      // The first capture of a session often fails while this window is not in front; saying so is the whole fix.
+      AV.toast(e && (e.name === "AbortError" || e.name === "NotAllowedError")
+        ? "Não consegui capturar a tela. Traga a janela do Angatu Voice para a frente e tente de novo."
+        : "Não foi possível compartilhar a tela.", "error");
     }
   }
 
-  function pickShareSource(sources) {
+  /* As in Discord: the whole screen, or one app or game on its own. Previews load a few at a time, since each one is a
+     short capture of its own. */
+  function pickShareSource(screens) {
     return new Promise((resolve) => {
       let chosen = null;
-      AV.modal("Escolha a tela", (body, done) => {
-        body.append(E("div", { class: "grid grid-cols-1 gap-3 sm:grid-cols-2" }, sources.map((source) => {
-          const preview = E("div", { class: "share-preview" }, E("span", { class: "text-xs text-muted" }, "Carregando prévia…"));
+      let tab = "screens";
+      let windows = null;
+      const grid = E("div", { class: "share-grid" });
+      const queue = [];
+      let running = 0;
+      const pump = () => {
+        while (running < 2 && queue.length) {
+          const [source, preview] = queue.shift();
+          running++;
           AV.rtc.previewSource(source.id)
             .then((url) => AV.fill(preview, E("img", { src: url, alt: "Prévia de " + source.label })))
-            .catch(() => AV.fill(preview, AV.icon("screen")));
-          return E("button", { class: "share-source", onclick: () => { chosen = source; done(); } },
-            preview, E("span", { class: "font-semibold" }, source.label));
-        })));
-      }, [{ label: "Cancelar", run: (done) => done() }], () => resolve(chosen));
+            .catch(() => AV.fill(preview, AV.icon(source.window ? "panel" : "screen")))
+            .finally(() => { running--; pump(); });
+        }
+      };
+      let done = null;
+      const card = (source) => {
+        const preview = E("div", { class: "share-preview" }, E("span", { class: "text-xs text-muted" }, "Carregando prévia…"));
+        queue.push([source, preview]);
+        return E("button", { class: "share-source", title: source.label, onclick: () => { chosen = source; done(); } },
+          preview, E("span", { class: "truncate font-semibold" }, source.label), source.app && E("small", { class: "truncate text-muted" }, source.app));
+      };
+      const draw = async () => {
+        queue.length = 0;
+        tabs.querySelectorAll("button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+        if (tab === "screens") {
+          AV.fill(grid, screens.map(card));
+        } else {
+          AV.fill(grid, E("div", { class: "col-span-full py-6 text-center text-sm text-muted" }, "Procurando janelas abertas…"));
+          try {
+            windows = await AV.rtc.shareWindows();
+          } catch (e) {
+            windows = [];
+          }
+          if (tab !== "apps") return;
+          AV.fill(grid, windows.length ? windows.map(card)
+            : E("div", { class: "col-span-full py-6 text-center text-sm text-muted" }, "Nenhuma janela aberta para compartilhar. Abra o aplicativo ou o jogo, deixe a janela visível e clique em Atualizar."));
+        }
+        pump();
+      };
+      const tabs = E("div", { class: "share-tabs", role: "tablist" },
+        E("button", { class: "tab", role: "tab", dataset: { tab: "screens" }, onclick: () => { tab = "screens"; draw(); } }, AV.icon("screen", "ic-sm"), "Tela inteira"),
+        E("button", { class: "tab", role: "tab", dataset: { tab: "apps" }, onclick: () => { tab = "apps"; draw(); } }, AV.icon("panel", "ic-sm"), "Aplicativo ou jogo"),
+        E("button", { class: "btn btn-ghost btn-sm ml-auto", onclick: () => draw() }, AV.icon("refresh", "ic-sm"), "Atualizar"));
+      AV.modal("O que você quer transmitir?", (body, close) => {
+        done = close;
+        body.dataset.wide = "1";
+        body.append(tabs, E("p", { class: "mb-3 text-xs text-muted" }, "Num aplicativo ou jogo, só a janela dele aparece, e com o áudio do sistema ligado vai só o som dele. Janelas minimizadas não aparecem na lista."), grid);
+        draw();
+      }, [{ label: "Cancelar", run: (close) => close() }], () => { queue.length = 0; resolve(chosen); });
     });
   }
 
@@ -857,7 +987,7 @@
     if (action === "ptt") { rtc.setPtt(state === "down"); return; }
     if (state !== "down") return;
     if (action === "mic") { rtc.toggleMute(); AV.toast(rtc.muted ? "Microfone silenciado." : "Microfone ativado."); }
-    if (action === "deafen") { rtc.toggleDeafen(); AV.toast(rtc.deafened ? "Áudio silenciado." : "Áudio ativado."); }
+    if (action === "deafen") { rtc.toggleDeafen(); AV.toast(rtc.deafened ? "Áudio e microfone silenciados." : rtc.muted ? "Áudio ativado. O microfone continua silenciado." : "Áudio e microfone ativados."); }
     if (action === "muteAll") { rtc.toggleMuteAll(); AV.toast(rtc.muteAll ? "Todos silenciados." : "Todos reativados."); }
     if (action === "call") {
       const ringing = (AV.state.incoming || [])[0];
@@ -910,7 +1040,7 @@
   }
 
   function wire() {
-    AV.on("open", () => { linkDown = false; AV.refresh().then(() => AV.conv.render()).catch(AV.fail); });
+    AV.on("open", () => { linkDown = false; if (AV.rtc) AV.rtc.setPtt(false); AV.refresh().then(() => AV.conv.render()).catch(AV.fail); });
     AV.on("link", (up) => { if (!up) { linkDown = true; renderBanners(); } });
     AV.on("expired", () => AV.modal("Sessão encerrada", (b) => b.append(E("p", { class: "text-muted" }, "Feche e abra o Angatu Voice de novo para continuar.")), []));
     AV.on("peer.online", ({ id, name }) => { AV.toast(name + " entrou na rede."); AV.rtc.resync(id); refreshSoon(); });
@@ -931,6 +1061,10 @@
     AV.on("call.incoming", ({ calls }) => { AV.state.incoming = calls; renderIncoming(); });
     AV.on("call.action", onCallAction);
     AV.on("call.declined", (d) => AV.rtc.onDeclined(d));
+    AV.on("chat.focus", ({ chat }) => {
+      const known = chat && (chat.startsWith("dm:") ? !!peerOf(chat.slice(3)) : !!groupOf(chat));
+      if (known && chat !== AV.chat) selectChat(chat);
+    });
     AV.on("call.missed", ({ name }) => { AV.sound("missed"); AV.toast("Chamada perdida de " + name + "."); });
     AV.on("call.signal", (d) => AV.rtc.handleSignal(d));
     AV.on("update", onUpdate);

@@ -7,6 +7,35 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [2.3.0] - 2026-11-19
+
+### Adicionado
+- Compartilhar a tela inteira ou só a janela de um aplicativo ou jogo, escolhendo pela prévia. Na janela, o som transmitido é só o daquele aplicativo.
+- Editar perfil: clique no seu nome, no canto de baixo, para trocar o apelido, enviar uma foto, removê-la ou escolher um dos dez monstros.
+- Copiar imagem do chat com o botão direito, para colar em qualquer lugar.
+- Visualizador de imagens com zoom: roda do mouse, duplo clique, botões + e −, arrastar a imagem ampliada, copiar e salvar.
+- Som próprio para menções e mensagens diretas.
+- Botão direito nos campos de texto mostra recortar, copiar, colar e as sugestões do corretor.
+
+### Alterado
+- Silenciar o fone silencia o microfone junto. Ao reativar o fone, o microfone volta como estava.
+- O ping de cada pessoa agora é o caminho de verdade até ela (a sua ida ao servidor somada à dela), e não uma cópia do seu.
+- Notificações mostram o grupo ("Fulano em #grupo"), juntam várias mensagens seguidas da mesma conversa num aviso só, e clicar no aviso abre a conversa.
+- O áudio da chamada passa por um limitador, que evita estouro com várias vozes altas, e mudar um volume não faz mais estalo.
+- Ao conectar ou desconectar um fone, o app volta a usar o microfone e a saída escolhidos.
+- Vídeos do chat podem ser avançados e voltados.
+
+### Corrigido
+- A transmissão de tela não funcionava para algumas pessoas: quando a conexão direta não abria, o app desfazia a ligação a cada meio minuto e cortava a imagem que chegava pelo servidor.
+- Quem tem internet lenta não derruba mais a qualidade da transmissão para os outros; um codificador de vídeo travado se recupera sozinho; quem transmite e troca de rede continua a transmissão.
+- Ctrl + roda do mouse e Ctrl + / − não mudam mais o tamanho da janela, e F5, Ctrl + R e os botões laterais do mouse não recarregam a interface.
+- Com "Apertar para falar" ligado e nenhum atalho definido, o microfone ficava mudo para sempre.
+- Um atalho seguro enquanto era trocado nas configurações deixava o "Apertar para falar" aberto.
+- Mensagens antigas que falham ao carregar mostram um botão para tentar de novo.
+- Códigos de emoji dentro de código e de links não viram mais emoji.
+- As configurações diziam que mensagens antigas saem com 1 GB; nada é apagado sozinho.
+- Arquivos salvos do chat chegam marcados como vindos da internet, e o Windows avisa antes de abrir um programa.
+
 ## [2.2.4] - 2026-11-12
 
 ### Corrigido

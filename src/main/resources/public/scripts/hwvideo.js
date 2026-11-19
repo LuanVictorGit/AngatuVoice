@@ -8,6 +8,7 @@
 (function () {
   // High, then Main, then Baseline: older integrated cards do not always take the first ones.
   const CODECS = ["avc1.640033", "avc1.4d0033", "avc1.420033"];
+  const PROBE_TIMEOUT_MS = 4000;
   const PROBE = { width: 1920, height: 1080, framerate: 30, bitrate: 4000000, hardwareAcceleration: "prefer-hardware", latencyMode: "realtime", avc: { format: "annexb" } };
   const WORKER = "/scripts/hwvideo-worker.js";
 
@@ -41,8 +42,12 @@
     if (!support) {
       support = (async () => {
         if (!window.VideoEncoder || !window.VideoDecoder || !window.MediaStreamTrackProcessor || !window.MediaStreamTrackGenerator || !window.Worker) return { encode: null, decode: false };
-        return { encode: await encoderCodec(), decode: await decodesH264() };
+        // Some drivers never answer these probes: after a few seconds the call goes on without the card.
+        const timeout = new Promise((resolve) => setTimeout(() => resolve({ encode: null, decode: false, timedOut: true }), PROBE_TIMEOUT_MS));
+        return Promise.race([(async () => ({ encode: await encoderCodec(), decode: await decodesH264() }))(), timeout]);
       })();
+      // A timed-out answer is asked again next time instead of disabling the card for the whole session.
+      support.then((r) => { if (r.timedOut) support = null; });
     }
     return support;
   };

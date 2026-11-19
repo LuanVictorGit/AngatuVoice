@@ -117,23 +117,26 @@
   function select(c) {
     if (AV.voice.recording()) AV.voice.finish(false);
     if (chat) {
-      drafts.set(chat, $("composer").value);
+      drafts.set(chat, { text: $("composer").value, names: mentionNames });
       state(chat).anchor = atBottom ? null : captureAnchor();
+      state(chat).unreadFrom = null;
     }
     chat = c;
     reply = null;
     editing = null;
     suggest = null;
     panel = null;
+    files.forEach(dropFile);
     files = [];
     newBelow = 0;
-    mentionNames = new Map();
+    const draft = drafts.get(c);
+    mentionNames = draft ? draft.names : new Map();
     closeMenu();
     pinsList = null;
     pinIndex = 0;
     renderPins();
     loadPins();
-    $("composer").value = drafts.get(c) || "";
+    $("composer").value = draft ? draft.text : "";
     autosize();
     renderComposer();
     const s = state(c);
@@ -141,6 +144,7 @@
       render();
       restoreAnchor(s.anchor);
       refreshTail(c);
+      markRead();
     } else {
       render();
       load(c);
@@ -165,6 +169,8 @@
     const divider = s.unreadFrom && document.querySelector('[data-id="' + CSS.escape(s.unreadFrom) + '"]');
     if (divider) scrollToNode(divider, false); else scrollBottom();
     markRead();
+    // Live events that came while this page was on its way were not merged into it: catch up once.
+    if (s.loaded) refreshTail(c);
   }
 
   /* Where the "novas" line goes: before the last unread messages from others, as many as the server counted. */
@@ -194,6 +200,7 @@
     const c = chat;
     const s = state(c);
     if (busyOlder || !s.hasOlder || !s.msgs.length) return;
+    if (s.olderFailed) return;
     busyOlder = true;
     try {
       const msgs = await page(c, { before: String(s.msgs[0].seq) });
@@ -203,7 +210,10 @@
       merge(s, msgs);
       render();
       restoreAnchor(anchor);
-    } catch (e) { AV.fail(e); } finally { busyOlder = false; }
+    } catch (e) {
+      s.olderFailed = true;
+      if (c === chat) render();
+    } finally { busyOlder = false; }
   }
 
   async function loadNewer() {
@@ -259,16 +269,19 @@
     atBottom = true;
   }
 
+  const topIn = (node) => node.getBoundingClientRect().top - box().getBoundingClientRect().top + box().scrollTop;
+
   function scrollToNode(node, center) {
     const b = box();
-    b.scrollTop = node.offsetTop - (center ? (b.clientHeight - node.offsetHeight) / 2 : 24);
+    b.scrollTop = topIn(node) - (center ? (b.clientHeight - node.offsetHeight) / 2 : 24);
     onScroll();
   }
 
   function captureAnchor() {
     const b = box();
     for (const node of b.querySelectorAll(".msg[data-id]")) {
-      if (node.offsetTop + node.offsetHeight > b.scrollTop) return { id: node.dataset.id, offset: node.offsetTop - b.scrollTop };
+      const top = topIn(node);
+      if (top + node.offsetHeight > b.scrollTop) return { id: node.dataset.id, offset: top - b.scrollTop };
     }
     return null;
   }
@@ -276,7 +289,7 @@
   function restoreAnchor(anchor) {
     if (!anchor) { scrollBottom(); return; }
     const node = box().querySelector('.msg[data-id="' + CSS.escape(anchor.id) + '"]');
-    if (node) box().scrollTop = node.offsetTop - anchor.offset; else scrollBottom();
+    if (node) box().scrollTop = topIn(node) - anchor.offset; else scrollBottom();
     onScroll();
   }
 
@@ -331,35 +344,75 @@
     } else if (!s.loaded) {
       nodes.push(E("div", { class: "empty" }, E("div", { class: "spinner", "aria-hidden": "true" }), "Carregando mensagens…"));
     } else {
-      nodes.push(s.hasOlder ? E("div", { class: "chat-more" }, E("div", { class: "spinner", "aria-hidden": "true" }), "Carregando mensagens anteriores…") : intro());
+      nodes.push(s.olderFailed ? fixed("older-failed:" + chat, () => E("div", { class: "chat-more" }, "Não foi possível carregar as mensagens anteriores.",
+        E("button", { class: "btn btn-sm", onclick: () => { s.olderFailed = false; render(); loadOlder(); } }, "Tentar de novo")))
+        : s.hasOlder ? fixed("older", () => E("div", { class: "chat-more" }, E("div", { class: "spinner", "aria-hidden": "true" }), "Carregando mensagens anteriores…"))
+          : fixed("intro:" + chat, intro));
       let prev = null;
       for (const m of s.msgs) {
-        if (!prev || new Date(prev.ts).toDateString() !== new Date(m.ts).toDateString()) nodes.push(E("div", { class: "day-sep", role: "separator" }, AV.day(m.ts)));
-        if (s.unreadFrom === m.id) nodes.push(E("div", { class: "unread-sep", role: "separator" }, E("span", {}, "Novas")));
+        if (!prev || new Date(prev.ts).toDateString() !== new Date(m.ts).toDateString()) {
+          const day = AV.day(m.ts);
+          nodes.push(fixed("day:" + new Date(m.ts).toDateString() + ":" + day, () => E("div", { class: "day-sep", role: "separator" }, day)));
+        }
+        if (s.unreadFrom === m.id) nodes.push(fixed("unread", () => E("div", { class: "unread-sep", role: "separator" }, E("span", {}, "Novas"))));
         nodes.push(row(m, prev));
         prev = m;
       }
-      if (s.hasNewer) nodes.push(E("div", { class: "chat-more" }, E("div", { class: "spinner", "aria-hidden": "true" }), "Carregando mensagens mais novas…"));
+      if (s.hasNewer) nodes.push(fixed("newer", () => E("div", { class: "chat-more" }, E("div", { class: "spinner", "aria-hidden": "true" }), "Carregando mensagens mais novas…")));
       else pendingOf(chat).forEach((p) => { nodes.push(pendingRow(p, prev)); prev = { from: me().id, ts: p.ts }; });
     }
     const keep = atBottom;
-    AV.fill($("msg-list"), ...nodes);
+    reconcile($("msg-list"), nodes);
     if (keep && !s.hasNewer && s.loaded) scrollBottom();
     renderJump();
     renderTyping();
   }
 
-  /* A row is rebuilt only when something it shows changed, so images and videos are not loaded again on every event. */
+  /* Separators and banners are reused like rows, so that only what changed ever moves in the list. */
+  const fixedCache = new Map();
+  function fixed(key, build) {
+    if (!fixedCache.has(key)) fixedCache.set(key, build());
+    return fixedCache.get(key);
+  }
+
+  /* Puts the list in order touching only what differs: rows that stay are never detached, so a playing video keeps
+     playing and assistive technology does not read the whole conversation again. */
+  function reconcile(parent, nodes) {
+    const wanted = new Set(nodes);
+    [...parent.children].forEach((child) => { if (!wanted.has(child)) child.remove(); });
+    let ref = parent.firstChild;
+    for (const node of nodes) {
+      if (node === ref) { ref = ref.nextSibling; continue; }
+      parent.insertBefore(node, ref);
+    }
+  }
+
+  /* A row is rebuilt only when something it shows changed, so images and videos are not loaded again on every event.
+     The ticks change often and are painted in place; a row being edited is left alone so the draft is never lost. */
   function row(m, prev) {
     const compact = !!(prev && prev.from === m.from && !m.replyTo && m.ts - prev.ts < GROUP_MS
       && new Date(prev.ts).toDateString() === new Date(m.ts).toDateString());
     const key = [compact, m.edited, m.text, JSON.stringify(m.reactions || []), JSON.stringify(m.embeds || []), JSON.stringify(m.attachments || []),
-      JSON.stringify(m.ref || null), m.pinned, (tickOf(m) || {}).state, (tickOf(m) || {}).title, editing === m.id, adminOn(), AV.avatarVersion(m.from), nameOf(m.from)].join("|");
+      JSON.stringify(m.ref || null), m.pinned, editing === m.id, adminOn(), AV.avatarVersion(m.from), nameOf(m.from)].join("|");
     const cached = rowCache.get(m.id);
-    if (cached && cached.key === key) return cached.node;
-    const node = buildRow(m, compact);
-    rowCache.set(m.id, { key, node });
+    let node;
+    if (cached && (cached.key === key || (cached.editing && editing === m.id))) node = cached.node;
+    else {
+      node = buildRow(m, compact);
+      rowCache.set(m.id, { key, node, editing: editing === m.id });
+    }
+    paintTick(node, m);
     return node;
+  }
+
+  function paintTick(node, m) {
+    const slot = node.querySelector(".tick-slot");
+    const tick = tickOf(m);
+    if (!slot || !tick) return;
+    const sig = tick.state + "|" + tick.title;
+    if (slot.dataset.sig === sig) return;
+    slot.dataset.sig = sig;
+    AV.fill(slot, tickNode(m.id, tick));
   }
 
   function buildRow(m, compact) {
@@ -378,8 +431,8 @@
         compact && m.pinned > 0 && E("span", { class: "msg-pin", title: "Fixada por " + nameOf(m.pinnedBy || m.from) }, AV.icon("pin", "ic-sm"), "Fixada"),
         editing === m.id ? editBox(m) : m.text && E("div", { class: "msg-text selectable" }, AV.md.render(m.text, fmt),
           m.edited ? E("span", { class: "msg-edited", title: "Editada em " + full(m.edited) }, " (editada)") : null,
-          m.from === me().id && tickNode(m.id, tickOf(m))),
-        attachmentsOf(m), embedsOf(m), !m.text && m.from === me().id && E("div", { class: "msg-ticks" }, tickNode(m.id, tickOf(m))), reactionsOf(m))),
+          m.from === me().id && E("span", { class: "tick-slot" })),
+        attachmentsOf(m), embedsOf(m), !m.text && m.from === me().id && E("div", { class: "msg-ticks" }, E("span", { class: "tick-slot" })), reactionsOf(m))),
     toolbar(m));
     return node;
   }
@@ -415,7 +468,8 @@
       const src = "/api/files/" + encodeURIComponent(a.id);
       if (a.type.startsWith("image/")) {
         const size = fit(a.width, a.height, 400, 320);
-        return E("button", { class: "att-media", title: a.name, "aria-label": "Abrir imagem " + a.name, onclick: () => lightbox(images, images.indexOf(a)) },
+        return E("button", { class: "att-media", title: a.name, "aria-label": "Abrir imagem " + a.name, onclick: () => lightbox(images, images.indexOf(a)),
+          oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); openMenu(m, e.clientX, e.clientY, a, images); } },
           E("img", { src, alt: a.name, width: size.w, height: size.h, loading: "lazy", draggable: "false" }));
       }
       if (a.type.startsWith("video/")) {
@@ -637,15 +691,30 @@
       E("span", { class: "flex-1 truncate" }, "Respondendo a ", E("b", {}, nameOf(reply.from))),
       E("button", { class: "btn btn-ghost btn-icon !h-7 !w-7", title: "Cancelar resposta", "aria-label": "Cancelar resposta", onclick: cancelReply }, AV.icon("x", "ic-sm"))]);
     $("composer-reply").hidden = !reply;
+    renderFiles();
+    renderSuggest();
+    renderPanel();
+    clearTimeout(mutedTimer);
+    // Being silenced ends on its own: the composer opens again at that moment, even without a word from the server.
+    if (muted) mutedTimer = setTimeout(() => { renderComposer(); AV.renderHeaderSoon(); }, Math.min(2 ** 31 - 1, me().mutedUntil - Date.now() + 500));
+  }
+
+  let mutedTimer = 0;
+
+  function dropFile(f) {
+    if (f.xhr && f.status !== "done") f.xhr.abort();
+    if (f.preview) URL.revokeObjectURL(f.preview);
+  }
+
+  function renderFiles() {
     AV.fill($("composer-files"), files.map((f) => E("div", { class: "file-chip" + (f.status === "error" ? " error" : "") },
       f.preview ? E("img", { src: f.preview, alt: "", draggable: "false" }) : AV.icon("file", "ic-sm"),
       E("div", { class: "min-w-0 flex-1" }, E("div", { class: "truncate text-sm font-semibold" }, f.name),
         E("small", { class: f.status === "error" ? "text-danger" : "text-muted" }, f.status === "error" ? f.error : f.status === "done" ? AV.bytes(f.size) : f.status === "preparing" ? "Preparando…" : "Enviando " + Math.round(f.progress * 100) + "%"),
         f.status === "uploading" && E("div", { class: "progress mt-1" }, E("i", { style: "width:" + Math.round(f.progress * 100) + "%" }))),
-      E("button", { class: "btn btn-ghost btn-icon !h-7 !w-7", title: "Remover anexo", "aria-label": "Remover " + f.name, onclick: () => { files = files.filter((x) => x !== f); renderComposer(); } }, AV.icon("x", "ic-sm")))));
+      E("button", { class: "btn btn-ghost btn-icon !h-7 !w-7", title: "Remover anexo", "aria-label": "Remover " + f.name, onclick: () => { dropFile(f); files = files.filter((x) => x !== f); renderComposer(); } }, AV.icon("x", "ic-sm")))));
     $("composer-files").hidden = files.length === 0;
-    renderSuggest();
-    renderPanel();
+    syncSendButton();
   }
 
   /* As in phone messengers: an empty composer offers the microphone, anything typed or attached offers send. */
@@ -669,7 +738,8 @@
   function encodeMentions(text, names) {
     let out = text;
     [...names.entries()].sort((a, b) => b[0].length - a[0].length).forEach(([name, id]) => {
-      out = out.split("@" + name).join("<@" + id + ">");
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      out = out.replace(new RegExp("(^|[^\\p{L}\\p{N}_.@])@" + escaped + "(?![\\p{L}\\p{N}_])", "gu"), (_, lead) => lead + "<@" + id + ">");
     });
     return AV.emoji.shortcodes(out);
   }
@@ -730,6 +800,7 @@
     } catch (e) {
       p.status = "failed";
       p.error = e.message;
+      p.offline = !e.status || e.status === 503;
       AV.sound("error");
       if (p.chat === chat) render();
     }
@@ -764,7 +835,7 @@
         finish(name + ".md");
         close();
       };
-      const close = AV.modal("Nome do arquivo", (body, closeIt) => {
+      AV.modal("Nome do arquivo", (body, closeIt) => {
         body.append(E("p", { class: "mb-3 text-sm text-muted" }, "O texto é longo e vai como um arquivo Markdown, mostrado formatado na conversa."),
           E("div", { class: "flex items-center gap-2" }, input, E("span", { class: "text-muted" }, ".md")));
         input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); confirm(closeIt); } });
@@ -773,13 +844,14 @@
         { label: "Enviar", primary: true, run: (c) => confirm(c) },
       ], () => finish(null));
       input.select();
-      void close;
     });
   }
 
   /* A finished recording is sent at once, as its own message, keeping the reply it was recorded for. */
-  function sendVoice(file) {
+  async function sendVoice(file) {
     const target = chat;
+    const s = state(target);
+    if (s.hasNewer) { s.loaded = false; await load(target); }
     const p = { nonce: crypto.randomUUID(), chat: target, text: "", replyTo: reply ? reply.id : null, ref: reply, files: [], upload: file, voice: true, ts: Date.now(), status: "sending" };
     reply = null;
     renderComposer();
@@ -860,7 +932,7 @@
     const c = $("composer");
     const before = c.value.slice(0, c.selectionStart);
     let m;
-    if ((m = /(^|\s)@([^\s@]{0,32})$/.exec(before))) {
+    if ((m = /(^|\s)@([^@\n]{0,32})$/.exec(before))) {
       const q = AV.emoji.fold(m[2]);
       const items = participants().filter((id) => AV.emoji.fold(nameOf(id)).includes(q)).slice(0, 8)
         .map((id) => ({ label: nameOf(id), id, avatar: true }));
@@ -981,19 +1053,21 @@
       if (ready.type.startsWith("image/")) entry.preview = URL.createObjectURL(ready);
       if (ready.size > MAX_FILE_BYTES) throw new Error("Passa de 25 MB.");
       entry.status = "uploading";
-      renderComposer();
-      entry.att = await upload(ready, (p) => { entry.progress = p; renderComposer(); });
+      renderFiles();
+      entry.att = await upload(ready, (p) => { entry.progress = p; if (files.includes(entry)) renderFiles(); }, entry);
       entry.status = "done";
     } catch (e) {
       entry.status = "error";
       entry.error = e.message || "Falhou.";
     }
-    if (files.includes(entry)) renderComposer();
+    if (files.includes(entry)) renderFiles();
   }
 
-  function upload(file, progress) {
+  function upload(file, progress, entry) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
+      if (entry) entry.xhr = xhr;
+      xhr.onabort = () => reject(new Error("Envio cancelado."));
       xhr.open("POST", "/api/attachments");
       xhr.setRequestHeader("X-File-Name", encodeURIComponent(file.name));
       // Sent as binary with the real type beside it: a text body would be read by the input filter before the route.
@@ -1017,14 +1091,19 @@
     if (menu) { menu.remove(); menu = null; }
   }
 
-  function openMenu(m, x, y) {
+  /* The message menu; when it was opened on an image, the image's own actions come first, as in Discord. */
+  function openMenu(m, x, y, image, images) {
     closeMenu();
     const mine = m.from === me().id;
     const item = (icon, label, run, danger) => E("button", { class: "ctx-item" + (danger ? " danger" : ""), role: "menuitem", onclick: (e) => { closeMenu(); run(e); } }, AV.icon(icon, "ic-sm"), label);
     const sep = () => E("div", { class: "ctx-sep", role: "separator" });
-    const quick = E("div", { class: "ctx-quick" }, ["👍", "❤️", "😂", "🔥"].map((char) => E("button", { class: "emoji-btn", title: "Reagir com " + char, onclick: () => { closeMenu(); react(m, char, true); } }, char)));
-    menu = E("div", { class: "ctx-menu card", role: "menu", "aria-label": "Ações da mensagem", onkeydown: (e) => { if (e.key === "Escape") { e.stopPropagation(); closeMenu(); } } },
+    const quick = E("div", { class: "ctx-quick" }, ["👍", "❤️", "😂", "🔥"].map((char) => {
+      const mineAlready = (m.reactions || []).some((r) => r.emoji === char && (r.users || []).includes(me().id));
+      return E("button", { class: "emoji-btn" + (mineAlready ? " on" : ""), title: (mineAlready ? "Tirar reação " : "Reagir com ") + char, onclick: () => { closeMenu(); react(m, char, !mineAlready); } }, char);
+    }));
+    showMenu(E("div", { class: "ctx-menu card", role: "menu", "aria-label": "Ações da mensagem", onkeydown: (e) => { if (e.key === "Escape") { e.stopPropagation(); closeMenu(); } } },
       quick,
+      image && [imageItems(image, images, item), sep()],
       item("smile", "Adicionar reação", () => openPicker(m)),
       item("reply", "Responder", () => startReply(m)),
       canEdit(m) && m.text && item("edit", mine ? "Editar mensagem" : "Editar mensagem (administrador)", () => startEdit(m)),
@@ -1035,7 +1114,11 @@
         item("clock", "Silenciar por 10 minutos", () => AV.admin("mute", { id: m.from, minutes: 10 }, nameOf(m.from) + " foi silenciado por 10 minutos.")),
         item("logout", "Expulsar " + nameOf(m.from), () => AV.admin("kick", { id: m.from }, nameOf(m.from) + " foi desconectado.")),
         item("ban", "Banir " + nameOf(m.from), () => AV.banDialog(m.from), true)],
-      (mine || adminOn()) && [sep(), item("trash", "Apagar mensagem", (e) => remove(m, e.shiftKey), true)]);
+      (mine || adminOn()) && [sep(), item("trash", "Apagar mensagem", (e) => remove(m, e.shiftKey), true)]), x, y);
+  }
+
+  function showMenu(node, x, y) {
+    menu = node;
     document.body.append(menu);
     /* Always fully on screen and above everything: it opens upwards when the space below is short, and scrolls if even
        the whole height is not enough. The visible height comes from visualViewport when the browser reports it. */
@@ -1051,29 +1134,174 @@
 
   /* ---- image viewer ---- */
 
+  /* ---- images: copy like Discord, and a viewer that really zooms ---- */
+
+  /* The Windows clipboard takes PNG from a page, so WebP and GIF are redrawn as PNG first (a GIF gives its first frame). */
+  async function copyImage(a) {
+    try {
+      const res = await fetch("/api/files/" + encodeURIComponent(a.id));
+      if (!res.ok) throw new Error("Imagem indisponível.");
+      let blob = await res.blob();
+      if (blob.type !== "image/png") {
+        const bitmap = await createImageBitmap(blob);
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        canvas.getContext("2d").drawImage(bitmap, 0, 0);
+        bitmap.close();
+        blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+      }
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      AV.toast("Imagem copiada.", "ok");
+    } catch (e) {
+      AV.toast("Não foi possível copiar a imagem.", "error");
+    }
+  }
+
+  function imageItems(a, images, item) {
+    return [
+      item("copy", "Copiar imagem", () => copyImage(a)),
+      item("download", "Salvar imagem em Downloads", () => saveFile(a)),
+      images && item("maximize", "Abrir imagem", () => lightbox(images, Math.max(0, images.indexOf(a)))),
+    ];
+  }
+
+  function imageMenu(a, images, x, y) {
+    closeMenu();
+    const item = (icon, label, run) => E("button", { class: "ctx-item", role: "menuitem", onclick: () => { closeMenu(); run(); } }, AV.icon(icon, "ic-sm"), label);
+    showMenu(E("div", { class: "ctx-menu card", role: "menu", "aria-label": "Ações da imagem", onkeydown: (e) => { if (e.key === "Escape") { e.stopPropagation(); closeMenu(); } } },
+      imageItems(a, images, item)), x, y);
+  }
+
+  /* Fit on open; the wheel zooms around the cursor, a double click switches between fit and close-up, dragging pans. */
   function lightbox(images, start) {
     let index = start;
+    let fit = 1;
+    let scale = 1;
+    let x = 0;
+    let y = 0;
+    let drag = null;
+    const MAX = 8;
     const img = E("img", { class: "lightbox-img", alt: "", draggable: "false" });
-    const caption = E("div", { class: "truncate text-sm" });
-    const show = () => { img.src = "/api/files/" + encodeURIComponent(images[index].id); img.alt = images[index].name; caption.textContent = images[index].name; };
+    const stage = E("div", { class: "lightbox-stage" }, img);
+    const caption = E("div", { class: "min-w-0 flex-1 truncate text-sm" });
+    const level = E("span", { class: "lightbox-level", "aria-live": "polite" }, "100%");
+    const apply = (animate) => {
+      img.style.transition = animate ? "transform 160ms var(--av-ease)" : "none";
+      img.style.transform = "translate(" + x + "px, " + y + "px) scale(" + scale + ")";
+      level.textContent = Math.round(scale * 100) + "%";
+      stage.classList.toggle("zoomed", scale > fit * 1.01);
+    };
+    const clamp = () => {
+      const w = img.naturalWidth * scale;
+      const h = img.naturalHeight * scale;
+      const r = stage.getBoundingClientRect();
+      const mx = Math.max(0, (w - r.width) / 2);
+      const my = Math.max(0, (h - r.height) / 2);
+      x = Math.max(-mx, Math.min(mx, x));
+      y = Math.max(-my, Math.min(my, y));
+    };
+    /* Zoom keeping the point under (cx, cy) in place; cx/cy are relative to the stage centre. */
+    const zoomTo = (next, cx, cy, animate) => {
+      const target = Math.max(Math.min(fit, 1), Math.min(MAX, next));
+      const k = target / scale;
+      x = cx - (cx - x) * k;
+      y = cy - (cy - y) * k;
+      scale = target;
+      clamp();
+      apply(animate);
+    };
+    const reset = () => {
+      const r = stage.getBoundingClientRect();
+      fit = Math.min(1, r.width / img.naturalWidth, r.height / img.naturalHeight) || 1;
+      scale = fit;
+      x = 0;
+      y = 0;
+      apply(false);
+    };
+    const show = () => {
+      const a = images[index];
+      img.src = "/api/files/" + encodeURIComponent(a.id);
+      img.alt = a.name;
+      caption.textContent = a.name + (images.length > 1 ? " · " + (index + 1) + " de " + images.length : "");
+    };
+    img.addEventListener("load", reset);
     const step = (d) => { index = (index + d + images.length) % images.length; show(); };
-    const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+    const close = () => {
+      overlay.remove();
+      document.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("resize", reset);
+    };
     const onKey = (e) => {
-      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); }
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return; }
+      // Tab stays inside the viewer: focus behind it would type into a composer nobody can see.
+      if (e.key === "Tab") {
+        const stops = [...overlay.querySelectorAll("button")];
+        if (!stops.length) return;
+        const at = stops.indexOf(document.activeElement);
+        e.preventDefault();
+        stops[(at + (e.shiftKey ? -1 : 1) + stops.length) % stops.length].focus();
+        return;
+      }
       if (e.key === "ArrowRight" && images.length > 1) step(1);
       if (e.key === "ArrowLeft" && images.length > 1) step(-1);
+      if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomTo(scale * 1.25, 0, 0, true); }
+      if (e.key === "-" || e.key === "_") { e.preventDefault(); zoomTo(scale / 1.25, 0, 0, true); }
+      if (e.key === "0") { e.preventDefault(); reset(); }
     };
-    const overlay = E("div", { class: "overlay lightbox", role: "dialog", "aria-modal": "true", "aria-label": "Imagem", onmousedown: (e) => { if (e.target === overlay) close(); } },
+    const point = (e) => {
+      const r = stage.getBoundingClientRect();
+      return { cx: e.clientX - r.left - r.width / 2, cy: e.clientY - r.top - r.height / 2 };
+    };
+    stage.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const p = point(e);
+      zoomTo(scale * Math.pow(1.0018, -e.deltaY), p.cx, p.cy, false);
+    }, { passive: false });
+    stage.addEventListener("dblclick", (e) => {
+      const p = point(e);
+      if (scale > fit * 1.01) { scale = fit; x = 0; y = 0; apply(true); }
+      else zoomTo(Math.max(fit * 2.5, 1), p.cx, p.cy, true);
+    });
+    stage.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || scale <= fit * 1.01) return;
+      drag = { px: e.clientX, py: e.clientY, x, y };
+      stage.setPointerCapture(e.pointerId);
+      stage.classList.add("dragging");
+    });
+    stage.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      x = drag.x + e.clientX - drag.px;
+      y = drag.y + e.clientY - drag.py;
+      clamp();
+      apply(false);
+    });
+    const endDrag = () => { drag = null; stage.classList.remove("dragging"); };
+    stage.addEventListener("pointerup", endDrag);
+    stage.addEventListener("pointercancel", endDrag);
+    stage.addEventListener("contextmenu", (e) => { e.preventDefault(); imageMenu(images[index], null, e.clientX, e.clientY); });
+    const tool = (icon, label, run, text) => E("button", { class: "btn btn-ghost " + (text ? "btn-sm" : "btn-icon"), title: label, "aria-label": label, onclick: run }, icon && AV.icon(icon, "ic-sm"), text);
+    const overlay = E("div", { class: "lightbox", role: "dialog", "aria-modal": "true", "aria-label": "Imagem",
+      onmousedown: (e) => { if (e.target === overlay) close(); } },
       E("div", { class: "lightbox-bar" }, caption,
-        E("button", { class: "btn", onclick: () => saveFile(images[index]) }, AV.icon("download", "ic-sm"), "Salvar"),
-        E("button", { class: "btn btn-ghost btn-icon", "aria-label": "Fechar", onclick: close }, AV.icon("x"))),
-      images.length > 1 && E("button", { class: "btn btn-icon lightbox-prev", "aria-label": "Imagem anterior", onclick: () => step(-1) }, "‹"),
-      img,
-      images.length > 1 && E("button", { class: "btn btn-icon lightbox-next", "aria-label": "Próxima imagem", onclick: () => step(1) }, "›"));
-    show();
+        E("div", { class: "lightbox-zoom" },
+          tool("minus", "Diminuir (−)", () => zoomTo(scale / 1.25, 0, 0, true)),
+          level,
+          tool("plus", "Aumentar (+)", () => zoomTo(scale * 1.25, 0, 0, true)),
+          tool(null, "Tamanho real", () => zoomTo(1, 0, 0, true), "100%"),
+          tool(null, "Caber na tela (0)", reset, "Ajustar")),
+        tool("copy", "Copiar imagem", () => copyImage(images[index])),
+        tool("download", "Salvar em Downloads", () => saveFile(images[index])),
+        tool("x", "Fechar (Esc)", close)),
+      stage,
+      images.length > 1 && E("button", { class: "btn btn-icon lightbox-prev", "aria-label": "Imagem anterior", onclick: () => step(-1) }, AV.icon("chevron-left")),
+      images.length > 1 && E("button", { class: "btn btn-icon lightbox-next", "aria-label": "Próxima imagem", onclick: () => step(1) }, AV.icon("chevron-right")));
     document.addEventListener("keydown", onKey, true);
+    window.addEventListener("resize", reset);
     document.getElementById("overlay-root").append(overlay);
+    show();
   }
+
 
   /* ---- pinned messages: a panel inside the conversation column, above the messages ---- */
 
@@ -1173,9 +1401,10 @@
     const seen = here && atBottom && document.hasFocus() && !(s && s.hasNewer);
     if (!seen) {
       const u = AV.state.unread[m.chat] || { count: 0, mentions: 0 };
-      AV.state.unread[m.chat] = { count: u.count + 1, mentions: u.mentions + ((m.mentions || []).includes(me().id) ? 1 : 0) };
+      const mentioned = (m.mentions || []).includes(me().id);
+      AV.state.unread[m.chat] = { count: u.count + 1, mentions: u.mentions + (mentioned ? 1 : 0) };
       AV.renderNav();
-      AV.sound("message");
+      AV.sound(mentioned || isDm(m.chat) ? "mention" : "message");
     }
     if (here) { render(); markRead(); }
   }
@@ -1218,7 +1447,7 @@
       if (!connected) return;
       [...states.keys()].filter((c) => c !== chat).forEach((c) => states.delete(c));
       if (chat) refreshTail(chat);
-      pendingOf(chat).filter((p) => p.status === "failed").forEach(deliver);
+      pendingOf(chat).filter((p) => p.status === "failed" && p.offline).forEach(deliver);
     });
 
     const c = $("composer");

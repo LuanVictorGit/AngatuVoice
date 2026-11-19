@@ -25,6 +25,7 @@ import java.awt.event.WindowEvent;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
+import java.util.Set;
 import javax.imageio.ImageIO;
 import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
@@ -54,6 +55,12 @@ final class BrowserWindow {
 
     private static final String JCEF_VERSION = "152.0.6";
     private static final int RELOAD_LIMIT = 3;
+    private static final Set<Integer> EDIT_COMMANDS = Set.of(CefMenuModel.MenuId.MENU_ID_UNDO, CefMenuModel.MenuId.MENU_ID_REDO,
+            CefMenuModel.MenuId.MENU_ID_CUT, CefMenuModel.MenuId.MENU_ID_COPY, CefMenuModel.MenuId.MENU_ID_PASTE,
+            CefMenuModel.MenuId.MENU_ID_DELETE, CefMenuModel.MenuId.MENU_ID_SELECT_ALL,
+            CefMenuModel.MenuId.MENU_ID_SPELLCHECK_SUGGESTION_0, CefMenuModel.MenuId.MENU_ID_SPELLCHECK_SUGGESTION_1,
+            CefMenuModel.MenuId.MENU_ID_SPELLCHECK_SUGGESTION_2, CefMenuModel.MenuId.MENU_ID_SPELLCHECK_SUGGESTION_3,
+            CefMenuModel.MenuId.MENU_ID_SPELLCHECK_SUGGESTION_4, CefMenuModel.MenuId.MENU_ID_NO_SPELLING_SUGGESTIONS);
     // Woken this often for as long as the app runs, so it is one frame at 60 Hz and not faster.
     private static final int PUMP_MS = 16;
     private static final int STRONG_CPU_THREADS = 6;
@@ -326,6 +333,10 @@ final class BrowserWindow {
         client.addRequestHandler(new CefRequestHandlerAdapter() {
             @Override
             public boolean onBeforeBrowse(CefBrowser b, CefFrame f, CefRequest request, boolean gesture, boolean redirect) {
+                // Back and forward (mouse side buttons, Alt+arrows) would land on a used /boot token and an error page.
+                if (request.getTransitionType() != null && request.getTransitionType().isSet(CefRequest.TransitionFlags.TT_FORWARD_BACK_FLAG)) {
+                    return true;
+                }
                 return !request.getURL().startsWith(origin + "/");
             }
 
@@ -341,6 +352,8 @@ final class BrowserWindow {
             public void onLoadEnd(CefBrowser b, CefFrame f, int httpStatusCode) {
                 if (f.isMain() && httpStatusCode == 200 && f.getURL().startsWith(origin + "/app")) {
                     reloads = 0;
+                    // Chromium remembers zoom per origin; an accidental zoom from an earlier version must not stick.
+                    b.setZoomLevel(0);
                     UpdateService.confirmStartup();
                 }
             }
@@ -356,7 +369,28 @@ final class BrowserWindow {
         client.addContextMenuHandler(new CefContextMenuHandlerAdapter() {
             @Override
             public void onBeforeContextMenu(CefBrowser b, CefFrame f, CefContextMenuParams params, CefMenuModel model) {
-                model.clear();
+                if (!params.isEditable()) {
+                    model.clear();
+                    return;
+                }
+                // In a text field, keep what a text field needs: spelling suggestions, undo, cut, copy, paste, select all.
+                for (int i = model.getCount() - 1; i >= 0; i--) {
+                    if (model.getTypeAt(i) != CefMenuModel.MenuItemType.MENUITEMTYPE_SEPARATOR && !EDIT_COMMANDS.contains(model.getCommandIdAt(i))) {
+                        model.removeAt(i);
+                    }
+                }
+                while (model.getCount() > 0 && model.getTypeAt(0) == CefMenuModel.MenuItemType.MENUITEMTYPE_SEPARATOR) {
+                    model.removeAt(0);
+                }
+                while (model.getCount() > 0 && model.getTypeAt(model.getCount() - 1) == CefMenuModel.MenuItemType.MENUITEMTYPE_SEPARATOR) {
+                    model.removeAt(model.getCount() - 1);
+                }
+                for (int i = model.getCount() - 1; i > 0; i--) {
+                    if (model.getTypeAt(i) == CefMenuModel.MenuItemType.MENUITEMTYPE_SEPARATOR
+                            && model.getTypeAt(i - 1) == CefMenuModel.MenuItemType.MENUITEMTYPE_SEPARATOR) {
+                        model.removeAt(i);
+                    }
+                }
             }
         });
     }

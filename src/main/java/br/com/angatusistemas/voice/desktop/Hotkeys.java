@@ -58,6 +58,12 @@ final class Hotkeys {
     }
 
     private static void reload() {
+        // A key held while its binding changes never sends its "up"; release it now so push-to-talk does not stay open.
+        for (String action : List.copyOf(HELD)) {
+            if (HELD.remove(action)) {
+                fire(action, "up");
+            }
+        }
         BINDINGS.clear();
         for (String action : ACTIONS) {
             Combo combo = Combo.parse(SettingsService.get("hotkeys." + action));

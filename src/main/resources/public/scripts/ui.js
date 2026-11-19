@@ -2,6 +2,21 @@
 /* Shared helpers: API client, DOM builder, icons, avatars, toasts and modals. */
 window.AV = window.AV || {};
 
+/* The app has one size: Ctrl + wheel and Ctrl +/-/0 would zoom the whole window and break the layout. Images have
+   their own zoom in the viewer, which handles its wheel before this. */
+window.addEventListener("wheel", (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false, capture: true });
+/* Browser shortcuts (reload, print, view source, history) make no sense in an app. Only the default action is cancelled:
+   the event still reaches the page, so a global hotkey can still be recorded with these keys in the settings. */
+window.addEventListener("keydown", (e) => {
+  const ctrl = e.ctrlKey || e.metaKey;
+  const key = e.key.toLowerCase();
+  if (ctrl && !e.altKey && ["+", "-", "=", "0", "_"].includes(e.key)) e.preventDefault();
+  else if (e.key === "F5" || e.key === "BrowserBack" || e.key === "BrowserForward" || e.key === "BrowserRefresh") e.preventDefault();
+  else if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home")) e.preventDefault();
+  else if (ctrl && ["r", "p", "u", "s", "o"].includes(key)) e.preventDefault();
+}, { capture: true });
+window.addEventListener("mouseup", (e) => { if (e.button === 3 || e.button === 4) e.preventDefault(); }, { capture: true });
+
 AV.api = async function (method, path, body) {
   const options = { method, headers: {} };
   if (body !== undefined) {
@@ -89,6 +104,26 @@ AV.avatar = function (id, name, size, online) {
   return node;
 };
 
+/* A profile picture as the project stores it: the centre square of any image (or a default monster), 128 px, WebP 0.8. */
+AV.cropToWebp = async function (source) {
+  const bitmap = source instanceof Blob ? await createImageBitmap(source) : source;
+  const width = bitmap.naturalWidth || bitmap.width;
+  const height = bitmap.naturalHeight || bitmap.height;
+  const side = Math.min(width, height);
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const g = canvas.getContext("2d");
+  g.imageSmoothingQuality = "high";
+  g.drawImage(bitmap, (width - side) / 2, (height - side) / 2, side, side, 0, 0, 128, 128);
+  if (bitmap.close) bitmap.close();
+  const url = canvas.toDataURL("image/webp", 0.8);
+  if (!url.startsWith("data:image/webp;base64,")) throw new Error("webp unsupported");
+  return url.slice("data:image/webp;base64,".length);
+};
+
+AV.plural = (n, one, many) => n.toLocaleString("pt-BR") + " " + (n === 1 ? one : many);
+
 AV.toast = function (message, kind) {
   const node = AV.el("div", { class: "toast " + (kind || ""), role: "status" }, message);
   document.getElementById("toasts").append(node);
@@ -120,7 +155,7 @@ AV.modal = function (title, build, actions, onClose) {
       onclick: () => a.run(close, body),
     }, a.label)));
   const overlay = AV.el("div", { class: "overlay", onmousedown: (e) => { if (e.target === overlay) close(); } },
-    AV.el("div", { class: "modal card", role: "dialog", "aria-modal": "true", "aria-label": title },
+    AV.el("div", { class: "modal card" + (body.dataset.wide ? " modal-wide" : ""), role: "dialog", "aria-modal": "true", "aria-label": title },
       AV.el("div", { class: "flex items-center justify-between" },
         AV.el("h2", { class: "text-lg font-bold" }, title),
         AV.el("button", { class: "btn btn-ghost btn-icon", "aria-label": "Fechar", onclick: close }, AV.icon("x"))),
@@ -309,10 +344,12 @@ AV.sound = (function () {
     viewerJoin: "/assets/audio/notifications/viewer-joined.mp3",
     viewerLeave: "/assets/audio/notifications/viewer-left.mp3",
   };
+  // A mention or a direct message is the same bell a fifth higher, so it reads as "for you" without a new sound to learn.
+  const VARIANTS = { mention: { of: "message", rate: 1.5 } };
   // About other people, not about what you did: a deafened user asked for silence, so these stay quiet.
-  const AMBIENT = new Set(["peerJoin", "peerLeave", "message", "streamStart", "streamStop", "viewerJoin", "viewerLeave"]);
+  const AMBIENT = new Set(["peerJoin", "peerLeave", "message", "mention", "streamStart", "streamStop", "viewerJoin", "viewerLeave"]);
   // A burst of messages or repeated failures is heard once, not as a machine gun.
-  const MIN_GAP_MS = { message: 1500, error: 1000 };
+  const MIN_GAP_MS = { message: 1500, mention: 1500, error: 1000 };
   const DEFAULT_GAP_MS = 150;
 
   const bufferCache = new Map();
@@ -344,11 +381,13 @@ AV.sound = (function () {
   function play(name) {
     const s = (AV.state && AV.state.settings) || {};
     const ctx = AV.cueContext();
-    const url = SOUND_FILES[name];
+    const variant = VARIANTS[name];
+    const url = SOUND_FILES[variant ? variant.of : name];
     const playBuf = (buf) => {
       if (!buf) return;
       const src = ctx.createBufferSource();
       src.buffer = buf;
+      if (variant) src.playbackRate.value = variant.rate;
       const gain = ctx.createGain();
       gain.gain.value = Number(s["sounds.volume"] ?? 100) / 100;
       src.connect(gain);
@@ -361,7 +400,7 @@ AV.sound = (function () {
 
   function sound(name) {
     const s = AV.state && AV.state.settings;
-    if (!s || s["sounds.enabled"] !== "true" || !SOUND_FILES[name]) return;
+    if (!s || s["sounds.enabled"] !== "true" || !(SOUND_FILES[name] || VARIANTS[name])) return;
     if (AMBIENT.has(name) && AV.rtc && AV.rtc.deafened) return;
     const now = performance.now();
     if (now - (lastPlayed.get(name) ?? -Infinity) < (MIN_GAP_MS[name] ?? DEFAULT_GAP_MS)) return;
@@ -370,7 +409,7 @@ AV.sound = (function () {
   }
 
   // The settings test: plays even with the sounds turned off, because the person asked for it.
-  sound.preview = (name) => { if (SOUND_FILES[name]) play(name); };
+  sound.preview = (name) => { if (SOUND_FILES[name] || VARIANTS[name]) play(name); };
   return sound;
 })();
 

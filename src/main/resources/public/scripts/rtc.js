@@ -6,6 +6,8 @@
   const VAD_TICK_MS = 50;
   const STATS_TICK_MS = 2000;
   const STATE_EVERY_MS = 2000;
+  const OFFER_RESEND_MS = 5000;
+  const VOICE_BLOCKED_WARN_MS = 20000;
   const STATE_STALE_MS = 5000;
   const GATE_HOLD_MS = 500;
   const SPEAK_HOLD_MS = 600;
@@ -18,7 +20,9 @@
   const STATE_CHANNEL_ID = 7;
   // Only reached without a usable video card, or with a viewer on an older version: VP8 is the software codec that keeps its frame rate here.
   const CODEC_ORDER = ["video/VP8", "video/VP9", "video/AV1"];
-  const HW_FIRST_FRAME_MS = 15000;
+  const HW_FIRST_FRAME_MS = 8000;
+  const CARD_RETRY_WINDOW_MS = 30000;
+  const CARD_RETRIES = 2;
   // A picture that stopped while the sound goes on: the viewer subscribes again instead of staying on a black screen.
   const PICTURE_STALLED_MS = 6000;
   const RTC_PICTURE_RETRIES = 2;
@@ -49,6 +53,7 @@
   };
   let ctx = null;
   let master = null;
+  let sinkId = "";
   let mic = null;
   let shareAudio = null;
   let shareProbe = null;
@@ -73,20 +78,37 @@
     if (!ctx) {
       ctx = new AudioContext({ latencyHint: "interactive", sampleRate: 48000 });
       master = ctx.createGain();
-      master.connect(ctx.destination);
+      // Several loud voices, or one turned up past 100%, add up past full scale; the limiter keeps that from clipping.
+      const limiter = ctx.createDynamicsCompressor();
+      limiter.threshold.value = -3;
+      limiter.knee.value = 0;
+      limiter.ratio.value = 20;
+      limiter.attack.value = 0.003;
+      limiter.release.value = 0.12;
+      master.connect(limiter);
+      limiter.connect(ctx.destination);
       applyOutput();
     }
     if (ctx.state === "suspended") ctx.resume();
     return ctx;
   }
 
+  /* Volume changes glide over a few milliseconds: a jump in gain is heard as a click. */
+  function glide(param, value) {
+    param.cancelScheduledValues(ctx.currentTime);
+    param.setTargetAtTime(value, ctx.currentTime, 0.015);
+  }
+
   function applyOutput() {
     if (!ctx) return;
-    master.gain.value = rtc.deafened ? 0 : num("audio.outputVolume") / 100;
-    if (ctx.setSinkId) ctx.setSinkId(cfg()["audio.output"] || "").catch(() => {});
-    peers.forEach((p) => p.audios.forEach((a) => {
-      a.gain.gain.value = a.share ? shareGain(p.id) : peerGain(p.id);
-    }));
+    glide(master.gain, rtc.deafened ? 0 : num("audio.outputVolume") / 100);
+    const sink = cfg()["audio.output"] || "";
+    // Setting the same device again restarts the output and is heard as a gap, so only an actual change goes through.
+    if (ctx.setSinkId && sink !== sinkId) {
+      sinkId = sink;
+      ctx.setSinkId(sink).catch(() => { sinkId = null; });
+    }
+    peers.forEach((p) => p.audios.forEach((a) => glide(a.gain.gain, a.share ? shareGain(p.id) : peerGain(p.id))));
   }
 
   rtc.mutedShares = new Set();
@@ -130,7 +152,8 @@
 
   rtc.setPeerVolume = function (id, percent) {
     const all = peerVolumes();
-    all[id] = percent;
+    // 100% is the default: keeping it would only fill the setting with people never touched.
+    if (Number(percent) === 100) delete all[id]; else all[id] = percent;
     cfg()["audio.peerVolumes"] = JSON.stringify(all);
     applyOutput();
     rtc.persistVolumes();
@@ -153,7 +176,7 @@
   rtc.shareVolume = (id) => { const v = shareVolumes()[id]; return v === undefined ? 100 : v; };
   rtc.setShareVolume = function (id, percent) {
     const all = shareVolumes();
-    all[id] = percent;
+    if (Number(percent) === 100) delete all[id]; else all[id] = percent;
     cfg()["audio.shareVolumes"] = JSON.stringify(all);
     applyOutput();
     persistShareVolumes();
@@ -203,7 +226,9 @@
 
   function updateGate() {
     if (!mic) return;
-    const open = !rtc.muted && (flag("audio.ptt") ? rtc.pttDown : performance.now() < gateOpenUntil || num("audio.sensitivity") >= 100);
+    // Push-to-talk without a key to push would silence the microphone for good, so it only counts once a hotkey exists.
+    const ptt = flag("audio.ptt") && !!cfg()["hotkeys.ptt"];
+    const open = !rtc.muted && (ptt ? rtc.pttDown : performance.now() < gateOpenUntil || num("audio.sensitivity") >= 100);
     if (mic.track.enabled !== open) mic.track.enabled = open;
   }
 
@@ -288,7 +313,23 @@
     }
   }
 
+  /* A headset plugged in or out: the chosen microphone coming back is used again, and the output is set again so a
+     device that disappeared and returned is not left silent. */
+  if (navigator.mediaDevices) navigator.mediaDevices.addEventListener("devicechange", AV.debounce(async () => {
+    if (ctx) { sinkId = null; applyOutput(); }
+    if (!mic) return;
+    const wanted = cfg()["audio.input"];
+    const track = mic.raw && mic.raw.getAudioTracks()[0];
+    const using = track && track.readyState === "live" ? track.getSettings().deviceId : null;
+    if (!wanted || using === wanted) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      if (devices.some((d) => d.kind === "audioinput" && d.deviceId === wanted)) reconnectMic();
+    } catch (e) { /* the next change tries again */ }
+  }, 800));
+
   async function openMic() {
+    if (mic) closeMic();
     const raw = await captureMic();
     const c = audioContext();
     const gain = c.createGain();
@@ -315,7 +356,7 @@
     mic = null;
   }
 
-  rtc.applyInput = function () { if (mic) mic.gain.gain.value = num("audio.inputVolume") / 100; };
+  rtc.applyInput = function () { if (mic) glide(mic.gain.gain, num("audio.inputVolume") / 100); };
   rtc.switchInput = function () { if (mic) reconnectMic(); };
 
   function signal(id, kind, data) {
@@ -482,7 +523,7 @@
   function sendState(p) {
     try {
       const o = { s: rtc.speaking[myId()] ? 1 : 0, m: rtc.muted ? 1 : 0, d: rtc.deafened ? 1 : 0, w: rtc.watching.has(p.id) ? 1 : 0 };
-      if (hwDecodes) o.h = 1;
+      if (hwDecodes && !p.noCard) o.h = 1;
       if (rtc.localShare) {
         o.v = 1;
         o.vw = rtc.viewers();
@@ -524,7 +565,7 @@
   /* ---- the picture through the video card (hwvideo.js) ---- */
 
   function openCardReceiver(p) {
-    if (p.cardReceiver || !hwDecodes || !rtc.watching.has(p.id) || !p.state || !p.state.stream) return;
+    if (p.cardReceiver || !hwDecodes || p.noCard || !rtc.watching.has(p.id) || !p.state || !p.state.stream) return;
     const receiver = AV.hwVideo.createReceiver({ url: AV.state.net.streamUrl, stream: p.state.stream, onfail: () => giveUpOnCardDecoding(p) });
     receiver.id = p.state.stream;
     p.cardReceiver = receiver;
@@ -542,11 +583,12 @@
     rtc.onchange();
   }
 
-  /* A card that cannot do it after all costs a moment of black picture: the sender goes back to WebRTC for this viewer. */
+  /* A card that cannot do it after all costs a moment of black picture: the sender goes back to WebRTC for this viewer.
+     Only this one stream: another person's share may decode on the card perfectly. */
   function giveUpOnCardDecoding(p) {
-    hwDecodes = false;
+    p.noCard = true;
     closeCardReceiver(p);
-    broadcastState();
+    sendState(p);
   }
 
   /* Nothing on screen for too long: first try a clean subscription, and if the very first picture never comes, fall back to WebRTC. */
@@ -567,6 +609,14 @@
       console.warn("no picture from the server, falling back to WebRTC: received " + receiver.counters.received + " frames, " + receiver.counters.keys + " keyframes, decoded " + decoded);
       giveUpOnCardDecoding(p);
     } else if (silent >= PICTURE_STALLED_MS) {
+      // A decoder that broke after having worked (driver reset, sleep) would cycle here forever: after a couple of tries, WebRTC.
+      p.cardRetries = (p.cardRetries || []).filter((t) => now - t < CARD_RETRY_WINDOW_MS);
+      if (p.cardRetries.length >= CARD_RETRIES) {
+        console.warn("picture keeps stalling, falling back to WebRTC");
+        giveUpOnCardDecoding(p);
+        return;
+      }
+      p.cardRetries.push(now);
       console.warn("picture stalled, subscribing again: received " + receiver.counters.received + " frames, " + receiver.counters.keys + " keyframes, decoded " + decoded);
       closeCardReceiver(p);
       openCardReceiver(p);
@@ -620,7 +670,11 @@
     if (!p) return;
     p.audios.forEach((a) => { a.source.disconnect(); a.keepAlive.srcObject = null; });
     closeCardReceiver(p);
-    if (hwSender) hwSender.remove(id);
+    if (hwSender) {
+      hwSender.remove(id);
+      // Nobody left to watch: the encoder stops instead of filling the server with frames nobody gets.
+      if (hwSender.empty()) stopCardSender();
+    }
     p.pc.close();
     peers.delete(id);
     rtc.watching.delete(id);
@@ -734,8 +788,19 @@
     else if (!(AV.state.calls[room] || []).some((id) => id !== myId())) { stopCalling(); AV.sound("busy"); }
   };
 
+  /* A double click, or the hotkey together with "Atender", must not open two microphones. */
+  let joining = false;
   rtc.join = async function (room) {
-    if (rtc.room === room) return;
+    if (rtc.room === room || joining) return;
+    joining = true;
+    try {
+      await joinRoom(room);
+    } finally {
+      joining = false;
+    }
+  };
+
+  async function joinRoom(room) {
     if (rtc.room) await rtc.leave();
     try {
       await openMic();
@@ -743,6 +808,8 @@
       console.warn("microphone unavailable", e);
       AV.toast("Sem acesso ao microfone: você ouvirá a chamada, mas não será ouvido.", "error");
     }
+    voiceWarned = false;
+    if (!AV.state.net.turn) AV.toast("O servidor não informou a retransmissão de voz: a chamada só funciona entre computadores da mesma rede.", "error");
     rtc.room = room;
     hwDecodes = (await AV.hwVideo.support()).decode;
     audioContext();
@@ -755,7 +822,7 @@
     if (others.length || cfg()["sounds.ring"] !== "true") AV.sound("join");
     if (!others.length) startCalling();
     rtc.onchange();
-  };
+  }
 
   rtc.leave = async function (endCue = "leave") {
     const room = rtc.room;
@@ -775,16 +842,33 @@
     rtc.onchange();
   };
 
+  /* As in Discord: deafening also mutes the microphone and remembers how it was; undeafening gives it back. Turning
+     the microphone on while deafened means "I want to talk", so it undeafens too. */
+  let mutedBeforeDeafen = false;
   rtc.toggleMute = function () {
-    rtc.muted = !rtc.muted;
-    AV.sound(rtc.muted ? "mute" : "unmute");
+    if (rtc.deafened && rtc.muted) {
+      rtc.deafened = false;
+      rtc.muted = false;
+      applyOutput();
+      AV.sound("undeafen");
+    } else {
+      rtc.muted = !rtc.muted;
+      AV.sound(rtc.muted ? "mute" : "unmute");
+    }
     updateGate();
     broadcastState();
     rtc.onchange();
   };
   rtc.toggleDeafen = function () {
     rtc.deafened = !rtc.deafened;
+    if (rtc.deafened) {
+      mutedBeforeDeafen = rtc.muted;
+      rtc.muted = true;
+    } else {
+      rtc.muted = mutedBeforeDeafen;
+    }
     applyOutput();
+    updateGate();
     AV.sound(rtc.deafened ? "deafen" : "undeafen");
     broadcastState();
     rtc.onchange();
@@ -1065,7 +1149,8 @@
   }
 
   /* System sound captured by Java without anything this app plays, so call voices and ringtones never reach the share. Resolves null where Windows lacks it. */
-  async function openSystemAudio() {
+  /* With a window, only that app's sound; without, everything except this app. */
+  async function openSystemAudio(window) {
     const c = audioContext();
     try {
       await c.audioWorklet.addModule("/scripts/system-audio-worklet.js");
@@ -1073,7 +1158,7 @@
       console.warn("system audio player unavailable", e);
       return null;
     }
-    const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/system-audio");
+    const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/system-audio" + (window ? "?window=" + encodeURIComponent(window) : ""));
     ws.binaryType = "arraybuffer";
     const ready = await new Promise((resolve) => {
       const timer = setTimeout(() => resolve(false), 6000);
@@ -1119,10 +1204,27 @@
     ducked = false;
   }
 
-  rtc.startShare = async function (sourceId) {
-    if (!rtc.room || rtc.localShare) return;
+  /* The open apps and games a share can show alone; each source id is Chromium's "window:<handle>:0". */
+  rtc.shareWindows = async function () {
+    const list = await AV.api("GET", "/api/system/windows");
+    return list.map((w) => ({ id: "window:" + w.id + ":0", window: w.id, label: w.title, app: w.app }));
+  };
+
+  let startingShare = false;
+  rtc.startShare = async function (sourceId, window) {
+    if (!rtc.room || rtc.localShare || startingShare) return;
+    startingShare = true;
+    try {
+      await beginShare(sourceId, window);
+    } finally {
+      startingShare = false;
+    }
+  };
+
+  async function beginShare(sourceId, window) {
     hwEncoderCodec = (await AV.hwVideo.support()).encode;
-    const system = flag("video.systemAudio") ? await openSystemAudio() : null;
+    // A window brings only its app's sound; if that is not possible, everything except this app, as for a screen.
+    const system = flag("video.systemAudio") ? (window && (await openSystemAudio(window))) || (await openSystemAudio()) : null;
     let captured;
     try {
       captured = await captureScreen(flag("video.systemAudio") && !system, sourceId);
@@ -1140,7 +1242,7 @@
     broadcastState();
     AV.sound("streamStart");
     rtc.onchange();
-  };
+  }
 
   rtc.stopShare = function (quiet) {
     const stream = rtc.localShare;
@@ -1208,25 +1310,55 @@
 
   /* ---- connection watch ---- */
 
+  /* A shared screen through the video card does not need WebRTC at all: while its picture flows, a connection that does
+     not come up is retried quietly instead of being torn down, which used to cut the picture every half minute. */
+  function cardFlows(p, now) {
+    return (p.cardReceiver && now - p.cardFramesAt < PICTURE_STALLED_MS) || (hwSender && hwSender.has(p.id));
+  }
+
   function watchConnection(p, now) {
     const pc = p.pc;
     if (pc.connectionState === "connected") {
       p.troubleSince = 0;
+      // A renegotiation whose offer was lost would leave the connection waiting forever for an answer.
+      if (pc.signalingState === "have-local-offer") {
+        if (!p.offerSince) p.offerSince = now;
+        else if (now - p.offerSince > OFFER_RESEND_MS) { p.offerSince = now; sendDescription(p); }
+      } else p.offerSince = 0;
       return;
     }
     if (!p.troubleSince) p.troubleSince = now;
     const elapsed = now - p.troubleSince;
-    if (elapsed >= p.resetAfter) {
+    if (elapsed >= VOICE_BLOCKED_WARN_MS) warnVoiceBlocked(p);
+    if (elapsed >= p.resetAfter && !cardFlows(p, now)) {
       // Start over on both ends: the bye makes the other side drop its half, and the jitter keeps both from doing this at once.
+      // What this side asked to watch and what it knew of the other survive the rebuild.
       const id = p.id;
+      const watching = rtc.watching.has(id);
+      const known = p.state;
+      const onCard = p.decodesOnCard;
       signal(id, "bye", {});
       closePeer(id);
-      ensurePeer(id);
+      const next = ensurePeer(id);
+      next.state = known;
+      next.decodesOnCard = onCard;
+      if (watching) rtc.watching.add(id);
+      sendState(next);
+      openCardReceiver(next);
     } else if (elapsed >= RESTART_AFTER_MS && now - p.restartedAt >= RESTART_AFTER_MS) {
       p.restartedAt = now;
       if (pc.signalingState === "have-local-offer") sendDescription(p);
       else if (pc.signalingState === "stable") pc.restartIce();
     }
+  }
+
+  /* Said once per call: when voice cannot get through, the cause is almost always the network, and nothing on screen said so. */
+  let voiceWarned = false;
+  function warnVoiceBlocked(p) {
+    if (voiceWarned) return;
+    voiceWarned = true;
+    const known = AV.state.peers.find((x) => x.id === p.id);
+    AV.toast("A voz com " + (known ? known.name : "outra pessoa") + " não está passando. A rede de um de vocês pode estar bloqueando a porta 3479 (UDP e TCP). A tela pela placa de vídeo continua funcionando.", "error");
   }
 
   async function readStats(p) {

@@ -2,6 +2,7 @@ package br.com.angatusistemas.voice.services;
 
 import br.com.angatusistemas.lib.console.Console;
 import br.com.angatusistemas.lib.database.Saveable;
+import br.com.angatusistemas.voice.entities.Group;
 import br.com.angatusistemas.voice.entities.Peer;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -264,9 +265,17 @@ public final class ChatService {
                 body = "Enviou um anexo.";
             }
             String preview = !SettingsService.flag("privacy.preview") ? "Nova mensagem" : body.length() > 120 ? body.substring(0, 120) + "…" : body;
-            Notifications.notify(IdentityService.clean(string(view, "name")), preview);
+            String sender = IdentityService.clean(string(view, "name"));
+            boolean direct = chat.startsWith("dm:");
+            Notifications.message(chat, direct ? sender : sender + " em " + chatTitle(chat), mentioned ? "Mencionou você: " + preview : preview,
+                    direct || mentioned);
         }
         LiveHub.emit("chat.new", view);
+    }
+
+    private static String chatTitle(String chat) {
+        Group group = GroupService.find(chat);
+        return group == null ? "um grupo" : "#" + group.getName();
     }
 
     private static boolean mentionsMe(JsonObject view) {

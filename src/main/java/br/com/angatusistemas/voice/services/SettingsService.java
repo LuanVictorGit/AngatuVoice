@@ -120,9 +120,9 @@ public final class SettingsService {
         m.put("audio.outputVolume", new Rule("100", range(0, 200)));
         m.put("audio.sensitivity", new Rule("50", range(0, 100)));
         m.put("audio.ptt", new Rule("false", BOOL));
-        m.put("audio.peerVolumes", new Rule("{}", v -> v.length() <= 4000 && v.startsWith("{")));
-        m.put("audio.shareVolumes", new Rule("{}", v -> v.length() <= 4000 && v.startsWith("{")));
-        m.put("audio.peerMutes", new Rule("[]", v -> v.length() <= 4000 && v.startsWith("[")));
+        m.put("audio.peerVolumes", new Rule("{}", v -> v.length() <= 32_000 && v.startsWith("{")));
+        m.put("audio.shareVolumes", new Rule("{}", v -> v.length() <= 32_000 && v.startsWith("{")));
+        m.put("audio.peerMutes", new Rule("[]", v -> v.length() <= 32_000 && v.startsWith("[")));
         m.put("audio.echo", new Rule("true", BOOL));
         m.put("audio.noise", new Rule("true", BOOL));
         m.put("video.monitor", new Rule("0", range(0, 15)));
@@ -146,6 +146,7 @@ public final class SettingsService {
         m.put("sounds.volume", new Rule("100", range(0, 100)));
         m.put("sounds.ring", new Rule("true", BOOL));
         m.put("ui.lastChat", new Rule("publico", v -> v.length() <= 80));
+        m.put("profile.monster", new Rule("", v -> v.matches("[0-9]?")));
         m.put("ui.trayHintShown", new Rule("false", BOOL));
         return Collections.unmodifiableMap(m);
     }

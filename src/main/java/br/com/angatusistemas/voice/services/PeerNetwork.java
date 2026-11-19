@@ -58,6 +58,12 @@ public final class PeerNetwork {
     private static volatile ServerLink link;
     private static volatile JsonObject turn;
     private static volatile long lastPing;
+    private static volatile long lastRttReport;
+    private static volatile int lastReportedRtt = -1000;
+    private static final long RTT_REPORT_EVERY_MS = 15_000;
+    private static final int RTT_REPORT_CHANGE_MS = 15;
+    private static final int MAX_REPORTED_RTT_MS = 10_000;
+    private static final Map<String, Integer> PEER_RTT = new ConcurrentHashMap<>();
 
     private PeerNetwork() {
     }
@@ -224,16 +230,41 @@ public final class PeerNetwork {
             Person person = ONLINE.get(p.getId());
             views.add(new PeerView(p.getId(), p.getName(), person != null, person == null ? List.of() : List.copyOf(person.groups),
                     names.get(p.getName().toLowerCase()) > 1, p.getLastSeen(), AvatarService.version(p.getAvatar()),
-                    person == null ? ServerLink.NO_RTT : rtt));
+                    person == null ? ServerLink.NO_RTT : pathTo(p.getId(), rtt)));
         }
         return views;
     }
 
+    /* Everything between two people goes through the server, so the time to someone is this app's round trip to the
+       server plus theirs, which each app reports. Before a person has reported theirs, there is no number to show. */
     public static Map<String, Integer> latency() {
         int rtt = link == null ? ServerLink.NO_RTT : link.rtt();
         Map<String, Integer> all = HashMap.newHashMap(ONLINE.size());
-        ONLINE.keySet().forEach(id -> all.put(id, rtt));
+        ONLINE.keySet().forEach(id -> all.put(id, pathTo(id, rtt)));
         return all;
+    }
+
+    private static int pathTo(String id, int mine) {
+        Integer theirs = PEER_RTT.get(id);
+        return mine < 0 || theirs == null ? ServerLink.NO_RTT : mine + theirs;
+    }
+
+    /* Told to everyone now and then, and sooner when it changed noticeably. */
+    private static void reportRtt(long now) {
+        ServerLink current = link;
+        int rtt = current == null ? ServerLink.NO_RTT : current.rtt();
+        if (rtt < 0 || !current.isReady()) {
+            return;
+        }
+        if (Math.abs(rtt - lastReportedRtt) < RTT_REPORT_CHANGE_MS && now - lastRttReport < RTT_REPORT_EVERY_MS) {
+            return;
+        }
+        lastReportedRtt = rtt;
+        lastRttReport = now;
+        JsonObject frame = new JsonObject();
+        frame.addProperty("t", "rtt");
+        frame.addProperty("ms", rtt);
+        route("*", frame);
     }
 
     /* Groups are proved with a hash of their secret: the server can tell members apart without ever being able to invite anyone. */
@@ -302,6 +333,7 @@ public final class PeerNetwork {
                 if (current != null) {
                     current.keepAlive();
                 }
+                reportRtt(now);
                 LiveHub.emit("net.latency", Map.of("peers", latency()));
             }
         } catch (RuntimeException e) {
@@ -419,6 +451,7 @@ public final class PeerNetwork {
     }
 
     private static void onPersonGone(String id) {
+        PEER_RTT.remove(id);
         Person gone = ONLINE.remove(id);
         if (gone != null) {
             LiveHub.emit("peer.offline", Map.of("id", id, "name", gone.name));
@@ -482,6 +515,14 @@ public final class PeerNetwork {
             case "sig" -> onSignal(person, frame);
             case "profile" -> onProfile(person, frame);
             case "profile?" -> sendProfile(person.id);
+            case "rtt" -> {
+                if (frame.has("ms") && frame.get("ms").isJsonPrimitive()) {
+                    int ms = frame.get("ms").getAsInt();
+                    if (ms >= 0 && ms <= MAX_REPORTED_RTT_MS) {
+                        PEER_RTT.put(person.id, ms);
+                    }
+                }
+            }
             default -> { }
         }
     }

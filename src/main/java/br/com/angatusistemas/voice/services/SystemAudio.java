@@ -17,6 +17,7 @@ import io.javalin.websocket.WsConfig;
 import io.javalin.websocket.WsContext;
 import java.nio.ByteBuffer;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -26,7 +27,8 @@ import java.util.concurrent.TimeUnit;
  * voices and ringtones included; Windows process loopback can leave one process tree out, and the embedded Chromium
  * (its audio service included) runs as children of this process. 48 kHz stereo 16-bit PCM goes to the page as binary
  * WebSocket frames, one capture per open socket. Needs Windows 10 2004 or newer; the socket closes with
- * {@link #UNSUPPORTED} where the API is missing, and the page falls back to the plain loopback.
+ * {@link #UNSUPPORTED} where the API is missing, and the page falls back to the plain loopback. When the share is one app's
+ * window, the page passes that window and the capture includes only that app's process tree instead.
  *
  * @author Angatu Sistemas
  */
@@ -39,6 +41,7 @@ public final class SystemAudio {
     private static final int POLL_MS = 10;
     private static final long BUFFER_HNS = 2_000_000L;
     private static final int ACTIVATION_TYPE_PROCESS_LOOPBACK = 1;
+    private static final int LOOPBACK_INCLUDE_TREE = 0;
     private static final int LOOPBACK_EXCLUDE_TREE = 1;
     private static final short VT_BLOB = 65;
     private static final int STREAMFLAGS = 0x00020000 | 0x80000000 | 0x08000000;
@@ -62,7 +65,14 @@ public final class SystemAudio {
                 ctx.closeSession(LiveHub.SESSION_EXPIRED, "session expired");
                 return;
             }
-            Thread capture = Thread.ofPlatform().daemon().name("system-audio").start(() -> capture(ctx));
+            // A shared app window brings only that app's sound; otherwise everything except this app.
+            String window = ctx.queryParam("window");
+            OptionalLong target = window != null && window.matches("[0-9]{1,20}") ? DisplayService.processOf(Long.parseUnsignedLong(window)) : OptionalLong.empty();
+            if (window != null && target.isEmpty()) {
+                ctx.closeSession(UNSUPPORTED, "window not shareable");
+                return;
+            }
+            Thread capture = Thread.ofPlatform().daemon().name("system-audio").start(() -> capture(ctx, target));
             CAPTURES.put(ctx, capture);
         });
         ws.onClose(ctx -> stop(ctx));
@@ -140,7 +150,7 @@ public final class SystemAudio {
         }
     }
 
-    private static void capture(WsContext ctx) {
+    private static void capture(WsContext ctx, OptionalLong app) {
         Pointer operation = null;
         Pointer client = null;
         Pointer reader = null;
@@ -150,8 +160,8 @@ public final class SystemAudio {
                 Handler handler = new Handler();
                 Memory params = new Memory(12);
                 params.setInt(0, ACTIVATION_TYPE_PROCESS_LOOPBACK);
-                params.setInt(4, (int) ProcessHandle.current().pid());
-                params.setInt(8, LOOPBACK_EXCLUDE_TREE);
+                params.setInt(4, (int) (app.isPresent() ? app.getAsLong() : ProcessHandle.current().pid()));
+                params.setInt(8, app.isPresent() ? LOOPBACK_INCLUDE_TREE : LOOPBACK_EXCLUDE_TREE);
                 Memory variant = new Memory(24);
                 variant.clear();
                 variant.setShort(0, VT_BLOB);

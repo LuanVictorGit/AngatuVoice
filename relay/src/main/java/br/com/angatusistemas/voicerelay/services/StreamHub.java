@@ -7,6 +7,9 @@ import com.google.gson.JsonParseException;
 import io.javalin.websocket.WsConfig;
 import io.javalin.websocket.WsContext;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.ArrayDeque;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -16,6 +19,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 import org.eclipse.jetty.websocket.api.Callback;
 
@@ -30,6 +34,7 @@ public final class StreamHub {
 
     public static final int CLOSE_REFUSED = 4403;
     public static final int CLOSE_NO_STREAM = 4404;
+    public static final int CLOSE_TOO_SLOW = 4408;
     public static final int CLOSE_ID_TAKEN = 4409;
     public static final int CLOSE_TOO_MUCH = 4413;
     public static final int CLOSE_LIMIT = 4429;
@@ -42,6 +47,12 @@ public final class StreamHub {
     // Well above what the app sends (at most 16 Mbps plus keyframe bursts): this is only here against abuse of the server's bandwidth.
     private static final long MAX_BYTES_PER_SECOND = 5L * 1024 * 1024;
     private static final int VIEWER_QUEUE_FRAMES = 30;
+    // Bytes, not only frames: thirty keyframes of a few megabytes each per viewer is how a 256 MB server runs out of memory.
+    private static final long VIEWER_QUEUE_BYTES = 4L * 1024 * 1024;
+    // A viewer whose connection cannot keep up overflows again and again; past this, it is let go instead of slowing everyone.
+    private static final int SLOW_OVERFLOWS = 3;
+    private static final long SLOW_WINDOW_MS = 10_000;
+    private static final Pattern OWNER = Pattern.compile("[0-9a-f]{32}");
     private static final long HELLO_TIMEOUT_MS = 5_000;
     private static final long SEND_TIMEOUT_SECONDS = 15;
     private static final long NOTICE_EVERY_MS = 1_000;
@@ -122,7 +133,7 @@ public final class StreamHub {
         if (!STREAM_ID.matcher(id).matches()) {
             ctx.closeSession(CLOSE_REFUSED, "bad stream id");
         } else if ("publish".equals(role)) {
-            publish(ctx, id);
+            publish(ctx, id, hello.has("owner") && hello.get("owner").isJsonPrimitive() ? hello.get("owner").getAsString() : "");
         } else if ("watch".equals(role)) {
             watch(ctx, id);
         } else {
@@ -130,12 +141,34 @@ public final class StreamHub {
         }
     }
 
-    private static void publish(WsContext ctx, String id) {
+    /* The same publisher coming back (new network, a socket the server has not seen die yet) takes its stream over, viewers
+       and all; it proves who it is with the owner key it chose, which viewers never see. */
+    private static void publish(WsContext ctx, String id, String owner) {
+        String key = OWNER.matcher(owner).matches() ? owner : null;
+        Stream existing = STREAMS.get(id);
+        if (existing != null) {
+            if (key == null || existing.owner == null
+                    || !MessageDigest.isEqual(existing.owner.getBytes(StandardCharsets.US_ASCII), key.getBytes(StandardCharsets.US_ASCII))) {
+                ctx.closeSession(CLOSE_ID_TAKEN, "id taken");
+                return;
+            }
+            WsContext old = existing.publisher;
+            MEMBERS.remove(old.sessionId());
+            existing.publisher = ctx;
+            MEMBERS.put(ctx.sessionId(), existing);
+            if (old.session.isOpen()) {
+                old.closeSession(CLOSE_ID_TAKEN, "replaced");
+            }
+            ctx.send("ready");
+            existing.notifyPublisher("key");
+            Console.log("Stream %s taken over by its publisher", id.substring(0, 6));
+            return;
+        }
         if (STREAMS.size() >= MAX_STREAMS) {
             ctx.closeSession(CLOSE_LIMIT, "server full");
             return;
         }
-        Stream stream = new Stream(id, ctx);
+        Stream stream = new Stream(id, ctx, key);
         if (STREAMS.putIfAbsent(id, stream) != null) {
             ctx.closeSession(CLOSE_ID_TAKEN, "id taken");
             return;
@@ -157,9 +190,10 @@ public final class StreamHub {
         }
         Viewer viewer = new Viewer(ctx, stream);
         MEMBERS.put(ctx.sessionId(), viewer);
+        // The sending thread exists before the viewer is reachable, so a stream ending right now never finds it half made.
+        viewer.sender = Thread.startVirtualThread(viewer::sendLoop);
         stream.viewers.add(viewer);
         Console.log("Stream %s: viewer joined, %d frames and %d keyframes so far", id.substring(0, 6), stream.frames, stream.keys);
-        viewer.sender = Thread.startVirtualThread(viewer::sendLoop);
         ctx.send("ready");
         stream.notifyPublisher("key");
     }
@@ -215,7 +249,8 @@ public final class StreamHub {
     private static final class Stream implements Member {
 
         private final String id;
-        private final WsContext publisher;
+        private final String owner;
+        private volatile WsContext publisher;
         private final Set<Viewer> viewers = ConcurrentHashMap.newKeySet();
         private final Map<String, Long> noticedAt = new ConcurrentHashMap<>();
         private long windowStart;
@@ -223,9 +258,21 @@ public final class StreamHub {
         private long frames;
         private long keys;
 
-        Stream(String id, WsContext publisher) {
+        Stream(String id, WsContext publisher, String owner) {
             this.id = id;
             this.publisher = publisher;
+            this.owner = owner;
+        }
+
+        /* Most viewers overflowing means the publisher's upload is the narrow part; one viewer alone is that viewer's problem. */
+        boolean mostAreSlow(long now) {
+            int slow = 0;
+            for (Viewer v : viewers) {
+                if (now - v.lastOverflowAt < SLOW_WINDOW_MS) {
+                    slow++;
+                }
+            }
+            return slow * 2 > viewers.size();
         }
 
         /* One publisher socket delivers its messages one at a time, so this counter needs no lock. */
@@ -253,8 +300,11 @@ public final class StreamHub {
         private final WsContext ctx;
         private final Stream stream;
         private final BlockingQueue<byte[]> queue = new ArrayBlockingQueue<>(VIEWER_QUEUE_FRAMES);
+        private final AtomicLong queuedBytes = new AtomicLong();
+        private final ArrayDeque<Long> overflows = new ArrayDeque<>();
         private volatile boolean skipping = true;
-        private Thread sender;
+        private volatile long lastOverflowAt;
+        private volatile Thread sender;
 
         Viewer(WsContext ctx, Stream stream) {
             this.ctx = ctx;
@@ -267,12 +317,33 @@ public final class StreamHub {
             } else if (skipping) {
                 return;
             }
-            if (!queue.offer(frame)) {
-                queue.clear();
-                skipping = true;
-                stream.notifyPublisher("slow");
-                stream.notifyPublisher("key");
+            if (queuedBytes.get() + frame.length > VIEWER_QUEUE_BYTES || !queue.offer(frame)) {
+                overflow();
+                return;
             }
+            queuedBytes.addAndGet(frame.length);
+        }
+
+        /* Called only from the publisher's socket thread, one frame at a time. */
+        private void overflow() {
+            queue.clear();
+            queuedBytes.set(0);
+            skipping = true;
+            long now = System.currentTimeMillis();
+            lastOverflowAt = now;
+            overflows.addLast(now);
+            while (!overflows.isEmpty() && now - overflows.peekFirst() > SLOW_WINDOW_MS) {
+                overflows.removeFirst();
+            }
+            if (overflows.size() >= SLOW_OVERFLOWS) {
+                Console.debug("viewer too slow for stream " + stream.id.substring(0, 6));
+                ctx.closeSession(CLOSE_TOO_SLOW, "too slow");
+                return;
+            }
+            if (stream.mostAreSlow(now)) {
+                stream.notifyPublisher("slow");
+            }
+            stream.notifyPublisher("key");
         }
 
         /* Waiting for each send is what keeps a slow viewer's backlog in this short queue and not in unbounded socket buffers. */
@@ -280,7 +351,9 @@ public final class StreamHub {
             try {
                 while (ctx.session.isOpen()) {
                     Callback.Completable sent = new Callback.Completable();
-                    ctx.session.sendBinary(ByteBuffer.wrap(queue.take()), sent);
+                    byte[] frame = queue.take();
+                    queuedBytes.addAndGet(-frame.length);
+                    ctx.session.sendBinary(ByteBuffer.wrap(frame), sent);
                     sent.get(SEND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 }
             } catch (InterruptedException e) {

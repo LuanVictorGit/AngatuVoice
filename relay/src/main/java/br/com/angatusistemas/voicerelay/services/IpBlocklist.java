@@ -45,7 +45,7 @@ public final class IpBlocklist {
         InetAddress parsed;
         try {
             // Only ever a literal from the proxy header; anything else must not turn into a DNS lookup.
-            if (!address.matches("[0-9a-fA-F:.]+")) {
+            if (address == null || !address.matches("[0-9a-fA-F:.]+")) {
                 return false;
             }
             parsed = InetAddress.getByName(address);

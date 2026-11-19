@@ -22,6 +22,9 @@ const BITRATE_UP = 1.15;
 const MAX_BITRATE = 16000000;
 const CONNECT_RETRIES = 3;
 const ENCODER_SILENT_MS = 4000;
+const CLOSE_TOO_SLOW = 4408;
+// Fed but silent this long after having worked: a driver reset, a resume from sleep or a GPU switch on a laptop.
+const ENCODER_STALL_MS = 3000;
 const CLOSE_NO_STREAM = 4404;
 
 const KEY_ANSWER_MS = 1500;
@@ -77,6 +80,7 @@ onmessage = (e) => {
 };
 
 function encoderRole({ url, stream, readable, codec, target: firstTarget }) {
+  const owner = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
   let target = firstTarget;
   let bitrate = Math.min(MAX_BITRATE, target.bitrate);
   let source = null;
@@ -94,6 +98,9 @@ function encoderRole({ url, stream, readable, codec, target: firstTarget }) {
   let socket = null;
   let attempts = 0;
   let produced = false;
+  let lastOutputAt = 0;
+  let lastFedAt = 0;
+  let stallResetAt = 0;
   let keys = 0;
   let keyWanted = 0;
   let lastKeyOutAt = 0;
@@ -108,7 +115,8 @@ function encoderRole({ url, stream, readable, codec, target: firstTarget }) {
   function connect() {
     const ws = new WebSocket(url);
     ws.binaryType = "arraybuffer";
-    ws.onopen = () => ws.send(JSON.stringify({ role: "publish", stream }));
+    // The owner key proves this is the same publisher coming back (another network, a dropped socket), so the server lets it take over.
+    ws.onopen = () => ws.send(JSON.stringify({ role: "publish", stream, owner }));
     ws.onmessage = (e) => {
       if (e.data === "ready") { socket = ws; attempts = 0; forceKey = true; }
       else if (e.data === "key") forceKey = true;
@@ -139,12 +147,24 @@ function encoderRole({ url, stream, readable, codec, target: firstTarget }) {
     }
     // A card that accepts frames and never returns one must not leave people looking at nothing: WebRTC takes over.
     if (!produced && fed > 0 && now - firstFedAt > ENCODER_SILENT_MS) fail("encoder took " + fed + " frames and returned none");
+    // An encoder that worked and then went quiet while still being fed gets one fresh start; if that does not help, WebRTC takes over.
+    if (produced && now - lastFedAt < ENCODER_STALL_MS && now - lastOutputAt > ENCODER_STALL_MS) {
+      if (!stallResetAt) {
+        stallResetAt = now;
+        encoder.reset();
+        source = null;
+      } else if (now - stallResetAt > ENCODER_STALL_MS) {
+        fail("encoder stopped returning frames");
+      }
+    }
     postMessage({ type: "counters", frames, bytes, keys });
   }, ADAPT_EVERY_MS);
 
   const encoder = new VideoEncoder({
     output(chunk) {
       produced = true;
+      lastOutputAt = performance.now();
+      stallResetAt = 0;
       const key = chunk.type === "key";
       if (key) { keyWanted = 0; lastKeyOutAt = performance.now(); }
       if (!socket) return;
@@ -203,6 +223,7 @@ function encoderRole({ url, stream, readable, codec, target: firstTarget }) {
       const keyFrame = forceKey || now - lastKeyAt >= KEYFRAME_EVERY_MS;
       if (keyFrame) { forceKey = false; lastKeyAt = now; if (!keyWanted) keyWanted = now; }
       if (!fed++) firstFedAt = now;
+      lastFedAt = now;
       encoder.encode(frame, { keyFrame });
       frame.close();
     }
@@ -246,8 +267,15 @@ function decoderRole({ url, stream, writable }) {
 
   const report = setInterval(() => postMessage({ type: "counters", counters: { ...counters } }), REPORT_EVERY_MS);
 
+  /* Lost sync: drop deltas until a keyframe arrives, and ask for one. */
   function askForKey() {
     waitingKey = true;
+    requestKey();
+  }
+
+  /* A routine request from the page (no new picture for a while, which a still screen also causes) only asks: the
+     decoder keeps showing the deltas it gets meanwhile. */
+  function requestKey() {
     const now = performance.now();
     if (now - keyAskedAt >= KEY_REQUEST_EVERY_MS && socket && socket.readyState === WebSocket.OPEN) {
       keyAskedAt = now;
@@ -278,8 +306,10 @@ function decoderRole({ url, stream, writable }) {
     ws.onopen = () => ws.send(JSON.stringify({ role: "watch", stream }));
     ws.onmessage = (e) => { if (e.data instanceof ArrayBuffer) take(e.data); };
     // The person may not have reached the server yet; a dropped socket picks up at the next keyframe.
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       if (closed) return;
+      // Too slow for this stream: the server let this viewer go so the others keep their quality; WebRTC takes over here.
+      if (e.code === CLOSE_TOO_SLOW) { closed = true; postMessage({ type: "failed", reason: "viewer too slow" }); return; }
       waitingKey = true;
       setTimeout(() => { if (!closed) connect(); }, 1000);
     };
@@ -288,7 +318,7 @@ function decoderRole({ url, stream, writable }) {
   connect();
 
   return (m) => {
-    if (m.type === "askKey") askForKey();
+    if (m.type === "askKey") requestKey();
     else if (m.type === "stop") {
       closed = true;
       clearInterval(report);

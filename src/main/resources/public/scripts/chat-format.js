@@ -350,7 +350,8 @@
 
   /* :name: typed in full becomes the emoji when the message is sent. */
   function shortcodes(text) {
-    return text.replace(/:([a-z0-9_]{2,30}):/g, (all, name) => {
+    return text.replace(/(```[\s\S]*?```|`[^`\n]*`|https?:\/\/\S+)|:([a-z0-9_]{2,30}):/g, (all, kept, name) => {
+      if (kept) return kept;
       const hit = EMOJIS.find((e) => e.names.includes(name));
       return hit ? hit.char : all;
     });

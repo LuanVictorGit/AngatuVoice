@@ -8,13 +8,16 @@ import io.javalin.http.BadRequestResponse;
 import io.javalin.http.Context;
 import io.javalin.http.NotFoundResponse;
 import io.javalin.http.ServiceUnavailableResponse;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * POST /api/files/{id}/save: downloads an attachment into the person's Downloads folder and shows it in Explorer. The
@@ -25,6 +28,7 @@ import java.util.Map;
 public final class SaveFileRoute extends Route {
 
     private static final int MAX_COPIES = 100;
+    private static final Pattern RESERVED = Pattern.compile("(?i)(con|prn|aux|nul|com[0-9]|lpt[0-9])\\s*");
 
     public SaveFileRoute() {
         super("/api/files/{id}/save", RouteType.POST, SaveFileRoute::handle);
@@ -39,7 +43,7 @@ public final class SaveFileRoute extends Route {
         }
         Path target = ServerCall.ask(() -> {
             try {
-                HttpResponse<InputStream> response = RelayFiles.open("/api/files/" + id);
+                HttpResponse<InputStream> response = RelayFiles.open("/api/files/" + id, null);
                 try (InputStream in = response.body()) {
                     if (response.statusCode() != 200) {
                         throw new NotFoundResponse("Arquivo indisponível.");
@@ -48,6 +52,7 @@ public final class SaveFileRoute extends Route {
                     Path partial = file.resolveSibling(file.getFileName() + ".part");
                     Files.copy(in, partial, StandardCopyOption.REPLACE_EXISTING);
                     Files.move(partial, file, StandardCopyOption.REPLACE_EXISTING);
+                    markFromInternet(file);
                     return file;
                 }
             } catch (IOException e) {
@@ -65,6 +70,15 @@ public final class SaveFileRoute extends Route {
         ctx.contentType("application/json").result(GsonAPI.get().toJson(Map.of("path", target.toString())));
     }
 
+    /* The mark of the web a browser adds: Windows then warns before running a program someone sent in the chat. */
+    private static void markFromInternet(Path file) {
+        try (FileOutputStream zone = new FileOutputStream(file.toString() + ":Zone.Identifier")) {
+            zone.write("[ZoneTransfer]\r\nZoneId=3\r\n".getBytes(StandardCharsets.US_ASCII));
+        } catch (IOException e) {
+            br.com.angatusistemas.lib.console.Console.debug("no zone mark on " + file.getFileName() + ": " + e.getMessage());
+        }
+    }
+
     private static Path downloads() throws IOException {
         Path folder = Path.of(System.getProperty("user.home"), "Downloads");
         Files.createDirectories(folder);
@@ -76,6 +90,11 @@ public final class SaveFileRoute extends Route {
         String clean = name.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_").replaceAll("^[.\\s]+|[.\\s]+$", "").strip();
         if (clean.isEmpty()) {
             clean = "arquivo";
+        }
+        // CON, NUL, COM1 and the like are devices on Windows, with or without an extension.
+        int dot = clean.indexOf('.');
+        if (RESERVED.matcher(dot < 0 ? clean : clean.substring(0, dot)).matches()) {
+            clean = "_" + clean;
         }
         return clean.length() > 150 ? clean.substring(clean.length() - 150) : clean;
     }

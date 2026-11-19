@@ -1,6 +1,7 @@
 package br.com.angatusistemas.voice.desktop;
 
 import br.com.angatusistemas.voice.services.LiveHub;
+import br.com.angatusistemas.voice.services.Notifications;
 import java.awt.AWTException;
 import java.awt.MenuItem;
 import java.awt.PopupMenu;
@@ -51,7 +52,14 @@ final class Tray {
                     }
                 }
             });
-            created.addActionListener(e -> AppShell.show());
+            // A click on a message balloon opens that conversation.
+            created.addActionListener(e -> {
+                AppShell.show();
+                String chat = Notifications.clickedChat();
+                if (chat != null) {
+                    LiveHub.emit("chat.focus", Map.of("chat", chat));
+                }
+            });
             SystemTray.getSystemTray().add(created);
             icon = created;
         } catch (IOException | AWTException | NullPointerException e) {

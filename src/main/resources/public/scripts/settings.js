@@ -88,6 +88,7 @@
     ]],
     ["Avisos", [
       ["sound:message", "Mensagem recebida"],
+      ["sound:mention", "Menção ou mensagem direta"],
       ["sound:connected", "Conectado à rede AngatuVoice"],
       ["sound:error", "Erro"],
     ]],
@@ -293,25 +294,10 @@
       input.value = "";
       if (!file) return;
       if (file.size > 5 * 1024 * 1024) { AV.toast("Escolha uma imagem de até 5 MB.", "error"); return; }
-      try { upload(await cropToWebp(file)); } catch (e) { AV.toast("Não foi possível ler essa imagem.", "error"); }
+      try { upload(await AV.cropToWebp(file)); } catch (e) { AV.toast("Não foi possível ler essa imagem.", "error"); }
     });
     draw();
     return row("Foto de perfil", "Recortada em quadrado e reduzida antes de ser enviada aos outros participantes.", E("div", {}, preview, input));
-  }
-
-  async function cropToWebp(file) {
-    const bitmap = await createImageBitmap(file);
-    const side = Math.min(bitmap.width, bitmap.height);
-    const canvas = document.createElement("canvas");
-    canvas.width = 128;
-    canvas.height = 128;
-    const g = canvas.getContext("2d");
-    g.imageSmoothingQuality = "high";
-    g.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, 128, 128);
-    bitmap.close();
-    const url = canvas.toDataURL("image/webp", 0.8);
-    if (!url.startsWith("data:image/webp;base64,")) throw new Error("webp unsupported");
-    return url.slice("data:image/webp;base64,".length);
   }
 
   function appTab(body) {
@@ -358,7 +344,7 @@
     body.append(E("div", { class: "mb-3" },
       E("div", { class: "font-semibold" }, "Servidor do Angatu Voice"),
       E("div", { class: "text-sm text-muted" }, n.connected ? "Conectado. Mensagens, voz e tela passam pelo servidor." : "Sem conexão. O aplicativo continua tentando sozinho.")));
-    body.append(row("Mensagens no servidor", "Todas as conversas ficam no servidor e aparecem igual em qualquer computador com a sua identidade. As mais antigas só saem quando o espaço de mensagens chega a 1 GB.", E("span", { class: "chip" }, n.connected ? "Conectado" : "Offline")));
+    body.append(row("Mensagens no servidor", "Todas as conversas ficam no servidor e aparecem igual em qualquer computador com a sua identidade. Nada é apagado sozinho: só o administrador apaga mensagens.", E("span", { class: "chip" }, n.connected ? "Conectado" : "Offline")));
 
     const peers = AV.state.peers;
     body.append(E("h3", { class: "mt-6 mb-2 font-bold" }, "Participantes conhecidos (" + peers.filter((p) => p.online).length + " online)"),
@@ -465,7 +451,7 @@
         if (input.value.trim() !== PHRASE) { AV.toast("Digite " + PHRASE + " para confirmar.", "error"); return; }
         close();
         const r = await AV.admin("wipe", { confirm: PHRASE });
-        if (r) { AV.toast((r.removed || 0).toLocaleString("pt-BR") + " mensagens apagadas.", "ok"); render(); }
+        if (r) { AV.toast(AV.plural(r.removed || 0, "mensagem apagada", "mensagens apagadas") + ".", "ok"); render(); }
       } }]);
   }
 

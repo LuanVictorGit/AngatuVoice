@@ -43,7 +43,7 @@ final class ServerCall {
     static void stream(Context ctx, String path) {
         HttpResponse<InputStream> response = ask(() -> {
             try {
-                return RelayFiles.open(path);
+                return RelayFiles.open(path, ctx.header("Range"));
             } catch (IOException e) {
                 throw new ServiceUnavailableResponse("Não foi possível falar com o servidor.");
             } catch (InterruptedException e) {
@@ -51,7 +51,7 @@ final class ServerCall {
                 throw new ServiceUnavailableResponse("Não foi possível falar com o servidor.");
             }
         });
-        if (response.statusCode() != 200) {
+        if (response.statusCode() != 200 && response.statusCode() != 206) {
             try (InputStream refused = response.body()) {
                 Console.debug("server file refused: " + response.statusCode() + " " + refused.available());
             } catch (IOException e) {
@@ -63,6 +63,11 @@ final class ServerCall {
         ctx.header("Cache-Control", "no-store");
         response.headers().firstValue("Content-Type").ifPresent(ctx::contentType);
         response.headers().firstValue("Content-Disposition").ifPresent(value -> ctx.header("Content-Disposition", value));
+        response.headers().firstValue("Accept-Ranges").ifPresent(value -> ctx.header("Accept-Ranges", value));
+        response.headers().firstValue("Content-Range").ifPresent(value -> ctx.header("Content-Range", value));
+        response.headers().firstValue("Content-Length").ifPresent(value -> ctx.header("Content-Length", value));
+        ctx.disableCompression();
+        ctx.status(response.statusCode());
         ctx.result(response.body());
     }
 }

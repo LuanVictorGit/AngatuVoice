@@ -4,15 +4,17 @@ import br.com.angatusistemas.lib.database.Saveable;
 import br.com.angatusistemas.voice.entities.Identity;
 import br.com.angatusistemas.voice.entities.Peer;
 import br.com.angatusistemas.voice.utils.Crypto;
-import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HexFormat;
+import java.util.Iterator;
 import java.util.Optional;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 
 /**
  * Profile pictures: a 128x128 WebP cropped by the interface, validated here before it is stored or sent to anyone.
@@ -40,10 +42,24 @@ public final class AvatarService {
         if (!webp) {
             throw new IllegalArgumentException("avatar is not a small WebP");
         }
-        try {
-            BufferedImage image = ImageIO.read(new ByteArrayInputStream(data));
-            if (image == null || image.getWidth() > MAX_SIDE || image.getHeight() > MAX_SIDE) {
+        // The size comes from the header before anything is decoded: a few hundred bytes can claim 16383 x 16383 pixels,
+        // and decoding that first would take a gigabyte and bring this app down for whoever received it.
+        try (ImageInputStream in = ImageIO.createImageInputStream(new ByteArrayInputStream(data))) {
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(in);
+            if (!readers.hasNext()) {
                 throw new IllegalArgumentException("avatar cannot be decoded");
+            }
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(in, true, true);
+                if (reader.getWidth(0) > MAX_SIDE || reader.getHeight(0) > MAX_SIDE) {
+                    throw new IllegalArgumentException("avatar too large");
+                }
+                if (reader.read(0) == null) {
+                    throw new IllegalArgumentException("avatar cannot be decoded");
+                }
+            } finally {
+                reader.dispose();
             }
         } catch (IOException e) {
             throw new IllegalArgumentException("avatar cannot be decoded", e);

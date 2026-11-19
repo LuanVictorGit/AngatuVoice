@@ -23,6 +23,7 @@ class SoundCatalogTest {
     private static final Path PUBLIC = Path.of("src/main/resources/public");
     private static final Path SCRIPTS = PUBLIC.resolve("scripts");
     private static final Pattern CATALOGUE_ENTRY = Pattern.compile("(\\w+): \"(/assets/audio/[^\"]+\\.mp3)\"");
+    private static final Pattern VARIANT = Pattern.compile("(\\w+): \\{ of: \"(\\w+)\"");
     private static final Pattern PLAY_CALL = Pattern.compile("AV\\.sound\\(([^;\\n]*?)\\);");
     private static final Pattern QUOTED = Pattern.compile("\"(\\w+)\"");
     private static final Pattern TEST_ENTRY = Pattern.compile("\"sound:(\\w+)\"");
@@ -41,7 +42,10 @@ class SoundCatalogTest {
 
     private static Set<String> catalogue() throws IOException {
         String ui = script("ui.js");
-        return matches(CATALOGUE_ENTRY, ui.substring(ui.indexOf("const SOUND_FILES")));
+        Set<String> names = new TreeSet<>(matches(CATALOGUE_ENTRY, ui.substring(ui.indexOf("const SOUND_FILES"))));
+        // A variant replays a catalogued file another way, so it is a name of its own that has to be playable and testable.
+        names.addAll(matches(VARIANT, ui.substring(ui.indexOf("const VARIANTS"))));
+        return names;
     }
 
     @Test

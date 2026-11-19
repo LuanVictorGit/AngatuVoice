@@ -74,14 +74,20 @@ public final class AppShell {
 
     public static void quit() {
         Thread.ofVirtual().start(() -> {
-            Hotkeys.stop();
-            Tray.remove();
-            PeerNetwork.stop();
-            BrowserWindow current = window;
-            if (current != null) {
-                current.hide();
+            // Whatever fails while tidying up, the process still ends: a process left behind keeps the instance lock.
+            try {
+                Hotkeys.stop();
+                Tray.remove();
+                PeerNetwork.stop();
+                BrowserWindow current = window;
+                if (current != null) {
+                    current.hide();
+                }
+            } catch (RuntimeException e) {
+                Console.warn("Falha ao encerrar: %s", e.getMessage());
+            } finally {
+                exit();
             }
-            exit();
         });
     }
 
