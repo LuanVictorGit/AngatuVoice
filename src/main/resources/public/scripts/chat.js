@@ -1103,7 +1103,7 @@
     }));
     showMenu(E("div", { class: "ctx-menu card", role: "menu", "aria-label": "Ações da mensagem", onkeydown: (e) => { if (e.key === "Escape") { e.stopPropagation(); closeMenu(); } } },
       quick,
-      image && [imageItems(image, images, item), sep()],
+      image && [...imageItems(image, images, item), sep()],
       item("smile", "Adicionar reação", () => openPicker(m)),
       item("reply", "Responder", () => startReply(m)),
       canEdit(m) && m.text && item("edit", mine ? "Editar mensagem" : "Editar mensagem (administrador)", () => startEdit(m)),

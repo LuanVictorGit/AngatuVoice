@@ -53,12 +53,19 @@
   };
   let ctx = null;
   let master = null;
+  let fxUntil = 0;
+  const FX_GAIN = 0.8;
+  const FX_MAX_S = 8;
   let sinkId = "";
   let mic = null;
   let shareAudio = null;
   let shareProbe = null;
   let shareHeight = 0;
   let hwSender = null;
+  // The same server path in software VP8, for whoever has no H.264 on the video card on either end.
+  let swSender = null;
+  let swEncodes = false;
+  let swDecodes = false;
   let hwEncoderCodec = null;
   let hwDecodes = false;
   let ducked = false;
@@ -229,7 +236,12 @@
     // Push-to-talk without a key to push would silence the microphone for good, so it only counts once a hotkey exists.
     const ptt = flag("audio.ptt") && !!cfg()["hotkeys.ptt"];
     const open = !rtc.muted && (ptt ? rtc.pttDown : performance.now() < gateOpenUntil || num("audio.sensitivity") >= 100);
-    if (mic.track.enabled !== open) mic.track.enabled = open;
+    if (mic.voiceOpen !== open) {
+      mic.voiceOpen = open;
+      mic.voice.gain.setTargetAtTime(open ? 1 : 0, ctx.currentTime, 0.004);
+    }
+    const enabled = open || performance.now() < fxUntil;
+    if (mic.track.enabled !== enabled) mic.track.enabled = enabled;
   }
 
   function vadLoop() {
@@ -239,7 +251,7 @@
       const openAt = threshold();
       if (level > openAt) gateOpenUntil = now + GATE_HOLD_MS;
       updateGate();
-      const talking = metered(mic.meter, level, openAt, now) && mic.track.enabled;
+      const talking = metered(mic.meter, level, openAt, now) && mic.voiceOpen;
       if (talking !== !!rtc.speaking[myId()]) {
         setSpeaking(myId(), talking);
         broadcastState();
@@ -340,10 +352,16 @@
     const preRoll = c.createDelay(0.2);
     preRoll.delayTime.value = PRE_ROLL_S;
     const dest = c.createMediaStreamDestination();
+    // The voice and the sound wheel meet here: the voice has its own gate, so a sound goes out even while you are silent or muted.
+    const voice = c.createGain();
+    voice.gain.value = 0;
+    const fx = c.createGain();
     gain.connect(analyser);
     gain.connect(preRoll);
-    preRoll.connect(dest);
-    mic = { gain, analyser, buffer: new Float32Array(analyser.fftSize), track: dest.stream.getAudioTracks()[0], stream: dest.stream, meter: newMeter() };
+    preRoll.connect(voice);
+    voice.connect(dest);
+    fx.connect(dest);
+    mic = { gain, analyser, voice, fx, voiceOpen: false, buffer: new Float32Array(analyser.fftSize), track: dest.stream.getAudioTracks()[0], stream: dest.stream, meter: newMeter() };
     attachMicSource(raw);
     updateGate();
   }
@@ -355,6 +373,24 @@
     mic.source.disconnect();
     mic = null;
   }
+
+  /* A sound from the wheel: heard here and sent with the microphone, up to eight seconds. */
+  rtc.playFx = function (buffer) {
+    const c = audioContext();
+    const src = c.createBufferSource();
+    src.buffer = buffer;
+    const level = c.createGain();
+    level.gain.value = FX_GAIN;
+    src.connect(level);
+    level.connect(master);
+    if (mic) level.connect(mic.fx);
+    const seconds = Math.min(buffer.duration, FX_MAX_S);
+    fxUntil = Math.max(fxUntil, performance.now() + seconds * 1000 + 200);
+    updateGate();
+    src.onended = () => { level.disconnect(); updateGate(); };
+    src.start();
+    src.stop(c.currentTime + seconds);
+  };
 
   rtc.applyInput = function () { if (mic) glide(mic.gain.gain, num("audio.inputVolume") / 100); };
   rtc.switchInput = function () { if (mic) reconnectMic(); };
@@ -494,8 +530,10 @@
     const viewers = Array.isArray(o.vw) ? o.vw.filter((id) => typeof id === "string").slice(0, 64) : [];
     p.state = { speaking: o.s === 1, muted: o.m === 1, deafened: o.d === 1, sharing: o.v === 1, stream: typeof o.vh === "string" ? o.vh : "", viewers, at: performance.now() };
     const decodes = o.h === 1;
-    if (decodes !== p.decodesOnCard) {
+    const soft = o.x === 1;
+    if (decodes !== p.decodesOnCard || soft !== p.decodesSoft) {
       p.decodesOnCard = decodes;
+      p.decodesSoft = soft;
       if (rtc.localShare) feedShare(p);
     }
     if (p.cardReceiver && p.cardReceiver.id !== p.state.stream) closeCardReceiver(p);
@@ -524,10 +562,12 @@
     try {
       const o = { s: rtc.speaking[myId()] ? 1 : 0, m: rtc.muted ? 1 : 0, d: rtc.deafened ? 1 : 0, w: rtc.watching.has(p.id) ? 1 : 0 };
       if (hwDecodes && !p.noCard) o.h = 1;
+      if (swDecodes && !p.noCard) o.x = 1;
       if (rtc.localShare) {
         o.v = 1;
         o.vw = rtc.viewers();
-        if (hwSender && hwSender.has(p.id)) o.vh = hwSender.id;
+        const sender = serverSenderOf(p.id);
+        if (sender) o.vh = sender.id;
       }
       // Voice may still be connecting, or failing, and a shared screen does not depend on it: the server carries this meanwhile.
       if (p.channel && p.channel.readyState === "open") p.channel.send(JSON.stringify(o));
@@ -565,7 +605,7 @@
   /* ---- the picture through the video card (hwvideo.js) ---- */
 
   function openCardReceiver(p) {
-    if (p.cardReceiver || !hwDecodes || p.noCard || !rtc.watching.has(p.id) || !p.state || !p.state.stream) return;
+    if (p.cardReceiver || !(hwDecodes || swDecodes) || p.noCard || !rtc.watching.has(p.id) || !p.state || !p.state.stream) return;
     const receiver = AV.hwVideo.createReceiver({ url: AV.state.net.streamUrl, stream: p.state.stream, onfail: () => giveUpOnCardDecoding(p) });
     receiver.id = p.state.stream;
     p.cardReceiver = receiver;
@@ -649,9 +689,20 @@
   }
 
   function stopCardSender() {
-    if (!hwSender) return;
-    hwSender.stop();
-    hwSender = null;
+    if (hwSender) { hwSender.stop(); hwSender = null; }
+    if (swSender) { swSender.stop(); swSender = null; }
+  }
+
+  function serverSenderOf(id) {
+    if (hwSender && hwSender.has(id)) return hwSender;
+    if (swSender && swSender.has(id)) return swSender;
+    return null;
+  }
+
+  /* A processor encodes VP8 in real time up to 720p30; more than that would cost the person sharing their game's frame rate. */
+  function softTarget() {
+    const t = cardTarget();
+    return { height: Math.min(720, t.height), fps: Math.min(30, t.fps), bitrate: Math.min(2500000, t.bitrate) };
   }
 
   function attachVideo(p, track, stream) {
@@ -670,10 +721,14 @@
     if (!p) return;
     p.audios.forEach((a) => { a.source.disconnect(); a.keepAlive.srcObject = null; });
     closeCardReceiver(p);
+    // Nobody left to watch: an encoder stops instead of filling the server with frames nobody gets.
     if (hwSender) {
       hwSender.remove(id);
-      // Nobody left to watch: the encoder stops instead of filling the server with frames nobody gets.
-      if (hwSender.empty()) stopCardSender();
+      if (hwSender.empty()) { hwSender.stop(); hwSender = null; }
+    }
+    if (swSender) {
+      swSender.remove(id);
+      if (swSender.empty()) { swSender.stop(); swSender = null; }
     }
     p.pc.close();
     peers.delete(id);
@@ -811,7 +866,9 @@
     voiceWarned = false;
     if (!AV.state.net.turn) AV.toast("O servidor não informou a retransmissão de voz: a chamada só funciona entre computadores da mesma rede.", "error");
     rtc.room = room;
-    hwDecodes = (await AV.hwVideo.support()).decode;
+    const support = await AV.hwVideo.support();
+    hwDecodes = support.decode;
+    swDecodes = support.soft.decode;
     audioContext();
     await AV.api("POST", "/api/call/state", { room, joined: true });
     const others = (AV.state.calls[room] || []).filter((id) => id !== myId());
@@ -1010,8 +1067,11 @@
     const stream = rtc.localShare;
     const on = !!stream && p.wantsShare;
     const viaCard = on && !!hwEncoderCodec && p.decodesOnCard;
+    // No H.264 on one of the two cards: still through the server, in VP8. WebRTC is left only for apps too old for either.
+    const viaSoft = on && !viaCard && swEncodes && p.decodesSoft;
     feedCard(p, stream, viaCard);
-    const video = on && !viaCard ? stream.getVideoTracks()[0] : null;
+    feedSoft(p, stream, viaSoft);
+    const video = on && !viaCard && !viaSoft ? stream.getVideoTracks()[0] : null;
     const audio = on ? stream.getAudioTracks()[0] || null : null;
     if (p.share.video.sender.track !== video) {
       p.share.video.sender.replaceTrack(video).catch((e) => console.warn("share video not switched", e));
@@ -1031,6 +1091,26 @@
       sendState(p);
       if (hwSender.empty()) stopCardSender();
     }
+  }
+
+  function feedSoft(p, stream, viaSoft) {
+    if (viaSoft) {
+      if (!swSender) {
+        swSender = AV.hwVideo.createSender({ url: AV.state.net.streamUrl, track: stream.getVideoTracks()[0], codec: "vp8", target: softTarget, onfail: onSoftEncoderFailed });
+      }
+      if (!swSender.has(p.id)) { swSender.add(p.id); sendState(p); }
+    } else if (swSender && swSender.has(p.id)) {
+      swSender.remove(p.id);
+      sendState(p);
+      if (swSender.empty()) { swSender.stop(); swSender = null; }
+    }
+  }
+
+  function onSoftEncoderFailed() {
+    swSender = null;
+    swEncodes = false;
+    peers.forEach(feedShare);
+    broadcastState();
   }
 
   function onCardEncoderFailed() {
@@ -1222,7 +1302,9 @@
   };
 
   async function beginShare(sourceId, window) {
-    hwEncoderCodec = (await AV.hwVideo.support()).encode;
+    const support = await AV.hwVideo.support();
+    hwEncoderCodec = support.encode;
+    swEncodes = support.soft.encode;
     // A window brings only its app's sound; if that is not possible, everything except this app, as for a screen.
     const system = flag("video.systemAudio") ? (window && (await openSystemAudio(window))) || (await openSystemAudio()) : null;
     let captured;
@@ -1268,6 +1350,7 @@
     if (!hwEncoderCodec) video.applyConstraints({ frameRate: { ideal: fps, max: fps } }).catch(() => {});
     peers.forEach((p) => { p.level = 0; reconfigure(p); });
     if (hwSender) hwSender.retarget();
+    if (swSender) swSender.retarget();
     rtc.onchange();
   };
 
@@ -1313,7 +1396,7 @@
   /* A shared screen through the video card does not need WebRTC at all: while its picture flows, a connection that does
      not come up is retried quietly instead of being torn down, which used to cut the picture every half minute. */
   function cardFlows(p, now) {
-    return (p.cardReceiver && now - p.cardFramesAt < PICTURE_STALLED_MS) || (hwSender && hwSender.has(p.id));
+    return (p.cardReceiver && now - p.cardFramesAt < PICTURE_STALLED_MS) || !!serverSenderOf(p.id);
   }
 
   function watchConnection(p, now) {
@@ -1337,11 +1420,13 @@
       const watching = rtc.watching.has(id);
       const known = p.state;
       const onCard = p.decodesOnCard;
+      const soft = p.decodesSoft;
       signal(id, "bye", {});
       closePeer(id);
       const next = ensurePeer(id);
       next.state = known;
       next.decodesOnCard = onCard;
+      next.decodesSoft = soft;
       if (watching) rtc.watching.add(id);
       sendState(next);
       openCardReceiver(next);
@@ -1358,7 +1443,7 @@
     if (voiceWarned) return;
     voiceWarned = true;
     const known = AV.state.peers.find((x) => x.id === p.id);
-    AV.toast("A voz com " + (known ? known.name : "outra pessoa") + " não está passando. A rede de um de vocês pode estar bloqueando a porta 3479 (UDP e TCP). A tela pela placa de vídeo continua funcionando.", "error");
+    AV.toast("A voz com " + (known ? known.name : "outra pessoa") + " não está passando. A rede de um de vocês pode estar bloqueando a porta 3479 (UDP e TCP). A tela pelo servidor continua funcionando.", "error");
   }
 
   async function readStats(p) {
@@ -1395,13 +1480,14 @@
         s.inHeight = r.frameHeight;
       }
     });
-    const out = hwSender && hwSender.counters(p.id);
+    const viaSoft = !!(swSender && swSender.has(p.id));
+    const out = (hwSender && hwSender.counters(p.id)) || (swSender && swSender.counters(p.id));
     if (out) {
       counters.sent += out.frames;
       counters.bytesSent += out.bytes;
       s.outWidth = out.width;
       s.outHeight = out.height;
-      s.codec = "H.264 na placa de vídeo";
+      s.codec = viaSoft ? "VP8 pelo servidor" : "H.264 na placa de vídeo";
     }
     const received = p.cardReceiver && p.cardReceiver.counters;
     if (received) {
@@ -1410,7 +1496,7 @@
       if (received.width) {
         s.inWidth = received.width;
         s.inHeight = received.height;
-        s.codec = "H.264 na placa de vídeo";
+        s.codec = received.codec === "vp8" ? "VP8 pelo servidor" : "H.264 na placa de vídeo";
       }
     }
     p.counters = counters;
@@ -1449,7 +1535,7 @@
     const sending = [...peers.values()].map((p) => p.stats).filter((s) => s && s.outHeight);
     if (!sending.length) return null;
     const best = sending.reduce((a, b) => (b.outHeight > a.outHeight ? b : a));
-    const totalOutKbps = hwSender ? best.outKbps : sending.reduce((acc, s) => acc + (s.outKbps || 0), 0);
+    const totalOutKbps = hwSender || swSender ? best.outKbps : sending.reduce((acc, s) => acc + (s.outKbps || 0), 0);
     return { width: best.outWidth, height: best.outHeight, fps: best.outFps, codec: best.codec, kbps: best.outKbps, totalKbps: totalOutKbps };
   };
 
@@ -1479,8 +1565,9 @@
       room: rtc.room,
       microphone: mic ? { open: mic.track.enabled, device: mic.raw.getAudioTracks()[0].label } : null,
       muted: rtc.muted,
-      sharing: rtc.localShare ? { systemAudio: shareAudio ? shareAudio.kind : null, ducked, encoder: hwEncoderCodec || "software" } : null,
+      sharing: rtc.localShare ? { systemAudio: shareAudio ? shareAudio.kind : null, ducked, encoder: hwEncoderCodec || (swEncodes ? "vp8 pelo servidor" : "webrtc") } : null,
       decodesOnCard: hwDecodes,
+      decodesSoft: swDecodes,
       peers: [...peers.values()].map((p) => ({
         id: p.id,
         connection: p.pc.connectionState,

@@ -82,7 +82,7 @@ public final class Overlay {
     }
 
     /* AWT has no such option: without these styles Windows hands the card every click aimed at what is underneath it. */
-    private static void passClicksThrough(JWindow w) {
+    static void passClicksThrough(JWindow w) {
         WinDef.HWND hwnd = new WinDef.HWND(Native.getWindowPointer(w));
         int style = User32.INSTANCE.GetWindowLong(hwnd, WinUser.GWL_EXSTYLE);
         int wanted = style | WinUser.WS_EX_LAYERED | WinUser.WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;

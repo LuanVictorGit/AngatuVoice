@@ -33,6 +33,9 @@ final class Hotkeys {
     private static final int WM_SYSKEYDOWN = 0x104;
     private static final int WM_SYSKEYUP = 0x105;
     private static final int WM_QUIT = 0x12;
+    private static final int VK_RSHIFT = 0xA1;
+    private static final int VK_NUMPAD1 = 0x61;
+    private static final int VK_ESCAPE = 0x1B;
     private static volatile int hookThread;
 
     private Hotkeys() {
@@ -77,8 +80,9 @@ final class Hotkeys {
         User32 user32 = User32.INSTANCE;
         hookThread = Kernel32.INSTANCE.GetCurrentThreadId();
         WinUser.LowLevelKeyboardProc proc = (nCode, wParam, info) -> {
-            if (nCode >= 0) {
-                onKey(wParam.intValue(), info.vkCode);
+            // While the sound wheel is open, its number keys pick a sound instead of reaching the game.
+            if (nCode >= 0 && onKey(wParam.intValue(), info.vkCode)) {
+                return new LRESULT(1);
             }
             return user32.CallNextHookEx(null, nCode, wParam, new LPARAM(Pointer.nativeValue(info.getPointer())));
         };
@@ -98,11 +102,34 @@ final class Hotkeys {
         hookThread = 0;
     }
 
-    private static void onKey(int message, int vk) {
+    private static boolean onKey(int message, int vk) {
         boolean down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
         boolean up = message == WM_KEYUP || message == WM_SYSKEYUP;
         if (!down && !up) {
-            return;
+            return false;
+        }
+        if (vk == VK_RSHIFT) {
+            if (down) {
+                SoundWheel.press();
+            } else {
+                SoundWheel.release();
+            }
+        } else if (down && !SoundWheel.isOpen()) {
+            SoundWheel.otherKey();
+        } else if (SoundWheel.isOpen()) {
+            int slot = vk >= '1' && vk <= '8' ? vk - '1' : vk >= VK_NUMPAD1 && vk <= VK_NUMPAD1 + 7 ? vk - VK_NUMPAD1 : -1;
+            if (slot >= 0) {
+                if (down) {
+                    SoundWheel.pick(slot);
+                }
+                return true;
+            }
+            if (vk == VK_ESCAPE) {
+                if (down) {
+                    SoundWheel.cancel();
+                }
+                return true;
+            }
         }
         BINDINGS.forEach((action, combo) -> {
             if (down && combo.matches(vk) && HELD.add(action)) {
@@ -111,6 +138,7 @@ final class Hotkeys {
                 fire(action, "up");
             }
         });
+        return false;
     }
 
     private static void fire(String action, String state) {

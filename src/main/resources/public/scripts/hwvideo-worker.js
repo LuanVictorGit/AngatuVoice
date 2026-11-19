@@ -28,6 +28,10 @@ const ENCODER_STALL_MS = 3000;
 const CLOSE_NO_STREAM = 4404;
 
 const KEY_ANSWER_MS = 1500;
+// Second bit of the flags byte: the frame is VP8 from the software encoder, not H.264 from the video card.
+const FLAG_VP8 = 2;
+// Software VP8 is for computers without a usable video card; it keeps to what a processor encodes in real time.
+const SOFT_MAX_BITRATE = 3000000;
 const NAL_SPS = 7;
 const NAL_PPS = 8;
 
@@ -80,9 +84,11 @@ onmessage = (e) => {
 };
 
 function encoderRole({ url, stream, readable, codec, target: firstTarget }) {
+  const soft = codec === "vp8";
+  const ceiling = soft ? SOFT_MAX_BITRATE : MAX_BITRATE;
   const owner = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
   let target = firstTarget;
-  let bitrate = Math.min(MAX_BITRATE, target.bitrate);
+  let bitrate = Math.min(ceiling, target.bitrate);
   let source = null;
   let forceKey = true;
   let skipping = false;
@@ -140,9 +146,9 @@ function encoderRole({ url, stream, readable, codec, target: firstTarget }) {
   const adapter = setInterval(() => {
     const now = performance.now();
     if (socket && socket.bufferedAmount > CONGESTED_BYTES) lowerBitrate();
-    else if (bitrate < Math.min(MAX_BITRATE, target.bitrate) && now - calmSince >= RECOVER_AFTER_MS) {
+    else if (bitrate < Math.min(ceiling, target.bitrate) && now - calmSince >= RECOVER_AFTER_MS) {
       calmSince = now;
-      bitrate = Math.min(MAX_BITRATE, target.bitrate, Math.round(bitrate * BITRATE_UP));
+      bitrate = Math.min(ceiling, target.bitrate, Math.round(bitrate * BITRATE_UP));
       configureAgain = true;
     }
     // A card that accepts frames and never returns one must not leave people looking at nothing: WebRTC takes over.
@@ -174,10 +180,10 @@ function encoderRole({ url, stream, readable, codec, target: firstTarget }) {
       skipping = false;
       let data = new Uint8Array(chunk.byteLength);
       chunk.copyTo(data);
-      if (key) data = withParameters(data, parameters);
+      if (key && !soft) data = withParameters(data, parameters);
       const packet = new Uint8Array(HEADER_BYTES + data.length);
       const view = new DataView(packet.buffer);
-      view.setUint8(0, key ? 1 : 0);
+      view.setUint8(0, (key ? 1 : 0) | (soft ? FLAG_VP8 : 0));
       view.setFloat64(1, chunk.timestamp);
       packet.set(data, HEADER_BYTES);
       socket.send(packet);
@@ -193,7 +199,8 @@ function encoderRole({ url, stream, readable, codec, target: firstTarget }) {
     const width = Math.round((frame.displayWidth * height) / frame.displayHeight);
     const size = { width: width & ~1, height: height & ~1 };
     source = { width: frame.displayWidth, height: frame.displayHeight };
-    encoder.configure({ codec, ...size, framerate: target.fps, bitrate, bitrateMode: "variable", latencyMode: "realtime", hardwareAcceleration: "prefer-hardware", avc: { format: "annexb" } });
+    if (soft) encoder.configure({ codec, ...size, framerate: target.fps, bitrate, latencyMode: "realtime" });
+    else encoder.configure({ codec, ...size, framerate: target.fps, bitrate, bitrateMode: "variable", latencyMode: "realtime", hardwareAcceleration: "prefer-hardware", avc: { format: "annexb" } });
     forceKey = true;
     postMessage({ type: "size", ...size });
   }
@@ -231,7 +238,7 @@ function encoderRole({ url, stream, readable, codec, target: firstTarget }) {
 
   return (m) => {
     if (m.type === "key") forceKey = true;
-    else if (m.type === "target") { target = m.target; bitrate = Math.min(MAX_BITRATE, target.bitrate); configureAgain = true; }
+    else if (m.type === "target") { target = m.target; bitrate = Math.min(ceiling, target.bitrate); configureAgain = true; }
     else if (m.type === "stop") {
       running = false;
       clearInterval(adapter);
@@ -245,7 +252,7 @@ function encoderRole({ url, stream, readable, codec, target: firstTarget }) {
 
 function decoderRole({ url, stream, writable }) {
   const writer = writable.getWriter();
-  const counters = { decoded: 0, bytes: 0, width: 0, height: 0, received: 0, keys: 0 };
+  const counters = { decoded: 0, bytes: 0, width: 0, height: 0, received: 0, keys: 0, codec: "" };
   let waitingKey = true;
   let keyAskedAt = 0;
   let closed = false;
@@ -286,13 +293,18 @@ function decoderRole({ url, stream, writable }) {
   function take(buffer) {
     if (buffer.byteLength <= HEADER_BYTES) return;
     const view = new DataView(buffer);
-    const key = (view.getUint8(0) & 1) === 1;
+    const flags = view.getUint8(0);
+    const key = (flags & 1) === 1;
+    const codec = flags & FLAG_VP8 ? "vp8" : CODEC;
     counters.received++;
     if (key) counters.keys++;
     if ((waitingKey && !key) || (decoder.decodeQueueSize > MAX_DECODE_QUEUE && !key)) { askForKey(); return; }
+    // The publisher may switch codecs (its video card failed and it went on in software): the next keyframe says so.
+    if (key && decoder.state === "configured" && codec !== counters.codec) decoder.reset();
     if (decoder.state !== "configured") {
       if (!key) return;
-      decoder.configure({ codec: CODEC, hardwareAcceleration: "prefer-hardware", optimizeForLatency: true });
+      counters.codec = codec;
+      decoder.configure(codec === "vp8" ? { codec, optimizeForLatency: true } : { codec, hardwareAcceleration: "prefer-hardware", optimizeForLatency: true });
     }
     counters.bytes += buffer.byteLength - HEADER_BYTES;
     waitingKey = false;

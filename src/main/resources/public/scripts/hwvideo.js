@@ -37,14 +37,27 @@
     }
   }
 
+  /* VP8 in software works on any Windows, including trimmed builds without the media components the card path needs. */
+  async function softVp8() {
+    try {
+      const encode = (await VideoEncoder.isConfigSupported({ codec: "vp8", width: 1280, height: 720, framerate: 30, bitrate: 2500000, latencyMode: "realtime" })).supported;
+      const decode = (await VideoDecoder.isConfigSupported({ codec: "vp8" })).supported;
+      return { encode: !!encode, decode: !!decode };
+    } catch (e) {
+      console.warn("vp8 probe failed", e);
+      return { encode: false, decode: false };
+    }
+  }
+
   /* Without H.264 in this build a supported answer can only mean the video card, so no software path hides behind it. */
   hw.support = function () {
     if (!support) {
       support = (async () => {
-        if (!window.VideoEncoder || !window.VideoDecoder || !window.MediaStreamTrackProcessor || !window.MediaStreamTrackGenerator || !window.Worker) return { encode: null, decode: false };
+        if (!window.VideoEncoder || !window.VideoDecoder || !window.MediaStreamTrackProcessor || !window.MediaStreamTrackGenerator || !window.Worker) return { encode: null, decode: false, soft: { encode: false, decode: false } };
+        const soft = await softVp8();
         // Some drivers never answer these probes: after a few seconds the call goes on without the card.
-        const timeout = new Promise((resolve) => setTimeout(() => resolve({ encode: null, decode: false, timedOut: true }), PROBE_TIMEOUT_MS));
-        return Promise.race([(async () => ({ encode: await encoderCodec(), decode: await decodesH264() }))(), timeout]);
+        const timeout = new Promise((resolve) => setTimeout(() => resolve({ encode: null, decode: false, soft, timedOut: true }), PROBE_TIMEOUT_MS));
+        return Promise.race([(async () => ({ encode: await encoderCodec(), decode: await decodesH264(), soft }))(), timeout]);
       })();
       // A timed-out answer is asked again next time instead of disabling the card for the whole session.
       support.then((r) => { if (r.timedOut) support = null; });
@@ -104,7 +117,7 @@
     const generator = new MediaStreamTrackGenerator({ kind: "video" });
     const writable = generator.writable;
     const worker = new Worker(WORKER);
-    const counters = { decoded: 0, bytes: 0, width: 0, height: 0, received: 0, keys: 0 };
+    const counters = { decoded: 0, bytes: 0, width: 0, height: 0, received: 0, keys: 0, codec: "" };
     let closed = false;
 
     function fail(reason) {

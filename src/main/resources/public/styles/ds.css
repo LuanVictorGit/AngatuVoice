@@ -370,6 +370,15 @@ ol.md-list { list-style: decimal; }
 .ctx-item.danger:hover { background: var(--av-danger); color: #fff; }
 .ctx-sep { height: 1px; margin: 4px 2px; background: var(--av-line); }
 .ctx-quick { display: flex; justify-content: space-between; padding: 0 2px 4px; margin-bottom: 4px; border-bottom: 1px solid var(--av-line); }
+.sound-wheel { position: fixed; inset: 0; z-index: 10003; display: grid; place-items: center; pointer-events: none; animation: fade var(--av-fast) var(--av-ease); }
+.sound-wheel-svg { width: min(400px, 90vw); height: min(400px, 90vw); pointer-events: auto; filter: drop-shadow(0 12px 32px rgba(0, 0, 0, 0.5)); }
+.sound-slice { fill: rgba(38, 34, 30, 0.94); stroke: rgba(255, 255, 255, 0.08); stroke-width: 1; cursor: pointer; transition: fill var(--av-fast) var(--av-ease); }
+.sound-slice.on { fill: var(--av-accent); }
+.sound-label, .sound-key, .sound-hint { fill: var(--av-ink); font-weight: 700; text-anchor: middle; pointer-events: none; user-select: none; }
+.sound-label { font-size: 14px; }
+.sound-key { font-size: 11px; fill: var(--av-muted); }
+.sound-label.on, .sound-key.on { fill: #14100b; }
+.sound-hint { font-size: 12px; fill: var(--av-muted); }
 .lightbox { position: fixed; inset: 0; z-index: 10002; display: flex; flex-direction: column; background: rgba(8, 7, 6, 0.94); animation: fade var(--av-normal) var(--av-ease); }
 .lightbox-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px 8px 16px; color: var(--av-ink); background: rgba(15, 14, 13, 0.85); border-bottom: 1px solid var(--av-line); }
 .lightbox-zoom { display: flex; align-items: center; gap: 2px; padding: 0 6px; border-left: 1px solid var(--av-line); border-right: 1px solid var(--av-line); }

@@ -50,7 +50,7 @@ AV.el = function (tag, attrs, ...children) {
     else if (key === "dataset") Object.assign(node.dataset, value);
     else node.setAttribute(key, value === true ? "" : value);
   }
-  for (const child of children.flat()) {
+  for (const child of children.flat(3)) {
     if (child === null || child === undefined || child === false) continue;
     node.append(child.nodeType ? child : document.createTextNode(String(child)));
   }

@@ -147,6 +147,12 @@ public final class SettingsService {
         m.put("sounds.ring", new Rule("true", BOOL));
         m.put("ui.lastChat", new Rule("publico", v -> v.length() <= 80));
         m.put("profile.monster", new Rule("", v -> v.matches("[0-9]?")));
+        // The sound wheel: Right Shift held. The names are what the wheel shows; the sounds are recordings under open licences or the person's own files.
+        m.put("soundboard.enabled", new Rule("true", BOOL));
+        String[] names = {"Pato", "Fracasso", "Game over", "Ba-dum-tss", "Aplausos", "Berinjela", "Perdedor", "Vitória"};
+        for (int i = 0; i < names.length; i++) {
+            m.put("soundboard." + i, new Rule(names[i], v -> !v.isBlank() && v.length() <= 24 && v.codePoints().noneMatch(Character::isISOControl)));
+        }
         m.put("ui.trayHintShown", new Rule("false", BOOL));
         return Collections.unmodifiableMap(m);
     }

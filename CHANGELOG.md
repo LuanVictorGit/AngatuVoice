@@ -7,6 +7,17 @@ Todas as mudanças relevantes do Angatu Voice ficam aqui, da mais nova para a ma
 
 O texto de cada seção vira as notas da versão no GitHub e na tela de Atualizações do aplicativo, então ele é escrito para quem usa o app.
 
+## [2.4.0] - 2026-11-19
+
+### Adicionado
+- Painel de sons: durante uma chamada, segure o Shift direito, escolha um som com o mouse ou com as teclas 1 a 8 e solte. Todos na chamada ouvem, mesmo com o seu microfone silenciado. Funciona também por cima de jogos.
+- Oito sons de meme: Pato, Fracasso, Game over, Ba-dum-tss, Aplausos, Berinjela, Perdedor e Vitória, gravações em domínio público ou com licença aberta (créditos em Configurações › Sobre).
+- Em Configurações › Painel de sons, cada espaço pode trocar de nome e receber um áudio seu.
+
+### Corrigido
+- A transmissão de tela de quem usa um Windows enxuto (sem os componentes de mídia) ficava carregando para sempre. Agora a tela passa pelo servidor em VP8 quando a placa de vídeo não ajuda, sem depender da conexão direta entre os computadores.
+- O botão direito numa imagem do chat mostrava um texto estranho no lugar de "Copiar imagem", "Salvar imagem" e "Abrir imagem".
+
 ## [2.3.0] - 2026-11-19
 
 ### Adicionado

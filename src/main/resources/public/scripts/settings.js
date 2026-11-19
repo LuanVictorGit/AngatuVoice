@@ -339,6 +339,50 @@
         } }, "Restaurar")));
   }
 
+  async function soundboardTab(body) {
+    const sb = AV.soundboard;
+    await sb.reloadCustom();
+    const names = sb.names();
+    const replace = (slot) => {
+      const input = E("input", { type: "file", accept: "audio/*", hidden: true });
+      input.addEventListener("change", async () => {
+        const file = input.files[0];
+        if (!file) return;
+        if (file.size > 2 * 1024 * 1024) { AV.toast("Escolha um áudio de até 2 MB.", "error"); return; }
+        try {
+          const res = await fetch("/api/soundboard/" + slot, { method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: file });
+          if (!res.ok) {
+            let message = "Não foi possível usar esse arquivo.";
+            try { const j = await res.json(); message = j.title || j.message || message; } catch (ignored) { /* not JSON */ }
+            throw new Error(message);
+          }
+          AV.toast("Som trocado.", "ok");
+          render();
+        } catch (e) { AV.fail(e); }
+      });
+      document.body.append(input);
+      input.click();
+      setTimeout(() => input.remove(), 60000);
+    };
+    const original = async (slot) => {
+      try { await AV.api("DELETE", "/api/soundboard/" + slot); AV.toast("O som original voltou.", "ok"); render(); } catch (e) { AV.fail(e); }
+    };
+    body.append(
+      toggle("soundboard.enabled", "Painel de sons no Shift direito", "Durante uma chamada, segure o Shift direito, escolha com o mouse ou com as teclas 1 a 8 e solte. Todos na chamada ouvem, mesmo com o seu microfone silenciado."),
+      E("p", { class: "mt-4 mb-2 text-sm text-muted" }, "Os sons originais são gravações em domínio público ou com licença aberta (os créditos estão em Sobre). Troque qualquer um por um áudio seu (MP3, OGG, WAV, WebM ou M4A, até 2 MB; toca no máximo 8 segundos)."),
+      E("div", { class: "card px-4" }, names.map((name, slot) => {
+        const label = E("input", { class: "input w-40", maxlength: 24, value: name, "aria-label": "Nome do som " + (slot + 1),
+          onchange: (e) => { const v = e.target.value.trim(); if (v) save("soundboard." + slot, v); else e.target.value = name; } });
+        return E("div", { class: "row" },
+          E("div", { class: "flex min-w-0 items-center gap-3" }, E("span", { class: "chip mono" }, String(slot + 1)), label,
+            E("span", { class: "chip" }, sb.isCustom(slot) ? "arquivo seu" : "original")),
+          E("div", { class: "flex flex-wrap justify-end gap-2" },
+            E("button", { class: "btn btn-sm", onclick: () => sb.preview(slot) }, AV.icon("play", "ic-sm"), "Ouvir"),
+            E("button", { class: "btn btn-sm", onclick: () => replace(slot) }, "Trocar"),
+            sb.isCustom(slot) && E("button", { class: "btn btn-ghost btn-sm", onclick: () => original(slot) }, "Original")));
+      })));
+  }
+
   function networkTab(body) {
     const n = AV.state.net;
     body.append(E("div", { class: "mb-3" },
@@ -399,6 +443,16 @@
       E("div", { class: "text-xl font-bold" }, "Angatu Voice"), E("div", { class: "text-muted" }, "Versão " + AV.state.version),
       E("p", { class: "max-w-sm text-muted" }, "Conversa por voz, texto e tela."),
       AV.brandMark("mt-2 flex items-center gap-2"),
+      E("div", { class: "mt-4 max-w-md text-left text-xs text-muted" },
+        E("div", { class: "mb-1 font-semibold" }, "Créditos dos sons do painel"),
+        E("ul", { class: "list-disc pl-5" },
+          E("li", {}, "Pato: \"Domestic duck sound 01\", de Ganesh Mohan T, CC BY-SA 4.0 (cortado e convertido)."),
+          E("li", {}, "Fracasso: \"Sad Trombone\", de Sad Tromboner, CC BY 4.0 (cortado)."),
+          E("li", {}, "Ba-dum-tss: \"Bah-dum\", de Kevin MacLeod, CC BY 3.0 (cortado)."),
+          E("li", {}, "Aplausos: \"applause-2\", de Sandermotions, CC0."),
+          E("li", {}, "Berinjela: gravação de MedK1 no Lingua Libre, CC0."),
+          E("li", {}, "Game over, Perdedor e Vitória: \"Voiceover Pack: Fighter\", de Kenney.nl, CC0.")),
+        E("div", { class: "mt-1" }, "Todos vêm do Wikimedia Commons e do Kenney.nl.")),
       E("button", { class: "btn btn-danger mt-4", onclick: async () => { if (await AV.confirm("Sair do Angatu Voice?", "Você deixará de receber mensagens e chamadas até abrir o aplicativo de novo.", "Sair", true)) AV.api("POST", "/api/app/quit").catch(() => {}); } }, AV.icon("power", "ic-sm"), "Sair do aplicativo")));
   }
 
@@ -455,7 +509,7 @@
       } }]);
   }
 
-  const TABS = [["app", "Aplicativo", appTab], ["audio", "Áudio", audioTab], ["hotkeys", "Atalhos", hotkeysTab], ["video", "Vídeo", videoTab],
+  const TABS = [["app", "Aplicativo", appTab], ["audio", "Áudio", audioTab], ["hotkeys", "Atalhos", hotkeysTab], ["soundboard", "Painel de sons", soundboardTab], ["video", "Vídeo", videoTab],
     ["network", "Rede", networkTab], ["admin", "Administração", adminTab], ["update", "Atualizações", updateTab], ["about", "Sobre", aboutTab]];
 
   async function render() {

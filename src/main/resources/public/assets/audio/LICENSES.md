@@ -3,7 +3,7 @@ tags: [angatu-voice, audio]
 ---
 # Sons do Angatu Voice
 
-Todos os sons em `assets/audio/` são obra original da Angatu Sistemas, sintetizados por `tools/SoundGen.java`, sem amostra de terceiros. Para mudar um som, altere o gerador e rode de novo: `java tools/SoundGen.java src/main/resources/public/assets/audio`.
+Os sons de `assets/audio/` (fora de `soundboard/`) são obra original da Angatu Sistemas, sintetizados por `tools/SoundGen.java`, sem amostra de terceiros. Para mudar um som, altere o gerador e rode de novo: `java tools/SoundGen.java src/main/resources/public/assets/audio`.
 
 A música de chamada (`assets/ringtone.mp3`) é outro arquivo, escolhido pelo dono do projeto, e não vem do gerador.
 
@@ -48,3 +48,17 @@ Os tons de telefone seguem a Resolução nº 473/2007 da Anatel. Quando alguém 
 - Grave e dissonante soam como maior gravidade: [The perceived hazard of earcons](https://experts.nau.edu/en/publications/the-perceived-hazard-of-earcons-in-information-technology-excepti/).
 - Subir para começar e descer para terminar é costume de projeto, não resultado de estudo: [Earcons as sonification bookends](https://accessibleoceans.whoi.edu/earcons-as-sonification-bookends).
 - Silêncio ao ensurdecer, pedido antigo de quem usa chamadas de voz: [Discord Support](https://support.discord.com/hc/es/community/posts/360037371652--Option-to-mute-sound-notification-of-other-users-leaving-joining-your-voice-channel-when-you-are-deafened).
+
+## Painel de sons (`soundboard/`)
+
+Gravações de terceiros em domínio público ou com licença aberta, usadas no painel do Shift direito. Os arquivos WAV foram cortados no começo e no fim, convertidos para mono e reamostrados para 22.050 Hz; os OGG estão como vieram. O crédito também aparece em Configurações › Sobre.
+
+| Arquivo | Origem | Autor | Licença |
+|---|---|---|---|
+| `soundboard/pato.wav` | [Domestic duck sound 01](https://commons.wikimedia.org/wiki/File:Domestic_duck_sound_01.wav) | Ganesh Mohan T | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0) (o arquivo adaptado segue a mesma licença) |
+| `soundboard/fracasso.wav` | [Sad Trombone](https://commons.wikimedia.org/wiki/File:Sad_Trombone.wav) | Sad Tromboner | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0) |
+| `soundboard/ba-dum-tss.wav` | [Kevin MacLeod assorted rimshots - Bah-dum](https://commons.wikimedia.org/wiki/File:Kevin_MacLeod_assorted_rimshots_-_Bah-dum.wav) | Kevin MacLeod | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0) |
+| `soundboard/aplausos.wav` | [277021 sandermotions applause-2](https://commons.wikimedia.org/wiki/File:277021_sandermotions_applause-2.wav) | Sandermotions | [CC0](https://creativecommons.org/publicdomain/zero/1.0/) |
+| `soundboard/berinjela.wav` | [LL-Q5146 (por)-MedK1-berinjela](https://commons.wikimedia.org/wiki/File:LL-Q5146_(por)-MedK1-berinjela.wav) (Lingua Libre) | MedK1 | [CC0](https://creativecommons.org/publicdomain/zero/1.0/) |
+| `soundboard/game-over.ogg`, `perdedor.ogg`, `vitoria.ogg` | [Voiceover Pack: Fighter](https://kenney.nl/assets/voiceover-pack-fighter) (`game_over`, `loser`, `flawless_victory`) | Kenney Vleugels (Kenney.nl) | [CC0](https://creativecommons.org/publicdomain/zero/1.0/) |
+
